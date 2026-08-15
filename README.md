@@ -24,18 +24,24 @@ cd corp
 ```bash
 ./bin/corp bootstrap   # clone/pull active repos, install graphify if possible
 ./bin/corp pull        # git pull existing checkouts
-./bin/corp cycle       # next ready Issue, or research report
-./bin/corp cycle --json
-./bin/corp status      # local checkouts vs registry
-./bin/corp doctor      # tools, logins, telegram
+./bin/corp cycle       # next unclaimed ready Issue, or research report
+./bin/corp take --issue owner/repo#n
+./bin/corp run --issue owner/repo#n --agent claude
+./bin/corp close --issue owner/repo#n
+./bin/corp board --json
+./bin/corp queue add --issue owner/repo#n --profile claude
+./bin/corp doctor
 ./bin/corp notify 'text'
-./bin/corp run         # execute next ready Issue via claude/codex/grok
+./bin/corp workshop-token
+./bin/corp catalog
+./bin/corp orchestrate --repo owner/name
 ```
 
-Сервер: [`SERVER.md`](SERVER.md).
+Сервер: [`SERVER.md`](SERVER.md). Мастерская: [`docs/WORKSHOP.md`](docs/WORKSHOP.md).
 
 ## Документы
 
 - [`AGENTS.md`](AGENTS.md) — контракт для любого агента
 - [`HARNESS.md`](HARNESS.md) — цикл, Graphify, планер, runner
+- [`docs/WORKSHOP.md`](docs/WORKSHOP.md) — pin, оркестратор, слоты, Telegram
 - [`registry.json`](registry.json) — проекты корпорации

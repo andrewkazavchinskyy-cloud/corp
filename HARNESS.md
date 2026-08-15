@@ -90,6 +90,10 @@ graphify hook install      # optional post-commit AST refresh
 Commit `graphify-out/graph.json`, `GRAPH_REPORT.md`, and `graph.html`.
 Do not commit `graphify-out/cache/`.
 
+After every Issue close (`corp close`, workshop Done, or a VPS agent that
+closed the Issue) run `graphify update .` in that product repo and push.
+Do not rebuild the graph at the start of every session.
+
 Query before fishing through files:
 
 ```bash
@@ -103,33 +107,47 @@ graphify path Foo Bar
 GitHub Issues are the planner because `gh` works on every device and every
 agent subscription.
 
-| Label    | Meaning                                      |
-| -------- | -------------------------------------------- |
-| `ready`  | An agent may take this now                   |
-| `blocked`| Skip until the blocker is named and cleared  |
-| `P0` `P1` `P2` | Priority                             |
-| `bug` `prd` `research` | Optional type                  |
+| Label | Meaning |
+| ----- | ------- |
+| `ready` | Specified. May be taken. |
+| `queued` | In the VPS autonomous queue. `cycle` skips. |
+| `in-progress` + `self` | You on the Mac mini or Grok Build. VPS must not start it. |
+| `in-progress` + `via:claude` / `via:codex` / `via:grok` / `via:cursor` | VPS runner |
+| `blocked` | Skip until the blocker is named |
+| `P0` `P1` `P2` | Priority |
+| `design` | Design artifacts only |
+| `qa` / `qa-fail` | Opt-in QA gate |
+| `bug` `prd` `research` | Optional type |
+
+Claim before the first edit: `corp take --issue owner/repo#n` (you) or a
+workshop / `corp run --issue` launch (VPS). `cycle` is a list. It skips
+`in-progress`, `self`, and `queued`. Do not grab NEXT if you already named
+another Issue.
 
 Linear or Jira can be added later as a synced view. Do not make them required.
-If you want Linear later, keep GitHub Issues canonical and sync one way.
 
-## Server runner
+## Workshop and runners
 
-The VPS is the work machine. See `SERVER.md`.
+The Mac mini is for you and interactive agents. The VPS is for unattended
+CLI and the autonomous queue. See `SERVER.md` and `docs/WORKSHOP.md`.
 
 ```bash
-./bin/corp doctor   # git, gh, agents, telegram
-./bin/corp notify 'text'
-./bin/corp run      # take the next ready Issue with claude/codex/grok and ping Telegram
+./bin/corp doctor
+./bin/corp take --issue owner/repo#n
+./bin/corp run --issue owner/repo#n --agent claude
+./bin/corp close --issue owner/repo#n
+./bin/corp board --json
+./bin/corp queue add --issue owner/repo#n --profile claude
+./bin/corp workshop-token
 ```
 
-Secrets live in `~/.config/corp/env`, never in git.
+Secrets live in `~/.config/corp/env` and `workshop.json`, never in git.
 
 ## Persistent runner
 
-Do not enable a systemd unit until GitHub and at least one agent are logged in
-and Telegram notify works. The example LaunchAgent on the Mac mini only
-refreshes `memory/next.local.md`. It does not spawn an agent.
+The workshop systemd unit binds `127.0.0.1:8787`. Tailscale Serve publishes
+HTTPS on the tailnet only. Do not enable Funnel. The Mac mini LaunchAgent
+only refreshes `memory/next.local.md`. It does not spawn an agent.
 
 ## Memory
 

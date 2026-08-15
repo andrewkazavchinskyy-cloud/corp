@@ -1,6 +1,7 @@
 # Corporation operating contract
 
 This repository is the portable operating system for the user's projects.
+Workshop contract: `docs/WORKSHOP.md`.
 Any coding agent — Cursor, Codex, Claude, Copilot, Grok, or a raw CLI — must
 follow this file and `HARNESS.md` after clone. Local overlays
 (`~/.cursor/AGENTS.md`, `~/.codex/AGENTS.md`) may add product-specific routing.
@@ -17,20 +18,21 @@ They must not weaken the Git preservation boundary.
 ## Source of truth
 
 - GitHub is canonical for code, Issues, decisions, roadmap, and safe project memory.
-- Planner is GitHub Issues. Label `ready` means an agent may take the work. Label `blocked` means skip. Optional tools (Linear, Jira, local boards) are views, not sources of truth.
-- Graphify output lives in each repo as `graphify-out/` and is committed (except `cache/`).
+- Planner is GitHub Issues. Label `ready` means work may be claimed. `self` means the human has it. `queued` is the VPS autonomous queue. `in-progress` plus `via:*` is a VPS runner. `blocked` means skip. Optional tools (Linear, Jira, local boards) are views, not sources of truth.
+- Graphify output lives in each product repo as `graphify-out/` and is committed (except `cache/`). Refresh with `graphify update` after an Issue is closed.
 - Do not commit credentials, tokens, `.env`, server access data, or global agent contracts.
 
 ## Session start
 
 1. Read `HARNESS.md`.
-2. Run `./bin/corp cycle` from this repository.
-3. If `NEXT` is a `ready` Issue, do that work in the named project checkout.
-4. If `NEXT` is `research`, follow the research loop. File or refine Issues. Do not start a new product unless the user asked.
+2. Run `./bin/corp cycle` from this repository. It is a list, not an order to steal the global head of queue.
+3. If the user already named an Issue, or an Issue is labeled `self`, work that. Claim with `corp take` before the first edit.
+4. Skip `in-progress`, `self`, and `queued` Issues you do not own. Do not start a VPS run on a `self` card.
+5. If `NEXT` is `research` and nothing is claimed, follow the research loop. Do not start a new product unless the user asked.
 
 ## How to work
 
-- Query `graphify-out/` before broad file reads when it exists.
+- If `graphify-out/GRAPH_REPORT.md` exists, read it, then `graphify query` for this Issue before broad file reads.
 - Keep changes small. Reuse existing code. Prefer the standard library.
 - After meaningful work, update `memory/sessions/` (this repo or the project), commit, and push when practical.
 - Record user-visible requests, outcomes, decisions, assumptions, open questions, and links. Never record hidden chain-of-thought or raw tool dumps.

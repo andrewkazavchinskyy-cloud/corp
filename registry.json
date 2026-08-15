@@ -3,7 +3,10 @@
   "planner": "github-issues",
   "labels": {
     "ready": "ready",
-    "blocked": "blocked"
+    "blocked": "blocked",
+    "in-progress": "in-progress",
+    "self": "self",
+    "queued": "queued"
   },
   "research_files": [
     "docs/PRD.md",
@@ -19,6 +22,7 @@
       "name": "corp",
       "repo": "andrewkazavchinskyy-cloud/corp",
       "status": "active",
+      "workshop": true,
       "roots": [
         "~/Library/Mobile Documents/com~apple~CloudDocs/Github/corp"
       ]
@@ -27,6 +31,7 @@
       "name": "clarity",
       "repo": "andrewkazavchinskyy-cloud/clarity",
       "status": "active",
+      "workshop": true,
       "roots": ["~/Developer/clarity"]
     },
     {

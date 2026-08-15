@@ -6,9 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
+import shlex
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -19,12 +23,32 @@ ENV_PATHS = (
     Path.home() / ".config" / "corp" / "env",
     Path("/root/.config/corp/env"),
 )
-AGENTS = ("claude", "codex", "grok")
+KIND_BIN = {"claude": "claude", "codex": "codex", "grok": "grok", "cursor": "agent"}
+VIA = {kind: f"via:{kind}" for kind in KIND_BIN}
+STATE_LABELS = ("ready", "blocked", "in-progress", "self", "queued", *VIA.values())
+SEED_LABELS = (*STATE_LABELS, "P0", "P1", "P2", "design", "qa", "qa-fail")
+SLOT_ROLES = ("orchestrator", "build", "design", "qa")
+PULSE_SEC = 15 * 60
+CONFIG_DIR = Path.home() / ".config" / "corp"
+WORKSHOP_JSON = Path(os.environ["CORP_WORKSHOP_JSON"]) if os.environ.get("CORP_WORKSHOP_JSON") else CONFIG_DIR / "workshop.json"
+TOKEN_PATH = CONFIG_DIR / "workshop-setup-token"
+RUN_LOG = CONFIG_DIR / "run.log"
+DEFAULT_PROFILES = [
+    {"id": "claude", "kind": "claude", "label": "Claude", "model": "sonnet", "effort": "high", "fast": False},
+    {"id": "codex", "kind": "codex", "label": "Codex", "model": "", "effort": "high", "fast": False},
+    {"id": "grok", "kind": "grok", "label": "Grok", "model": "", "effort": "high", "fast": False},
+    {"id": "cursor", "kind": "cursor", "label": "Cursor", "model": "", "effort": "", "fast": False},
+]
+
+
+class CorpError(Exception):
+    def __init__(self, msg: str, code: int = 1) -> None:
+        super().__init__(msg)
+        self.code = code
 
 
 def die(msg: str, code: int = 1) -> None:
-    print(msg, file=sys.stderr)
-    raise SystemExit(code)
+    raise CorpError(msg, code)
 
 
 def load_env() -> None:
@@ -91,6 +115,22 @@ def active_projects(reg: dict, include_paused: bool = False) -> list[dict]:
     return out
 
 
+def is_pinned(project: dict) -> bool:
+    return bool(project.get("workshop"))
+
+
+def pinned_projects(reg: dict) -> list[dict]:
+    return [project for project in reg.get("projects", []) if is_pinned(project)]
+
+
+def save_registry(reg: dict) -> None:
+    REGISTRY_PATH.write_text(json.dumps(reg, indent=2) + "\n")
+
+
+def org_name(reg: dict) -> str:
+    return str(reg.get("org") or "andrewkazavchinskyy-cloud")
+
+
 def bootstrap(reg: dict, include_paused: bool = False) -> None:
     if not have("git"):
         die("missing git")
@@ -150,7 +190,7 @@ def issues_enabled(project: dict) -> bool:
     return project.get("issues", True)
 
 
-def issues_for(repo: str) -> list[dict]:
+def issues_for(repo: str, state: str = "open", limit: int = 50) -> list[dict]:
     proc = run(
         [
             "gh",
@@ -159,11 +199,11 @@ def issues_for(repo: str) -> list[dict]:
             "-R",
             repo,
             "--state",
-            "open",
+            state,
             "--limit",
-            "50",
+            str(limit),
             "--json",
-            "number,title,url,labels,updatedAt",
+            "number,title,url,labels,updatedAt,state,closedAt",
         ],
         check=False,
     )
@@ -197,31 +237,47 @@ def project_by_name(reg: dict, name: str) -> dict:
     return {"name": name, "roots": []}
 
 
-def collect_issues(reg: dict) -> list[dict]:
+def project_by_repo(reg: dict, repo: str) -> dict:
+    for project in reg.get("projects", []):
+        if project.get("repo") == repo:
+            return project
+    die(f"repo not in registry: {repo}")
+
+
+def collect_issues(reg: dict, skip_blocked: bool = True) -> list[dict]:
     blocked_label = reg.get("labels", {}).get("blocked", "blocked")
     found = []
-    for project in active_projects(reg):
+    for project in pinned_projects(reg):
         if not issues_enabled(project):
             continue
         for issue in issues_for(project["repo"]):
-            if blocked_label in label_names(issue):
+            if skip_blocked and blocked_label in label_names(issue):
                 continue
             found.append({**issue, "project": project["name"], "repo": project["repo"]})
     found.sort(key=rank)
     return found
 
 
+def is_free_ready(issue: dict, reg: dict) -> bool:
+    names = label_names(issue)
+    ready = reg.get("labels", {}).get("ready", "ready")
+    if ready not in names:
+        return False
+    if "in-progress" in names or "self" in names or "queued" in names:
+        return False
+    return True
+
+
 def split_ready(reg: dict, issues: list[dict]) -> tuple[list[dict], list[dict]]:
-    ready_label = reg.get("labels", {}).get("ready", "ready")
-    ready = [issue for issue in issues if ready_label in label_names(issue)]
-    other = [issue for issue in issues if ready_label not in label_names(issue)]
+    ready = [issue for issue in issues if is_free_ready(issue, reg)]
+    other = [issue for issue in issues if issue not in ready]
     return ready, other
 
 
 def research_report(reg: dict) -> list[dict]:
     files = reg.get("research_files") or []
     rows = []
-    for project in active_projects(reg):
+    for project in pinned_projects(reg) or active_projects(reg):
         dest = project_dir(project)
         present = []
         if dest is not None:
@@ -288,7 +344,8 @@ def render(payload: dict) -> str:
             f"url: {nxt['url']}",
             f"cwd: {nxt.get('cwd') or '(clone via ./bin/corp bootstrap)'}",
             "",
-            "Take this Issue. Do not invent other work.",
+            "Take this Issue only after corp take (self) or a VPS launch.",
+            "Do not invent other work. Skip NEXT if you already claimed another Issue.",
         ]
         extras = payload.get("ready") or []
         if len(extras) > 1:
@@ -327,10 +384,8 @@ def status(reg: dict) -> None:
         print(f"{project['status']:7} {project['name']:28} {mark}")
 
 
-def doctor() -> None:
+def doctor_payload() -> dict:
     load_env()
-    print(f"corp: {ROOT}")
-    print(f"workspace: {workspace()}")
     checks = [
         ("git", have("git")),
         ("gh", have("gh")),
@@ -341,50 +396,788 @@ def doctor() -> None:
         ("claude", have("claude")),
         ("codex", have("codex")),
         ("grok", have("grok")),
+        ("cursor", have("agent")),
+        ("tmux", have("tmux")),
         ("telegram token", bool(os.environ.get("TELEGRAM_BOT_TOKEN"))),
         ("telegram chat", bool(os.environ.get("TELEGRAM_CHAT_ID"))),
     ]
-    for name, ok in checks:
-        print(f"{'ok' if ok else 'NO':2}  {name}")
+    return {
+        "corp": str(ROOT),
+        "workspace": str(workspace()),
+        "checks": [{"name": name, "ok": ok} for name, ok in checks],
+    }
 
 
-def notify(text: str) -> None:
+def doctor() -> None:
+    payload = doctor_payload()
+    print(f"corp: {payload['corp']}")
+    print(f"workspace: {payload['workspace']}")
+    for row in payload["checks"]:
+        print(f"{'ok' if row['ok'] else 'NO':2}  {row['name']}")
+
+
+def tg_creds() -> tuple[str, str]:
     load_env()
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat = os.environ.get("TELEGRAM_CHAT_ID")
-    if not token or not chat:
-        die("telegram not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in ~/.config/corp/env")
+    return os.environ.get("TELEGRAM_BOT_TOKEN") or "", os.environ.get("TELEGRAM_CHAT_ID") or ""
+
+
+def tg_post(method: str, payload: dict) -> dict:
     import urllib.parse
     import urllib.request
 
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    body = urllib.parse.urlencode(
-        {"chat_id": chat, "text": text, "disable_web_page_preview": "true"}
-    ).encode()
+    token, _ = tg_creds()
+    if not token:
+        die("telegram not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in ~/.config/corp/env")
+    url = f"https://api.telegram.org/bot{token}/{method}"
+    body = urllib.parse.urlencode(payload).encode()
     try:
-        urllib.request.urlopen(url, data=body, timeout=20)
+        raw = urllib.request.urlopen(url, data=body, timeout=20).read()
     except Exception as exc:
-        die(f"telegram send failed: {exc}")
+        die(f"telegram {method} failed: {exc}")
+    return json.loads(raw.decode() or "{}")
+
+
+def notify(text: str, buttons: list | None = None) -> None:
+    _, chat = tg_creds()
+    if not chat:
+        die("telegram not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in ~/.config/corp/env")
+    payload = {"chat_id": chat, "text": text, "disable_web_page_preview": "true"}
+    if buttons:
+        payload["reply_markup"] = json.dumps({"inline_keyboard": buttons})
+    tg_post("sendMessage", payload)
     print("notified")
+
+
+def notify_safe(text: str, buttons: list | None = None) -> None:
+    try:
+        notify(text, buttons=buttons)
+    except (SystemExit, CorpError):
+        print("telegram skipped", file=sys.stderr)
+
+
+def config_dir() -> Path:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    return CONFIG_DIR
+
+
+def default_slot() -> dict:
+    return {"kind": "claude", "model": "", "effort": "high", "fast": False}
+
+
+def default_workshop() -> dict:
+    return {
+        "profiles": [dict(item) for item in DEFAULT_PROFILES],
+        "queue": [],
+        "queue_running": False,
+        "max_parallel": 3,
+        "catalog": {},
+        "slots": {},
+        "drafts": [],
+        "tg_offset": 0,
+    }
+
+
+def load_workshop() -> dict:
+    path = WORKSHOP_JSON
+    if not path.is_file():
+        data = default_workshop()
+        save_workshop(data)
+        return data
+    data = json.loads(path.read_text())
+    data.setdefault("profiles", [dict(item) for item in DEFAULT_PROFILES])
+    data.setdefault("queue", [])
+    data.setdefault("queue_running", False)
+    data.setdefault("max_parallel", 3)
+    data.setdefault("catalog", {})
+    data.setdefault("slots", {})
+    data.setdefault("drafts", [])
+    data.setdefault("tg_offset", 0)
+    return data
+
+
+def save_workshop(data: dict) -> None:
+    config_dir()
+    WORKSHOP_JSON.write_text(json.dumps(data, indent=2) + "\n")
+    os.chmod(WORKSHOP_JSON, 0o600)
+
+
+def profile_by_id(profile_id: str) -> dict:
+    for item in load_workshop().get("profiles") or []:
+        if item.get("id") == profile_id:
+            return item
+    die(f"unknown profile: {profile_id}")
+
+
+def slots_for(name: str) -> dict:
+    data = load_workshop()
+    current = data.get("slots", {}).get(name) or {}
+    out = {}
+    for role in SLOT_ROLES:
+        slot = dict(default_slot())
+        slot.update(current.get(role) or {})
+        if role in {"design", "qa"} and not current.get(role):
+            slot = dict(out.get("build") or slot)
+        out[role] = slot
+    return out
+
+
+def save_slots(name: str, slots: dict) -> dict:
+    data = load_workshop()
+    data.setdefault("slots", {})[name] = slots
+    save_workshop(data)
+    return slots
+
+
+def slot_for_issue(name: str, issue: dict) -> tuple[str, dict]:
+    names = label_names(issue)
+    slots = slots_for(name)
+    if "qa" in names and "design" not in names:
+        return "qa", slots["qa"]
+    if "design" in names:
+        return "design", slots["design"]
+    return "build", slots["build"]
+
+
+def _help_text(binary: str) -> str:
+    chunks = []
+    for args in ([binary, "--help"], [binary, "help"]):
+        proc = run(args, check=False)
+        chunks.append(proc.stdout or "")
+        chunks.append(proc.stderr or "")
+    return "\n".join(chunks).lower()
+
+
+def _parse_models(text: str) -> list[str]:
+    found = []
+    for raw in text.splitlines():
+        if raw.strip().startswith("-"):
+            continue
+        line = raw.strip()
+        if not line or " " in line.split("\t")[0] and len(line) > 40:
+            token = line.split()[0] if line.split() else ""
+        else:
+            token = line.split()[0] if line.split() else ""
+        token = token.strip(",").strip()
+        if not token or token.startswith("-") or token.lower() in {"model", "models", "name", "id"}:
+            continue
+        if any(ch in token for ch in "/\\:"):
+            continue
+        if token not in found:
+            found.append(token)
+    return found[:40]
+
+
+def probe_kind(kind: str) -> dict:
+    binary = KIND_BIN[kind]
+    row = {"kind": kind, "installed": have(binary), "models": [], "efforts": [], "fast": False, "stale": False}
+    if not row["installed"]:
+        return row
+    help_text = _help_text(binary)
+    if "--effort" in help_text or "effort" in help_text:
+        row["efforts"] = ["low", "med", "high", "xhigh"]
+    if "fast" in help_text or "service_tier" in help_text:
+        row["fast"] = True
+    for args in ([binary, "models"], [binary, "model", "ls"], [binary, "--list-models"]):
+        proc = run(args, check=False)
+        if proc.returncode == 0 and (proc.stdout or "").strip():
+            models = _parse_models(proc.stdout)
+            if models:
+                row["models"] = models
+                break
+    return row
+
+
+def probe_catalog() -> dict:
+    catalog = {kind: probe_kind(kind) for kind in KIND_BIN}
+    data = load_workshop()
+    data["catalog"] = {"probed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "kinds": catalog}
+    save_workshop(data)
+    return data["catalog"]
+
+
+def load_catalog() -> dict:
+    data = load_workshop()
+    cached = data.get("catalog") or {}
+    if cached.get("kinds"):
+        return cached
+    return probe_catalog()
+
+
+def last_log_lines(n: int = 3) -> str:
+    if not RUN_LOG.is_file():
+        return "тишина"
+    lines = [line.rstrip() for line in RUN_LOG.read_text().splitlines() if line.strip()]
+    if not lines:
+        return "тишина"
+    clipped = []
+    for line in lines[-n:]:
+        clipped.append(line[:200])
+    return "\n".join(clipped)
+
+
+def pulse_loop(repo: str, number: int, kind: str, started: float, stop: threading.Event) -> None:
+    while not stop.wait(PULSE_SEC):
+        mins = int((time.time() - started) / 60)
+        notify_safe(f"{repo}#{number} · {mins} мин · {kind}\n{last_log_lines(3)}")
+
+
+def ensure_seed_labels(repo: str) -> None:
+    for name in SEED_LABELS:
+        ensure_label(repo, name)
+
+
+def set_pin(reg: dict, name: str, pinned: bool) -> dict:
+    project = project_by_name(reg, name)
+    if not project.get("repo"):
+        die(f"unknown project: {name}")
+    project["workshop"] = pinned
+    save_registry(reg)
+    return project
+
+
+def hide_project(reg: dict, name: str) -> dict:
+    return set_pin(reg, name, False)
+
+
+def archive_project(reg: dict, name: str) -> dict:
+    project = project_by_name(reg, name)
+    if not project.get("repo"):
+        die(f"unknown project: {name}")
+    proc = run(["gh", "repo", "archive", project["repo"], "--yes"], check=False)
+    if proc.returncode != 0:
+        die((proc.stderr or proc.stdout or "archive failed").strip())
+    project["workshop"] = False
+    project["status"] = "paused"
+    save_registry(reg)
+    return project
+
+
+def _clone_to_workspace(repo: str, name: str) -> Path:
+    dest = workspace() / name
+    if dest.is_dir() and (dest / ".git").exists():
+        run(["git", "pull", "--ff-only"], cwd=dest, check=False)
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    proc = run(["gh", "repo", "clone", repo, str(dest)], check=False)
+    if proc.returncode != 0:
+        die((proc.stderr or proc.stdout or f"clone failed: {repo}").strip())
+    return dest
+
+
+def add_existing(reg: dict, repo: str) -> dict:
+    org = org_name(reg)
+    if "/" not in repo:
+        repo = f"{org}/{repo}"
+    if not repo.startswith(org + "/"):
+        die(f"only {org} repos")
+    view = run(["gh", "repo", "view", repo, "--json", "name,nameWithOwner"], check=False)
+    if view.returncode != 0:
+        die((view.stderr or f"missing {repo}").strip())
+    info = json.loads(view.stdout)
+    name = info.get("name") or repo.split("/")[-1]
+    found = None
+    for project in reg.get("projects", []):
+        if project.get("repo") == repo or project.get("name") == name:
+            found = project
+            break
+    if found is None:
+        found = {"name": name, "repo": repo, "status": "active", "roots": []}
+        reg["projects"].append(found)
+    found["workshop"] = True
+    found["status"] = "active"
+    save_registry(reg)
+    dest = _clone_to_workspace(repo, name)
+    ensure_seed_labels(repo)
+    return {"ok": True, "project": found, "cwd": str(dest)}
+
+
+def create_project(reg: dict, name: str) -> dict:
+    org = org_name(reg)
+    if not name or "/" in name or name != name.strip():
+        die("use a short repo name")
+    repo = f"{org}/{name}"
+    proc = run(["gh", "repo", "create", repo, "--private", "--description", "corp project"], check=False)
+    if proc.returncode != 0 and "already exists" not in (proc.stderr or "").lower():
+        die((proc.stderr or proc.stdout or "create failed").strip())
+    dest = _clone_to_workspace(repo, name)
+    readme = dest / "README.md"
+    agents = dest / "AGENTS.md"
+    if not readme.exists():
+        readme.write_text(f"# {name}\n\nFollow the corp harness. See corp `AGENTS.md` and `HARNESS.md`.\n")
+    if not agents.exists():
+        agents.write_text(
+            "Follow `corp/AGENTS.md` and `corp/HARNESS.md`.\n\n"
+            "Take a `ready` GitHub Issue before inventing work. "
+            "Never delete repos or rewrite Git history.\n"
+        )
+    run(["git", "add", "README.md", "AGENTS.md"], cwd=dest, check=False)
+    run(["git", "commit", "-m", "corp: thin seed"], cwd=dest, check=False)
+    run(["git", "push", "-u", "origin", "HEAD"], cwd=dest, check=False)
+    ensure_seed_labels(repo)
+    return add_existing(reg, repo)
+
+
+def project_stage(reg: dict, name: str) -> dict:
+    project = project_by_name(reg, name)
+    dest = project_dir(project)
+    cards = [c for c in board_payload(reg)["cards"] if c["project"] == name]
+    open_cards = [c for c in cards if (c.get("state") or "OPEN").upper() != "CLOSED"]
+    docs = []
+    if dest:
+        for rel in reg.get("research_files") or []:
+            if (dest / rel).is_file():
+                docs.append(rel)
+    graph = dest / "graphify-out" / "GRAPH_REPORT.md" if dest else None
+    graph_age = ""
+    if graph and graph.is_file():
+        graph_age = time.strftime("%Y-%m-%d", time.localtime(graph.stat().st_mtime))
+    has_spec = any(path.endswith(("SPEC.md", "PRD.md")) for path in docs)
+    p0 = sum(1 for c in open_cards if any(l.get("name") == "P0" for l in c.get("labels") or []))
+    ready_n = sum(1 for c in open_cards if c["column"] == "ready")
+    doing = sum(1 for c in open_cards if c["column"] == "in-progress")
+    if not has_spec:
+        stage = "нет спеки"
+    elif p0:
+        stage = "горит"
+    elif doing:
+        stage = "в работе"
+    elif ready_n:
+        stage = "строим"
+    else:
+        stage = "спокойно"
+    return {
+        "name": name,
+        "repo": project.get("repo"),
+        "stage": stage,
+        "open": len(open_cards),
+        "ready": ready_n,
+        "p0": p0,
+        "in_progress": doing,
+        "docs": docs,
+        "graph_age": graph_age,
+        "cwd": str(dest) if dest else None,
+    }
+
+
+def new_draft(repo: str, title: str, body: str, label: str, kind: str = "build") -> dict:
+    if label not in {"ready", "blocked"}:
+        label = "blocked"
+    draft = {
+        "id": secrets.token_hex(4),
+        "repo": repo,
+        "title": title.strip(),
+        "body": body.strip(),
+        "label": label,
+        "kind": kind if kind in {"build", "design", "qa"} else "build",
+        "created": time.time(),
+    }
+    data = load_workshop()
+    data["drafts"].append(draft)
+    save_workshop(data)
+    return draft
+
+
+def prune_drafts() -> None:
+    data = load_workshop()
+    now = time.time()
+    data["drafts"] = [d for d in data["drafts"] if now - float(d.get("created") or 0) < 7 * 86400]
+    save_workshop(data)
+
+
+def draft_by_id(draft_id: str) -> dict:
+    prune_drafts()
+    for item in load_workshop().get("drafts") or []:
+        if item.get("id") == draft_id:
+            return item
+    die(f"draft not found: {draft_id}")
+
+
+def drop_draft(draft_id: str) -> None:
+    data = load_workshop()
+    data["drafts"] = [d for d in data["drafts"] if d.get("id") != draft_id]
+    save_workshop(data)
+
+
+def approve_draft(draft_id: str) -> dict:
+    draft = draft_by_id(draft_id)
+    labels = [draft.get("label") or "blocked"]
+    if draft.get("kind") in {"design", "qa"}:
+        labels.append(draft["kind"])
+    args = [
+        "gh", "issue", "create", "-R", draft["repo"],
+        "--title", draft["title"],
+        "--body", draft.get("body") or draft["title"],
+        "--label", ",".join(labels),
+    ]
+    proc = run(args, check=False)
+    if proc.returncode != 0:
+        die((proc.stderr or proc.stdout or "create issue failed").strip())
+    drop_draft(draft_id)
+    url = (proc.stdout or "").strip()
+    notify_safe(f"{draft['repo']} · завёл · {draft['title']}\n{url}")
+    return {"ok": True, "url": url, "draft": draft}
+
+
+def skip_draft(draft_id: str) -> dict:
+    draft = draft_by_id(draft_id)
+    drop_draft(draft_id)
+    return {"ok": True, "skipped": draft_id, "title": draft.get("title")}
+
+
+def orch_session(project: str) -> str:
+    return f"corp-orch-{project}"
+
+
+def orchestrate(reg: dict, repo: str) -> dict:
+    project = project_by_repo(reg, repo)
+    dest = project_dir(project)
+    if dest is None:
+        die(f"project not cloned: {project['name']}")
+    issue = {"labels": []}
+    if "self" in {runner_of(card) for card in board_payload(reg)["cards"] if card["project"] == project["name"] and card["column"] == "in-progress"}:
+        die(f"{project['name']} is claimed as self")
+    slot = slots_for(project["name"])["orchestrator"]
+    kind = slot.get("kind") or "claude"
+    if not have(KIND_BIN[kind]):
+        die(f"{kind} CLI is not installed")
+    out = config_dir() / f"orch-{project['name']}.json"
+    prompt = (
+        f"Read-only review of {dest}. Follow {ROOT}/docs/WORKSHOP.md. "
+        f"Look at open issues, graphify-out/GRAPH_REPORT.md, and any SPEC/PRD/SHIP/roadmap. "
+        f"Propose only gaps vs those docs. If no SPEC/PRD, output one draft titled "
+        f"'написать SPEC'. No new product ideas. No code. No git writes. "
+        f"Write JSON array to {out} as "
+        f'[{{"title":"...","body":"...","label":"ready|blocked","kind":"build|design|qa"}}].'
+    )
+    cmd = agent_argv(kind, prompt, dest, model=slot.get("model") or "", effort=slot.get("effort") or "", fast=bool(slot.get("fast")))
+    session = orch_session(project["name"])
+    if have("tmux"):
+        if run(["tmux", "has-session", "-t", session], check=False).returncode == 0:
+            die(f"already running: tmux {session}")
+        script = f"cd {shlex.quote(str(dest))} && {shlex.join(cmd)} 2>&1 | tee -a {shlex.quote(str(RUN_LOG))}"
+        subprocess.run(["tmux", "new-session", "-d", "-s", session, "bash", "-lc", script], check=False)
+        while run(["tmux", "has-session", "-t", session], check=False).returncode == 0:
+            time.sleep(3)
+    else:
+        subprocess.run(cmd, cwd=dest, check=False)
+    drafts = []
+    if out.is_file():
+        try:
+            payload = json.loads(out.read_text())
+        except json.JSONDecodeError:
+            payload = []
+        if isinstance(payload, list):
+            for item in payload[:12]:
+                if not isinstance(item, dict) or not item.get("title"):
+                    continue
+                drafts.append(new_draft(repo, item.get("title") or "", item.get("body") or "", item.get("label") or "blocked", item.get("kind") or "build"))
+    if not drafts:
+        stage = project_stage(reg, project["name"])
+        if stage["stage"] == "нет спеки":
+            drafts.append(new_draft(repo, "написать SPEC", "В репо нет SPEC/PRD. Написать минимальную спеку.", "ready", "build"))
+    buttons = [[{"text": f"Approve {d['title'][:24]}", "callback_data": f"a:{d['id']}"}, {"text": "Skip", "callback_data": f"s:{d['id']}"}] for d in drafts]
+    notify_safe(f"{project['name']} · {len(drafts)} черновиков оркестратора", buttons=buttons or None)
+    return {"ok": True, "drafts": drafts, "stage": project_stage(reg, project["name"])}
+
+
+def maybe_orchestrate(reg: dict, name: str) -> None:
+    cards = [c for c in board_payload(reg)["cards"] if c["project"] == name and (c.get("state") or "OPEN").upper() != "CLOSED"]
+    if any(c["column"] in {"ready", "in-progress"} for c in cards):
+        return
+    project = project_by_name(reg, name)
+    if project.get("repo"):
+        try:
+            orchestrate(reg, project["repo"])
+        except CorpError as exc:
+            append_log(f"orchestrate skip {name}: {exc}\n")
+
+
+def telegram_tick() -> None:
+    token, chat = tg_creds()
+    if not token or not chat:
+        return
+    import urllib.request
+
+    data = load_workshop()
+    offset = int(data.get("tg_offset") or 0)
+    url = f"https://api.telegram.org/bot{token}/getUpdates?timeout=0&offset={offset}"
+    try:
+        raw = urllib.request.urlopen(url, timeout=15).read()
+    except Exception:
+        return
+    payload = json.loads(raw.decode() or "{}")
+    for upd in payload.get("result") or []:
+        data["tg_offset"] = int(upd.get("update_id") or 0) + 1
+        cb = upd.get("callback_query") or {}
+        msg_chat = str(((cb.get("message") or {}).get("chat") or {}).get("id") or "")
+        if msg_chat != str(chat):
+            continue
+        code = (cb.get("data") or "")
+        if code.startswith("a:"):
+            try:
+                approve_draft(code[2:])
+            except CorpError as exc:
+                notify_safe(str(exc))
+        elif code.startswith("s:"):
+            try:
+                skip_draft(code[2:])
+            except CorpError as exc:
+                notify_safe(str(exc))
+        if cb.get("id"):
+            try:
+                tg_post("answerCallbackQuery", {"callback_query_id": cb["id"]})
+            except CorpError:
+                pass
+    save_workshop(data)
+
+
+def parse_issue_ref(raw: str) -> tuple[str, int]:
+    text = (raw or "").strip()
+    if "#" not in text:
+        die("use --issue owner/repo#n")
+    repo, number = text.rsplit("#", 1)
+    if not repo or not number.isdigit():
+        die("use --issue owner/repo#n")
+    return repo, int(number)
+
+
+def issue_ref(repo: str, number: int) -> str:
+    return f"{repo}#{number}"
+
+
+def get_issue(repo: str, number: int) -> dict:
+    proc = run(
+        [
+            "gh",
+            "issue",
+            "view",
+            str(number),
+            "-R",
+            repo,
+            "--json",
+            "number,title,url,labels,state,updatedAt,closedAt",
+        ],
+        check=False,
+    )
+    if proc.returncode != 0:
+        die((proc.stderr or proc.stdout or f"missing {repo}#{number}").strip())
+    return json.loads(proc.stdout)
+
+
+def ensure_label(repo: str, name: str) -> None:
+    proc = run(["gh", "label", "create", name, "-R", repo], check=False)
+    if proc.returncode != 0 and "already exists" not in (proc.stderr or "").lower():
+        # older gh prints different text; ignore if label is usable
+        view = run(["gh", "label", "list", "-R", repo, "--json", "name"], check=False)
+        names = {item.get("name") for item in json.loads(view.stdout or "[]")}
+        if name not in names:
+            print(f"label {name} on {repo}: {(proc.stderr or '').strip()}", file=sys.stderr)
+
+
+def add_labels(repo: str, number: int, labels: list[str]) -> None:
+    if not labels:
+        return
+    for name in labels:
+        ensure_label(repo, name)
+    run(["gh", "issue", "edit", str(number), "-R", repo, "--add-label", ",".join(labels)], check=False)
+
+
+def remove_labels(repo: str, number: int, labels: list[str]) -> None:
+    if not labels:
+        return
+    run(["gh", "issue", "edit", str(number), "-R", repo, "--remove-label", ",".join(labels)], check=False)
+
+
+def comment(repo: str, number: int, body: str) -> None:
+    run(["gh", "issue", "comment", str(number), "-R", repo, "--body", body], check=False)
+
+
+def assign_me(repo: str, number: int) -> None:
+    run(["gh", "issue", "edit", str(number), "-R", repo, "--add-assignee", "@me"], check=False)
+
+
+def runner_of(issue: dict) -> str:
+    names = label_names(issue)
+    if "self" in names:
+        return "self"
+    for kind, label in VIA.items():
+        if label in names:
+            return kind
+    if "queued" in names:
+        return "queued"
+    return ""
+
+
+def column_of(issue: dict) -> str:
+    state = (issue.get("state") or "OPEN").upper()
+    if state == "CLOSED":
+        return "done"
+    names = label_names(issue)
+    if "in-progress" in names:
+        return "in-progress"
+    if "ready" in names:
+        return "ready"
+    return "backlog"
+
+
+def board_payload(reg: dict) -> dict:
+    cards = []
+    for project in pinned_projects(reg):
+        if not issues_enabled(project):
+            continue
+        open_issues = issues_for(project["repo"], "open", 80)
+        closed = issues_for(project["repo"], "closed", 20)
+        seen = set()
+        for issue in open_issues + closed:
+            key = issue.get("number")
+            if key in seen:
+                continue
+            seen.add(key)
+            row = {
+                **issue,
+                "project": project["name"],
+                "repo": project["repo"],
+                "column": column_of(issue),
+                "runner": runner_of(issue),
+                "queued": "queued" in label_names(issue),
+                "blocked": "blocked" in label_names(issue),
+            }
+            cards.append(row)
+    cards.sort(key=lambda item: (item["column"], rank(item)))
+    pins = [{"name": p["name"], "repo": p.get("repo")} for p in pinned_projects(reg)]
+    return {"cards": cards, "projects": research_report(reg), "pins": pins}
+
+
+def vps_owns_project(reg: dict, project_name: str, except_issue: int | None = None) -> bool:
+    for card in board_payload(reg)["cards"]:
+        if card["project"] != project_name:
+            continue
+        if card.get("state", "OPEN").upper() == "CLOSED":
+            continue
+        if except_issue is not None and card["number"] == except_issue:
+            continue
+        if card["column"] == "in-progress" and card["runner"] not in {"", "self", "queued"}:
+            return True
+    return False
+
+
+def tmux_session(project: str) -> str:
+    return f"corp-run-{project}"
+
+
+def tmux_alive(project: str) -> bool:
+    if not have("tmux"):
+        return False
+    return run(["tmux", "has-session", "-t", tmux_session(project)], check=False).returncode == 0
+
+
+def claim(repo: str, number: int, kind: str, note: str) -> None:
+    via_all = list(VIA.values())
+    remove_labels(repo, number, ["ready", "queued", "self", *via_all])
+    add_labels(repo, number, ["in-progress", "self"] if kind == "self" else ["in-progress", VIA[kind]])
+    assign_me(repo, number)
+    comment(repo, number, note)
+
+
+def take_issue(reg: dict, repo: str, number: int) -> dict:
+    project = project_by_repo(reg, repo)
+    issue = get_issue(repo, number)
+    if (issue.get("state") or "").upper() == "CLOSED":
+        die(f"{repo}#{number} is closed")
+    if vps_owns_project(reg, project["name"], except_issue=number):
+        die(f"VPS is writing {project['name']}. Wait or pause that run.")
+    claim(repo, number, "self", "corp-claim: self")
+    return {"ok": True, "repo": repo, "issue": number, "runner": "self"}
+
+
+def refresh_graph(dest: Path, repo: str, number: int) -> str:
+    if not dest.is_dir():
+        return "no checkout"
+    run(["git", "pull", "--ff-only"], cwd=dest, check=False)
+    if have("graphify"):
+        proc = run(["graphify", "update", "."], cwd=dest, check=False)
+        if proc.returncode != 0:
+            run(["graphify", "."], cwd=dest, check=False)
+    status = run(["git", "status", "--porcelain", "--", "graphify-out"], cwd=dest, check=False)
+    if not (status.stdout or "").strip():
+        return "graph unchanged"
+    run(["git", "add", "--", "graphify-out"], cwd=dest, check=False)
+    run(["git", "reset", "-q", "--", "graphify-out/cache"], cwd=dest, check=False)
+    commit = run(
+        ["git", "commit", "-m", f"graphify: refresh after {repo}#{number}"],
+        cwd=dest,
+        check=False,
+    )
+    if commit.returncode != 0:
+        return "graph commit skipped"
+    push = run(["git", "push"], cwd=dest, check=False)
+    return "graph pushed" if push.returncode == 0 else "graph committed, push failed"
+
+
+def close_issue(reg: dict, repo: str, number: int) -> dict:
+    project = project_by_repo(reg, repo)
+    dest = project_dir(project)
+    proc = run(["gh", "issue", "close", str(number), "-R", repo], check=False)
+    if proc.returncode != 0:
+        die((proc.stderr or proc.stdout).strip())
+    graph = refresh_graph(dest, repo, number) if dest else "no checkout"
+    maybe_orchestrate(reg, project["name"])
+    return {"ok": True, "repo": repo, "issue": number, "graph": graph}
+
+
+def move_issue(reg: dict, repo: str, number: int, column: str) -> dict:
+    if column not in {"backlog", "ready", "in-progress", "done"}:
+        die("column must be backlog|ready|in-progress|done")
+    if column == "done":
+        return close_issue(reg, repo, number)
+    issue = get_issue(repo, number)
+    if (issue.get("state") or "").upper() == "CLOSED":
+        run(["gh", "issue", "reopen", str(number), "-R", repo], check=False)
+    via_all = list(VIA.values())
+    if column == "backlog":
+        remove_labels(repo, number, ["ready", "in-progress", "self", "queued", *via_all])
+    elif column == "ready":
+        remove_labels(repo, number, ["in-progress", "self", "queued", *via_all])
+        add_labels(repo, number, ["ready"])
+    else:
+        add_labels(repo, number, ["in-progress"])
+        remove_labels(repo, number, ["ready"])
+    return {"ok": True, "repo": repo, "issue": number, "column": column}
 
 
 def pick_agent() -> str:
     load_env()
     preferred = os.environ.get("CORP_AGENT", "").strip()
     if preferred:
-        if not have(preferred):
+        kind = preferred if preferred in KIND_BIN else next((k for k, b in KIND_BIN.items() if b == preferred), "")
+        binary = KIND_BIN.get(kind, preferred)
+        if not have(binary):
             die(f"CORP_AGENT={preferred} is not installed")
-        return preferred
-    for name in AGENTS:
-        if have(name):
-            return name
-    die("no agent CLI found. Install claude, codex, or grok")
+        return kind or preferred
+    for kind, binary in KIND_BIN.items():
+        if have(binary):
+            return kind
+    die("no agent CLI found. Install claude, codex, grok, or cursor agent")
 
 
-def agent_argv(name: str, prompt: str, dest: Path) -> list[str]:
+def agent_prompt(repo: str, number: int, title: str, url: str, dest: Path) -> str:
+    return (
+        f"Follow {ROOT}/AGENTS.md and {ROOT}/HARNESS.md "
+        f"(on the VPS that is /opt/corp/AGENTS.md and /opt/corp/HARNESS.md). "
+        f"Do only this GitHub Issue and nothing else: {repo}#{number} {title} {url}. "
+        f"Work in {dest}. Control plane is {ROOT}. "
+        f"If graphify-out/GRAPH_REPORT.md exists, read it, then run "
+        f'`graphify query` for this issue before broad file reads. '
+        f"Commit and push in this product repo. After the issue is closed, "
+        f"graphify update will run — do not rebuild the whole graph yourself unless missing. "
+        f"Never rewrite git history."
+    )
+
+
+def agent_argv(kind: str, prompt: str, dest: Path, model: str = "", effort: str = "", fast: bool = False) -> list[str]:
     workspace_root = workspace()
-    if name == "claude":
-        return [
+    if kind == "claude":
+        cmd = [
             "claude",
             "-p",
             prompt,
@@ -394,54 +1187,285 @@ def agent_argv(name: str, prompt: str, dest: Path) -> list[str]:
             "--add-dir",
             str(workspace_root),
             "--add-dir",
-            "/opt/corp",
+            str(ROOT),
         ]
-    if name == "codex":
-        return ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", prompt]
-    if name == "grok":
-        return ["grok", "-p", prompt, "--permission-mode", "auto"]
-    die(f"unknown agent {name}")
+        if model:
+            cmd += ["--model", model]
+        if effort:
+            cmd += ["--effort", "low" if fast and not effort else effort]
+        elif fast:
+            cmd += ["--effort", "low"]
+        return cmd
+    if kind == "codex":
+        cmd = ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox"]
+        if model:
+            cmd += ["--model", model]
+        if effort:
+            cmd += ["-c", f"model_reasoning_effort={effort}"]
+        if fast:
+            cmd += ["-c", "service_tier=fast"]
+        cmd.append(prompt)
+        return cmd
+    if kind == "grok":
+        cmd = ["grok", "-p", prompt, "--permission-mode", "auto"]
+        if model:
+            cmd += ["--model", model]
+        if effort:
+            cmd += ["--effort", "low" if fast else effort]
+        elif fast:
+            cmd += ["--effort", "low"]
+        return cmd
+    if kind == "cursor":
+        cmd = ["agent", "-p", prompt, "--force", "--trust", "--workspace", str(dest)]
+        if model:
+            cmd += ["--model", model]
+        return cmd
+    die(f"unknown agent {kind}")
 
 
-def run_next(reg: dict) -> None:
+def append_log(text: str) -> None:
+    config_dir()
+    with RUN_LOG.open("a") as handle:
+        handle.write(text)
+        if not text.endswith("\n"):
+            handle.write("\n")
+
+
+def wait_tmux(project: str) -> int:
+    session = tmux_session(project)
+    while run(["tmux", "has-session", "-t", session], check=False).returncode == 0:
+        time.sleep(3)
+    return 0
+
+
+def launch_agent(kind: str, cmd: list[str], dest: Path, project: str) -> int:
+    append_log(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} {project} via {kind} ===\n")
+    if have("tmux"):
+        session = tmux_session(project)
+        if tmux_alive(project):
+            die(f"already running: tmux {session}")
+        script = (
+            f"cd {shlex.quote(str(dest))} && "
+            f"{shlex.join(cmd)} 2>&1 | tee -a {shlex.quote(str(RUN_LOG))}; "
+            f"echo EXIT:$? | tee -a {shlex.quote(str(RUN_LOG))}"
+        )
+        proc = subprocess.run(["tmux", "new-session", "-d", "-s", session, "bash", "-lc", script])
+        if proc.returncode != 0:
+            return proc.returncode
+        return wait_tmux(project)
+    proc = subprocess.run(cmd, cwd=dest)
+    return proc.returncode
+
+
+def run_issue(
+    reg: dict,
+    repo: str,
+    number: int,
+    kind: str,
+    model: str = "",
+    effort: str = "",
+    fast: bool = False,
+) -> dict:
     load_env()
+    project = project_by_repo(reg, repo)
+    dest = project_dir(project)
+    if dest is None or not dest.is_dir():
+        die(f"project not cloned: {project['name']}. Run ./bin/corp bootstrap")
+    issue = get_issue(repo, number)
+    names = label_names(issue)
+    if "self" in names:
+        die(f"{repo}#{number} is claimed as self")
+    if tmux_alive(project["name"]):
+        die(f"VPS already running {project['name']}")
+    role, slot = slot_for_issue(project["name"], issue)
+    kind = kind or slot.get("kind") or kind
+    model = model or slot.get("model") or ""
+    effort = effort or slot.get("effort") or ""
+    fast = fast or bool(slot.get("fast"))
+    if kind not in KIND_BIN:
+        die(f"unknown agent {kind}")
+    if not have(KIND_BIN[kind]):
+        die(f"{kind} CLI is not installed ({KIND_BIN[kind]})")
+    names = label_names(issue)
+    if role == "design":
+        extra = " This is a design issue: change only preview/docs, not production code. Do not close the issue."
+    elif role == "qa":
+        extra = " This is QA. If it passes, close the issue. If it fails, leave it open and say qa-fail."
+    elif "qa" in names:
+        extra = " Label qa is set: implement but do not close. QA runs next."
+    else:
+        extra = ""
+    claim(repo, number, kind, f"corp-claim: vps {kind}")
+    prompt = agent_prompt(repo, number, issue.get("title") or "", issue.get("url") or "", dest) + extra
+    notify_safe(f"{repo}#{number} · {kind} · старт · {issue.get('title')}\n{issue.get('url')}")
+    cmd = agent_argv(kind, prompt, dest, model=model, effort=effort, fast=fast)
+    print(f"running: {cmd[0]} {repo}#{number}", file=sys.stderr)
+    stop = threading.Event()
+    threading.Thread(target=pulse_loop, args=(repo, number, kind, time.time(), stop), daemon=True).start()
+    try:
+        code = launch_agent(kind, cmd, dest, project["name"])
+    finally:
+        stop.set()
+    latest = get_issue(repo, number)
+    closed = (latest.get("state") or "").upper() == "CLOSED"
+    graph = ""
+    if role == "design" and not closed:
+        remove_labels(repo, number, ["in-progress", *VIA.values()])
+        add_labels(repo, number, ["ready"])
+    if role == "build" and "qa" in names:
+        if closed:
+            run(["gh", "issue", "reopen", str(number), "-R", repo], check=False)
+            closed = False
+        qa_slot = slots_for(project["name"])["qa"]
+        stop.set()
+        return run_issue(
+            reg, repo, number, qa_slot.get("kind") or "claude",
+            model=qa_slot.get("model") or "", effort=qa_slot.get("effort") or "",
+            fast=bool(qa_slot.get("fast")),
+        )
+    if role == "qa" and not closed:
+        remove_labels(repo, number, ["in-progress", *VIA.values()])
+        add_labels(repo, number, ["ready", "qa-fail"])
+        notify_safe(f"{repo}#{number} · {kind} · qa-fail · {latest.get('title')}\n{latest.get('url')}")
+        return {"ok": False, "code": code, "repo": repo, "issue": number, "kind": kind, "graph": "", "closed": False}
+    if closed:
+        graph = refresh_graph(dest, repo, number)
+        notify_safe(f"{repo}#{number} · {kind} · закрыл · {latest.get('title')}\n{latest.get('url')}\n{graph}")
+        maybe_orchestrate(reg, project["name"])
+    elif code != 0:
+        notify_safe(f"{repo}#{number} · {kind} · упал · exit {code}\n{latest.get('url')}")
+    return {
+        "ok": code == 0,
+        "code": code,
+        "repo": repo,
+        "issue": number,
+        "kind": kind,
+        "graph": graph,
+        "closed": closed,
+    }
+
+
+def run_next(reg: dict, args: argparse.Namespace) -> None:
+    if args.issue:
+        repo, number = parse_issue_ref(args.issue)
+        kind = args.agent or ""
+        model, effort, fast = args.model or "", args.effort or "", bool(args.fast)
+        if args.profile:
+            profile = profile_by_id(args.profile)
+            kind = kind or profile.get("kind") or ""
+            model = model or profile.get("model") or ""
+            effort = effort or profile.get("effort") or ""
+            fast = fast or bool(profile.get("fast"))
+        if not kind:
+            kind = pick_agent()
+        if kind not in KIND_BIN:
+            die(f"unknown agent {kind}")
+        result = run_issue(reg, repo, number, kind, model=model, effort=effort, fast=fast)
+        print(json.dumps(result, indent=2) if args.json else f"{result['repo']}#{result['issue']} {result['kind']} exit {result['code']}")
+        raise SystemExit(0 if result["ok"] else result["code"] or 1)
+
     payload = cycle_payload(reg)
     print(render(payload), end="")
     if payload["mode"] != "execute":
         try:
             notify("corp: no ready Issue. Research loop. Do not start greenfield work.")
-        except SystemExit:
+        except (SystemExit, CorpError):
             pass
         return
-
     nxt = payload["next"]
-    dest = Path(nxt["cwd"]) if nxt.get("cwd") else None
-    if dest is None or not dest.is_dir():
-        die(f"project not cloned: {nxt['project']}. Run ./bin/corp bootstrap")
+    result = run_issue(reg, nxt["repo"], nxt["issue"], pick_agent())
+    raise SystemExit(0 if result["ok"] else result["code"] or 1)
 
-    agent = pick_agent()
-    prompt = (
-        f"Follow /opt/corp/AGENTS.md and /opt/corp/HARNESS.md. "
-        f"Do only this GitHub Issue and nothing else: {nxt['repo']}#{nxt['issue']} {nxt['title']} {nxt['url']}. "
-        f"Active project checkouts are in {workspace()}. Control plane is /opt/corp. "
-        f"Commit and push results in the relevant repos. Never rewrite git history."
+
+def queue_add(reg: dict, repo: str, number: int, profile_id: str) -> dict:
+    issue = get_issue(repo, number)
+    if "self" in label_names(issue) or column_of(issue) == "in-progress" and runner_of(issue) not in {"", "queued"}:
+        die(f"{repo}#{number} is already claimed")
+    project = project_by_repo(reg, repo)
+    profile_by_id(profile_id)
+    data = load_workshop()
+    key = issue_ref(repo, number)
+    for item in data["queue"]:
+        if issue_ref(item["repo"], item["issue"]) == key and item.get("status") in {"waiting", "running"}:
+            die(f"{key} is already queued")
+    add_labels(repo, number, ["ready", "queued"])
+    comment(repo, number, "corp-claim: queue")
+    data["queue"].append(
+        {
+            "repo": repo,
+            "issue": number,
+            "project": project["name"],
+            "title": issue.get("title") or "",
+            "url": issue.get("url") or "",
+            "profile": profile_id,
+            "status": "waiting",
+        }
     )
-    started = f"corp: start {nxt['repo']}#{nxt['issue']} via {agent}\n{nxt['title']}\n{nxt['url']}"
-    try:
-        notify(started)
-    except SystemExit:
-        print("telegram skipped", file=sys.stderr)
+    save_workshop(data)
+    return {"ok": True, "queue": data["queue"]}
 
-    cmd = agent_argv(agent, prompt, dest)
-    print(f"running: {' '.join(cmd[:2])} ...", file=sys.stderr)
-    proc = subprocess.run(cmd, cwd=dest)
-    status = "ok" if proc.returncode == 0 else f"exit {proc.returncode}"
-    finished = f"corp: {status} {nxt['repo']}#{nxt['issue']} via {agent}\n{nxt['title']}\n{nxt['url']}"
-    try:
-        notify(finished)
-    except SystemExit:
-        pass
-    raise SystemExit(proc.returncode)
+
+def queue_rm(repo: str, number: int) -> dict:
+    data = load_workshop()
+    kept = []
+    removed = False
+    for item in data["queue"]:
+        if item["repo"] == repo and item["issue"] == number and item.get("status") != "running":
+            removed = True
+            continue
+        kept.append(item)
+    if not removed:
+        die(f"not in queue: {repo}#{number}")
+    data["queue"] = kept
+    save_workshop(data)
+    remove_labels(repo, number, ["queued"])
+    return {"ok": True, "queue": kept}
+
+
+def queue_set_running(running: bool) -> dict:
+    data = load_workshop()
+    data["queue_running"] = running
+    save_workshop(data)
+    return {"ok": True, "queue_running": running, "queue": data["queue"]}
+
+
+def queue_status() -> dict:
+    return load_workshop()
+
+
+def workshop_token() -> str:
+    config_dir()
+    token = secrets.token_urlsafe(24)
+    TOKEN_PATH.write_text(token + "\n")
+    os.chmod(TOKEN_PATH, 0o600)
+    print(token)
+    print("Register at https://<tailscale-host>/#register?token=" + token, file=sys.stderr)
+    return token
+
+
+def cmd_queue(reg: dict, args: argparse.Namespace) -> None:
+    action = args.message or "status"
+    if action == "status":
+        print(json.dumps(queue_status(), indent=2))
+        return
+    if action == "start":
+        print(json.dumps(queue_set_running(True), indent=2))
+        return
+    if action == "pause":
+        print(json.dumps(queue_set_running(False), indent=2))
+        return
+    if action in {"add", "rm"}:
+        if not args.issue:
+            die(f"usage: corp queue {action} --issue owner/repo#n")
+        repo, number = parse_issue_ref(args.issue)
+        if action == "add":
+            if not args.profile:
+                die("usage: corp queue add --issue owner/repo#n --profile id")
+            print(json.dumps(queue_add(reg, repo, number, args.profile), indent=2))
+            return
+        print(json.dumps(queue_rm(repo, number), indent=2))
+        return
+    die("usage: corp queue add|rm|start|pause|status")
 
 
 def main() -> None:
@@ -450,12 +1474,46 @@ def main() -> None:
         "command",
         nargs="?",
         default="cycle",
-        choices=["bootstrap", "cycle", "pull", "status", "doctor", "notify", "run"],
+        choices=[
+            "bootstrap",
+            "cycle",
+            "pull",
+            "status",
+            "doctor",
+            "notify",
+            "run",
+            "take",
+            "close",
+            "board",
+            "move",
+            "queue",
+            "workshop-token",
+            "catalog",
+            "pin",
+            "hide",
+            "archive",
+            "add-project",
+            "create-project",
+            "orchestrate",
+            "draft",
+            "stage",
+        ],
     )
+    parser.add_argument("--project", help="project name")
+    parser.add_argument("--repo", help="owner/repo")
+    parser.add_argument("--draft", help="draft id")
+    parser.add_argument("--action", choices=["approve", "skip"])
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--write", action="store_true", help="write memory/next.local.md")
     parser.add_argument("--all", action="store_true", help="bootstrap paused projects too")
-    parser.add_argument("message", nargs="?", help="text for notify")
+    parser.add_argument("--issue", help="owner/repo#n")
+    parser.add_argument("--agent", choices=list(KIND_BIN))
+    parser.add_argument("--profile", help="workshop profile id")
+    parser.add_argument("--column", choices=["backlog", "ready", "in-progress", "done"])
+    parser.add_argument("--model")
+    parser.add_argument("--effort")
+    parser.add_argument("--fast", action="store_true")
+    parser.add_argument("message", nargs="?", help="text for notify, or queue action")
     args = parser.parse_args()
     load_env()
     reg = load_registry()
@@ -470,7 +1528,10 @@ def main() -> None:
         status(reg)
         return
     if args.command == "doctor":
-        doctor()
+        if args.json:
+            print(json.dumps(doctor_payload(), indent=2))
+        else:
+            doctor()
         return
     if args.command == "notify":
         if not args.message:
@@ -478,7 +1539,84 @@ def main() -> None:
         notify(args.message)
         return
     if args.command == "run":
-        run_next(reg)
+        run_next(reg, args)
+        return
+    if args.command == "take":
+        if not args.issue:
+            die("usage: corp take --issue owner/repo#n")
+        repo, number = parse_issue_ref(args.issue)
+        result = take_issue(reg, repo, number)
+        print(json.dumps(result, indent=2) if args.json else f"took {repo}#{number} as self")
+        return
+    if args.command == "close":
+        if not args.issue:
+            die("usage: corp close --issue owner/repo#n")
+        repo, number = parse_issue_ref(args.issue)
+        result = close_issue(reg, repo, number)
+        print(json.dumps(result, indent=2) if args.json else f"closed {repo}#{number} {result['graph']}")
+        return
+    if args.command == "board":
+        print(json.dumps(board_payload(reg), indent=2))
+        return
+    if args.command == "move":
+        if not args.issue or not args.column:
+            die("usage: corp move --issue owner/repo#n --column backlog|ready|in-progress|done")
+        repo, number = parse_issue_ref(args.issue)
+        result = move_issue(reg, repo, number, args.column)
+        print(json.dumps(result, indent=2) if args.json else f"{repo}#{number} -> {args.column}")
+        return
+    if args.command == "queue":
+        cmd_queue(reg, args)
+        return
+    if args.command == "workshop-token":
+        workshop_token()
+        return
+    if args.command == "catalog":
+        print(json.dumps(probe_catalog(), indent=2))
+        return
+    if args.command == "pin":
+        if not args.project:
+            die("usage: corp pin --project name")
+        print(json.dumps(set_pin(reg, args.project, True), indent=2))
+        return
+    if args.command == "hide":
+        if not args.project:
+            die("usage: corp hide --project name")
+        print(json.dumps(hide_project(reg, args.project), indent=2))
+        return
+    if args.command == "archive":
+        if not args.project:
+            die("usage: corp archive --project name")
+        print(json.dumps(archive_project(reg, args.project), indent=2))
+        return
+    if args.command == "add-project":
+        if not args.repo and not args.project:
+            die("usage: corp add-project --repo org/name")
+        print(json.dumps(add_existing(reg, args.repo or args.project), indent=2))
+        return
+    if args.command == "create-project":
+        if not args.project:
+            die("usage: corp create-project --project name")
+        print(json.dumps(create_project(reg, args.project), indent=2))
+        return
+    if args.command == "orchestrate":
+        repo = args.repo
+        if not repo and args.project:
+            repo = project_by_name(reg, args.project).get("repo")
+        if not repo:
+            die("usage: corp orchestrate --repo owner/name")
+        print(json.dumps(orchestrate(reg, repo), indent=2))
+        return
+    if args.command == "draft":
+        if not args.draft or not args.action:
+            die("usage: corp draft --draft id --action approve|skip")
+        fn = approve_draft if args.action == "approve" else skip_draft
+        print(json.dumps(fn(args.draft), indent=2))
+        return
+    if args.command == "stage":
+        if not args.project:
+            die("usage: corp stage --project name")
+        print(json.dumps(project_stage(reg, args.project), indent=2))
         return
 
     payload = cycle_payload(reg)
@@ -490,4 +1628,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except CorpError as exc:
+        print(exc, file=sys.stderr)
+        raise SystemExit(exc.code)
