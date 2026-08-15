@@ -48,6 +48,7 @@ def main() -> None:
     assert help_models == ["fable", "opus", "sonnet"]
     junk = "--model <model>\nnon-interactive output\n  mcp-server      Start Codex\n"
     assert corp._parse_models(junk) == []
+    assert corp._parse_models("choices: 'stream-json' or 'sonnet'") == ["sonnet"]
     assert corp._parse_efforts("Effort (low, medium, high, xhigh, max)") == ["low", "medium", "high", "xhigh", "max"]
     assert corp._parse_efforts("max-turns and prompt-cache") == []
     assert corp.default_slot()["kind"] == "claude"

@@ -627,7 +627,7 @@ def _looks_like_model(token: str) -> bool:
     if any(ch in token for ch in "/\\:"):
         return False
     low = token.lower()
-    return bool(any(ch.isdigit() for ch in token) or "-" in token or low in _MODEL_ALIASES)
+    return bool(any(ch.isdigit() for ch in token) or low in _MODEL_ALIASES)
 
 
 def _parse_models(text: str) -> list[str]:
