@@ -31,6 +31,8 @@ No first issue. Graphify after first close. Pin immediately.
 ## Access
 
 Settings: add another Passkey while logged in. Logout ends the session.
+Lost phone or a new device without a session: `corp workshop-token` on the
+VPS, then register a new Passkey on the gate. Existing keys stay.
 Sheet: close, ready, backlog, and drop `self` on phone and desktop.
 Drag to in-progress is not a move — take or run from the sheet.
 

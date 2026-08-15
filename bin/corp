@@ -1090,6 +1090,7 @@ def new_draft(
     data = load_workshop()
     data["drafts"].append(draft)
     save_workshop(data)
+    invalidate_board()
     return draft
 
 
@@ -1503,9 +1504,44 @@ def board_payload(reg: dict) -> dict:
             cards.append(row)
     cards.sort(key=lambda item: (item["column"], rank(item)))
     pins = [{"name": p["name"], "repo": p.get("repo")} for p in pinned_projects(reg)]
-    payload = {"cards": cards, "projects": research_report(reg), "pins": pins}
+    drafts = draft_summaries(reg)
+    payload = {"cards": cards, "projects": research_report(reg), "pins": pins, "drafts": drafts}
     _board_memo.update({"t": time.time(), "key": cache_key, "data": payload})
     return payload
+
+
+def draft_summaries(reg: dict) -> list[dict]:
+    prune_drafts()
+    pins = {p["repo"]: p["name"] for p in pinned_projects(reg)}
+    out = []
+    for item in load_workshop().get("drafts") or []:
+        repo = item.get("repo") or ""
+        out.append({
+            "id": item.get("id") or "",
+            "repo": repo,
+            "title": item.get("title") or "",
+            "project": pins.get(repo) or repo.rsplit("/", 1)[-1],
+        })
+    return out
+
+
+def next_move(cards: list, drafts: list, project: str | None = None) -> dict | None:
+    vis = [c for c in cards if not project or c.get("project") == project]
+    if any(c.get("column") == "ready" for c in vis):
+        return None
+    vis_d = [d for d in drafts if not project or d.get("project") == project]
+    if vis_d:
+        return {"kind": "drafts", "count": len(vis_d), "project": vis_d[0].get("project") or ""}
+    backlog = [c for c in vis if c.get("column") == "backlog" and not c.get("blocked")]
+    if backlog:
+        card = backlog[0]
+        return {
+            "kind": "backlog",
+            "issue": f"{card.get('repo')}#{card.get('number')}",
+            "title": card.get("title") or "",
+            "project": card.get("project") or "",
+        }
+    return {"kind": "orch", "project": project or ""}
 
 
 def write_block_reason(cards: list, project_name: str, except_issue: int | None = None) -> str:
@@ -2021,13 +2057,22 @@ def queue_status() -> dict:
     return load_workshop()
 
 
+def setup_token_ok(token: str, path: Path | None = None) -> bool:
+    given = (token or "").strip()
+    store = path or TOKEN_PATH
+    expected = store.read_text().strip() if store.is_file() else ""
+    if not expected or not given or len(given) != len(expected):
+        return False
+    return secrets.compare_digest(given, expected)
+
+
 def workshop_token() -> str:
     config_dir()
     token = secrets.token_urlsafe(24)
     TOKEN_PATH.write_text(token + "\n")
     os.chmod(TOKEN_PATH, 0o600)
     print(token)
-    print("Register at https://<tailscale-host>/#register?token=" + token, file=sys.stderr)
+    print("First register or recover: https://<tailscale-host>/?token=" + token, file=sys.stderr)
     return token
 
 

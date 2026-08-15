@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Schibsted+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=19">
+  <link rel="stylesheet" href="/static/app.css?v=20">
 </head>
 <body>
   <div id="gate" class="gate hidden">
@@ -17,7 +17,7 @@
       <h1>Мастерская</h1>
       <p>Только Tailscale. Вход — Passkey.<br>Задачи живут в GitHub.</p>
       <label id="token-wrap" class="hidden">
-        <span>Токен первого входа</span>
+        <span id="token-label">Токен первого входа</span>
         <input id="token" autocomplete="off" spellcheck="false">
       </label>
       <div class="row">
@@ -164,6 +164,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/static/app.js?v=19"></script>
+  <script src="/static/app.js?v=20"></script>
 </body>
 </html>

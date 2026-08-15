@@ -72,6 +72,21 @@ def main() -> None:
     assert corp.write_block_reason(cards, "corp", 1) == ""
     assert corp.write_block_reason(cards, "clarity", 9).startswith("VPS")
     assert corp.write_block_reason(cards, "missing") == ""
+    drafts = [{"project": "corp", "title": "expand board"}]
+    assert corp.next_move(cards, drafts, "corp") is None
+    empty_ready = [c for c in cards if c["column"] != "ready"]
+    assert corp.next_move(empty_ready, drafts, "corp") == {"kind": "drafts", "count": 1, "project": "corp"}
+    assert corp.next_move(empty_ready, [], "clarity")["kind"] == "orch"
+    backlog_only = [{"project": "corp", "repo": "o/corp", "number": 9, "column": "backlog", "title": "next", "blocked": False}]
+    assert corp.next_move(backlog_only, [], "corp")["issue"] == "o/corp#9"
+    blocked = [{"project": "corp", "repo": "o/corp", "number": 8, "column": "backlog", "blocked": True}]
+    assert corp.next_move(blocked, [], "corp")["kind"] == "orch"
+    tmp = Path("/tmp/corp-setup-token-test")
+    tmp.write_text("abc123\n")
+    assert corp.setup_token_ok("abc123", tmp)
+    assert not corp.setup_token_ok("nope", tmp)
+    assert not corp.setup_token_ok("", tmp)
+    tmp.unlink()
     kept = corp.merge_catalog_row({"models": ["grok-4.6"], "installed": True}, {"kind": "grok", "installed": True, "models": []})
     assert kept["models"] == ["grok-4.6"] and kept["stale"]
     fresh = corp.merge_catalog_row({}, {"kind": "grok", "installed": True, "models": []})

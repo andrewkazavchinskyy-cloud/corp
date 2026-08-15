@@ -41,8 +41,9 @@ are visible. If `registry.json` is not writable by `corp`, pins and new
 repos persist in `~/.config/corp/workshop.json`.
 
 Open the Tailscale hostname, register the first Passkey with the token,
-then use the board. Autopilot, console, and settings sit behind the same
-login.
+then use the board. Lost phone: run `corp workshop-token` again and
+register a new key on the gate. Autopilot, console, and settings sit
+behind the same login.
 
 Do not rename the Tailscale machine: Passkeys bind to that hostname.
 

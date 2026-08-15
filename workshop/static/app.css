@@ -103,6 +103,8 @@ input, select { width: 100%; }
   padding: 7px 12px 7px 8px; font-size: 12px; color: var(--dim); min-height: 36px; margin: 0;
 }
 .live b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.live.bad { border-color: var(--clay); color: var(--clay); }
+.live.bad .pulse { background: var(--clay); box-shadow: 0 0 0 4px rgba(197, 107, 85, 0.18); }
 .pulse { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: var(--sage); box-shadow: 0 0 0 4px rgba(143, 173, 138, 0.18); }
 
 .body { padding: 16px 18px 20px; overflow: auto; min-height: 0; }
@@ -138,6 +140,7 @@ input, select { width: 100%; }
 .card.p0 { box-shadow: inset 3px 0 0 var(--clay); }
 .card.me { box-shadow: inset 3px 0 0 var(--self); }
 .card.vps { box-shadow: inset 3px 0 0 var(--brass); }
+.card.next { border-style: dashed; cursor: pointer; }
 .card header, .card .meta { display: flex; justify-content: space-between; color: var(--dim); font-size: 12px; }
 .card h3 { margin: 6px 0 8px; font-size: 14px; font-weight: 500; line-height: 1.35; }
 .pills, .badges { display: flex; gap: 5px; flex-wrap: wrap; }

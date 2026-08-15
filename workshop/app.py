@@ -150,11 +150,11 @@ async def register_options(request: Request) -> JSONResponse:
     body = await request.json()
     token = (body.get("token") or "").strip()
     if cred_count() == 0:
-        expected = TOKEN_PATH.read_text().strip() if TOKEN_PATH.is_file() else ""
-        if not expected or not secrets.compare_digest(token, expected):
+        if not corp.setup_token_ok(token):
             raise HTTPException(403, "setup token required")
     elif not session_ok(request):
-        raise HTTPException(401, "passkey required")
+        if not corp.setup_token_ok(token):
+            raise HTTPException(401, "passkey or recover token required")
     rp_id, _ = host_parts(request)
     options = generate_registration_options(
         rp_id=rp_id,
