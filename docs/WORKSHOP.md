@@ -47,7 +47,8 @@ Per pin: Orchestrator, Build, Design, QA. Design/QA default to Build.
 ## Project tab
 
 Derived stage only (SPEC?, open/ready/P0, in-progress, graph age).
-Button «Разобрать», drafts, Approve/Skip. Map stays infra.
+Button «Разобрать», live research log, detailed drafts, Approve/Skip.
+Map stays infra.
 
 ## Graphs
 
@@ -65,6 +66,8 @@ On **corp** (the workshop): also draft functional expansion and maximum
 UI/UX of the live app. `workshop/preview.html` is a reference, not a dump.
 No spec → one draft «написать SPEC». No new product. GitHub only after
 Approve. Batch Approve only in the workshop. Drafts: 7 days.
+While it runs, the Project tab shows research status and the live log.
+Drafts include body, why, vs PRD, and vs open issues for Approve/Skip.
 
 ## Design / QA
 

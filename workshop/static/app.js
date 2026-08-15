@@ -25,6 +25,8 @@ let refreshBusy = false;
 let catalogProbed = false;
 let graphFocus = "";
 let graphsCache = [];
+let orchPoll = 0;
+let consolePick = "";
 
 function cookieGet(name) {
   const m = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
@@ -522,12 +524,52 @@ function renderMap(data) {
     `<li>${escapeHtml(p.name)} — ${p.graphify ? "граф есть" : "графа нет"} — ${escapeHtml(p.cwd || "не клонирован")}</li>`
   ).join("");
   const live = (data.live || []).join(", ") || "тихо";
+  const orch = (data.orch || []).join(", ") || "тихо";
   $("map").innerHTML = `
     <article><h2>Контур</h2><p class="meta">corp в /opt/corp · проекты в /home/corp/projects · GitHub Issues · Tailscale</p>
       <ul>${checks}</ul></article>
     <article><h2>Сейчас</h2><p>VPS: ${escapeHtml(live)}</p>
+      <p>orch: ${escapeHtml(orch)}</p>
       <p>Автоном: ${data.queue_running ? "идёт" : "пауза"}</p></article>
     <article><h2>Проекты</h2><ul>${projects}</ul></article>`;
+}
+
+function draftCard(d) {
+  const why = d.why ? `<p class="draft-why">${escapeHtml(d.why)}</p>` : "";
+  const body = d.body ? `<pre class="draft-body">${escapeHtml(d.body)}</pre>` : "";
+  const prd = d.vs_prd ? `<p class="meta">В спеке: ${escapeHtml(d.vs_prd)}</p>` : "";
+  const open = d.vs_open ? `<p class="meta">На доске: ${escapeHtml(d.vs_open)}</p>` : "";
+  return `<article class="card draft"><header><span>${escapeHtml(d.kind || "build")}</span><span>${escapeHtml(d.label || "")}</span></header>
+    <h3>${escapeHtml(d.title)}</h3>
+    ${why}${body}${prd}${open}
+    <div class="row">
+      <button class="btn primary" data-approve="${d.id}">Approve</button>
+      <button class="btn" data-skip="${d.id}">Skip</button>
+    </div></article>`;
+}
+
+function orchCard(orch, name) {
+  if (!orch || !orch.status) return "";
+  const live = orch.running || orch.status === "running";
+  const mins = orch.started ? Math.max(0, Math.round((Date.now() / 1000 - orch.started) / 60)) : 0;
+  const title = live
+    ? `Исследует · ${mins} мин`
+    : orch.status === "failed"
+      ? "Исследование сломалось"
+      : `Исследование готово · ${orch.drafts || 0} черновиков`;
+  const log = orch.pane || orch.log || "";
+  return `<article class="card orch ${live ? "live" : ""}"><h3>${title}</h3>
+    <p class="meta">${escapeHtml(orch.kind || "orch")}</p>
+    <pre class="orch-log">${escapeHtml(log || "ждём вывод…")}</pre>
+    ${live ? `<button type="button" class="btn" id="orch-console" data-orch="${escapeHtml(name)}">Консоль</button>` : ""}</article>`;
+}
+
+function watchOrch(running) {
+  clearTimeout(orchPoll);
+  orchPoll = 0;
+  if (running && $("tab-project").classList.contains("on")) {
+    orchPoll = setTimeout(() => renderProject(), 4000);
+  }
 }
 
 async function renderProject() {
@@ -540,21 +582,29 @@ async function renderProject() {
     const data = await api(`/api/project?name=${encodeURIComponent(name)}`);
     const s = data.stage || {};
     const drafts = data.drafts || [];
+    const orch = data.orch || {};
+    const researching = Boolean(orch.running || orch.status === "running");
+    $("orch-run").disabled = researching;
     $("project-box").innerHTML = `
       <article class="card"><h3>${escapeHtml(s.stage || "")}</h3>
         <p class="meta">open ${s.open || 0} · ready ${s.ready || 0} · P0 ${s.p0 || 0} · ход ${s.in_progress || 0}</p>
         <p class="meta">граф ${escapeHtml(s.graph_age || "нет")} · ${(s.docs || []).join(", ") || "нет спеки"}</p>
       </article>
-      ${drafts.map((d) => `<article class="card"><h3>${escapeHtml(d.title)}</h3>
-        <p class="meta">${escapeHtml(d.label)} · ${escapeHtml(d.kind)}</p>
-        <button class="btn primary" data-approve="${d.id}">Approve</button>
-        <button class="btn" data-skip="${d.id}">Skip</button></article>`).join("") || '<p class="meta">Черновиков нет</p>'}`;
+      ${orchCard(orch, name)}
+      ${drafts.map(draftCard).join("") || (researching ? "" : '<p class="meta">Черновиков нет</p>')}`;
     $("project-box").querySelectorAll("[data-approve]").forEach((b) => {
       b.onclick = async () => { await api("/api/draft", { id: b.dataset.approve, action: "approve" }); renderProject(); };
     });
     $("project-box").querySelectorAll("[data-skip]").forEach((b) => {
       b.onclick = async () => { await api("/api/draft", { id: b.dataset.skip, action: "skip" }); renderProject(); };
     });
+    if ($("orch-console")) {
+      $("orch-console").onclick = () => {
+        consolePick = `orch:${$("orch-console").dataset.orch || name}`;
+        setTab("console");
+      };
+    }
+    watchOrch(researching);
   } catch (err) {
     $("project-box").innerHTML = `<p class="err">${escapeHtml(err.message)}</p>`;
   }
@@ -564,7 +614,7 @@ $("orch-run").onclick = async () => {
   const name = currentFilter();
   if (!isPin(name)) return alert("Сначала выберите corp или clarity");
   await api("/api/orchestrate", { project: name });
-  alert("Оркестратор запущен");
+  renderProject();
 };
 
 function optionList(values, selected, extra) {
@@ -793,21 +843,25 @@ $("save-settings").onclick = async () => {
   refresh();
 };
 
-$("console-project").onchange = () => {
-  if (!isPin(currentFilter())) pollConsole();
-};
+$("console-project").onchange = () => pollConsole();
+
+function liveLabel(p) {
+  return p.startsWith("orch:") ? `orch · ${p.slice(5)}` : p;
+}
 
 async function pollConsole() {
   const f = currentFilter();
-  const pick = isPin(f) ? f : $("console-project").value;
+  let pick = consolePick || $("console-project").value;
+  if (isPin(f) && pick !== f && pick !== `orch:${f}`) pick = f;
+  if (consolePick) pick = consolePick;
+  consolePick = "";
   const data = await api(`/api/console?project=${encodeURIComponent(pick)}`);
   $("console").textContent = data.pane || data.log || "пусто";
   const live = data.live || [];
-  const names = [...new Set([...pinNames(), ...live])];
+  const names = [...new Set([...pinNames(), ...live, ...(isPin(f) ? [f, `orch:${f}`] : [])])];
   $("console-project").innerHTML = `<option value="">лог</option>` + names.map((p) =>
-    `<option ${p === pick ? "selected" : ""}>${escapeHtml(p)}</option>`
+    `<option value="${escapeHtml(p)}" ${p === pick ? "selected" : ""}>${escapeHtml(liveLabel(p))}</option>`
   ).join("");
-  if (isPin(f) && $("console-project").value !== f) $("console-project").value = f;
 }
 
 async function refresh() {
@@ -825,10 +879,13 @@ async function refresh() {
     if (!settingsDirty) state.catalog = settings.catalog || state.catalog;
     renderFilters();
     const running = (mapped.live || [])[0];
+    const researching = (mapped.orch || [])[0];
     const q = (settings.queue || []).filter((i) => i.status === "waiting").length;
     $("strip").innerHTML = running
       ? `<i class="pulse"></i><b>VPS · ${escapeHtml(running)}${q ? ` · очередь ${q}` : ""}</b>`
-      : `<i class="pulse"></i><b>${settings.queue_running ? `автоном · ждут ${q}` : "тихо"}</b>`;
+      : researching
+        ? `<i class="pulse"></i><b>orch · ${escapeHtml(researching)}</b>`
+        : `<i class="pulse"></i><b>${settings.queue_running ? `автоном · ждут ${q}` : "тихо"}</b>`;
     renderBoard();
     renderAuto();
     renderMap(mapped);

@@ -623,6 +623,7 @@ def default_workshop() -> dict:
         "catalog": {},
         "slots": {},
         "drafts": [],
+        "orch": {},
         "tg_offset": 0,
         "registry": {},
     }
@@ -642,6 +643,7 @@ def load_workshop() -> dict:
     data.setdefault("catalog", {})
     data.setdefault("slots", {})
     data.setdefault("drafts", [])
+    data.setdefault("orch", {})
     data.setdefault("tg_offset", 0)
     data.setdefault("registry", {})
     return data
@@ -1061,7 +1063,16 @@ def project_stage(reg: dict, name: str) -> dict:
     }
 
 
-def new_draft(repo: str, title: str, body: str, label: str, kind: str = "build") -> dict:
+def new_draft(
+    repo: str,
+    title: str,
+    body: str,
+    label: str,
+    kind: str = "build",
+    why: str = "",
+    vs_prd: str = "",
+    vs_open: str = "",
+) -> dict:
     if label not in {"ready", "blocked"}:
         label = "blocked"
     draft = {
@@ -1069,6 +1080,9 @@ def new_draft(repo: str, title: str, body: str, label: str, kind: str = "build")
         "repo": repo,
         "title": title.strip(),
         "body": body.strip(),
+        "why": (why or "").strip(),
+        "vs_prd": (vs_prd or "").strip(),
+        "vs_open": (vs_open or "").strip(),
         "label": label,
         "kind": kind if kind in {"build", "design", "qa"} else "build",
         "created": time.time(),
@@ -1077,6 +1091,17 @@ def new_draft(repo: str, title: str, body: str, label: str, kind: str = "build")
     data["drafts"].append(draft)
     save_workshop(data)
     return draft
+
+
+def draft_issue_body(draft: dict) -> str:
+    parts = [draft.get("body") or draft.get("title") or ""]
+    if draft.get("why"):
+        parts.append(f"## Зачем\n{draft['why']}")
+    if draft.get("vs_prd"):
+        parts.append(f"## В спеке\n{draft['vs_prd']}")
+    if draft.get("vs_open"):
+        parts.append(f"## Уже на доске\n{draft['vs_open']}")
+    return "\n\n".join(parts).strip()
 
 
 def prune_drafts() -> None:
@@ -1108,7 +1133,7 @@ def approve_draft(draft_id: str) -> dict:
     args = [
         "gh", "issue", "create", "-R", draft["repo"],
         "--title", draft["title"],
-        "--body", draft.get("body") or draft["title"],
+        "--body", draft_issue_body(draft),
         "--label", ",".join(labels),
     ]
     proc = run(args, check=False)
@@ -1181,10 +1206,12 @@ def orch_prompt(dest: Path, out: Path, spec_rels: list[str], open_lines: str, pr
         f"If there is no PRD/SPEC, output one draft titled 'написать SPEC'. "
         f"No new product ideas. No code. No git writes. "
         f"Do not run git commit, git push, or edit files in {dest}. "
-        f"Draft titles and bodies in Russian. "
+        f"Draft titles and bodies in Russian. Each item needs details for human Approve: "
+        f"body (full issue text), why, vs_prd (what in the spec this covers), "
+        f"vs_open (why it is not a duplicate of an open card). "
         f"Print a JSON array to stdout. You may also write it to {out} "
         f"(outside the repo) as "
-        f'[{{"title":"...","body":"...","label":"ready|blocked","kind":"build|design|qa"}}].'
+        f'[{{"title":"...","body":"...","why":"...","vs_prd":"...","vs_open":"...","label":"ready|blocked","kind":"build|design|qa"}}].'
     )
 
 
@@ -1193,55 +1220,80 @@ def orchestrate(reg: dict, repo: str) -> dict:
     dest = project_dir(project)
     if dest is None:
         die(f"project not cloned: {project['name']}")
-    issue = {"labels": []}
-    if "self" in {runner_of(card) for card in board_payload(reg)["cards"] if card["project"] == project["name"] and card["column"] == "in-progress"}:
-        die(f"{project['name']} is claimed as self")
     slot = slots_for(project["name"])["orchestrator"]
     kind = slot.get("kind") or "claude"
     if not have(KIND_BIN[kind]):
         die(f"{kind} CLI is not installed")
-    out = config_dir() / f"orch-{project['name']}.json"
-    cards = board_payload(reg)["cards"]
-    prompt = orch_prompt(
-        dest,
-        out,
-        orch_spec_rels(dest, reg.get("research_files") or []),
-        orch_open_lines(cards, project["name"]),
-        project["name"],
-    )
-    cmd = agent_argv(
-        kind,
-        prompt,
-        dest,
-        model=slot.get("model") or "",
-        effort=slot.get("effort") or "",
-        fast=bool(slot.get("fast")),
-        readonly=True,
-    )
     session = orch_session(project["name"])
-    if have("tmux"):
-        if run(["tmux", "has-session", "-t", session], check=False).returncode == 0:
-            die(f"already running: tmux {session}")
-        script = f"cd {shlex.quote(str(dest))} && {shlex.join(cmd)} 2>&1 | tee -a {shlex.quote(str(RUN_LOG))}"
-        subprocess.run(["tmux", "new-session", "-d", "-s", session, "bash", "-lc", script], check=False)
-        while run(["tmux", "has-session", "-t", session], check=False).returncode == 0:
-            time.sleep(3)
-    else:
-        subprocess.run(cmd, cwd=dest, check=False)
+    prefix = f"orch {project['name']}"
+    if have("tmux") and tmux_has(session):
+        die(f"already running: tmux {session}")
+    set_orch_state(project["name"], "running", kind=kind, started=time.time())
     drafts = []
-    payload = []
-    if out.is_file():
-        payload = parse_json_array(out.read_text())
-    if not payload and RUN_LOG.is_file():
-        payload = parse_json_array(RUN_LOG.read_text()[-20000:])
-    for item in payload[:12]:
-        if not isinstance(item, dict) or not item.get("title"):
-            continue
-        drafts.append(new_draft(repo, item.get("title") or "", item.get("body") or "", item.get("label") or "blocked", item.get("kind") or "build"))
-    if not drafts:
-        stage = project_stage(reg, project["name"])
-        if stage["stage"] == "нет спеки":
-            drafts.append(new_draft(repo, "написать SPEC", "В репо нет SPEC/PRD. Написать минимальную спеку.", "ready", "build"))
+    try:
+        cards = board_payload(reg)["cards"]
+        if "self" in {
+            runner_of(card)
+            for card in cards
+            if card["project"] == project["name"] and card["column"] == "in-progress"
+        }:
+            die(f"{project['name']} is claimed as self")
+        out = config_dir() / f"orch-{project['name']}.json"
+        prompt = orch_prompt(
+            dest,
+            out,
+            orch_spec_rels(dest, reg.get("research_files") or []),
+            orch_open_lines(cards, project["name"]),
+            project["name"],
+        )
+        cmd = agent_argv(
+            kind,
+            prompt,
+            dest,
+            model=slot.get("model") or "",
+            effort=slot.get("effort") or "",
+            fast=bool(slot.get("fast")),
+            readonly=True,
+        )
+        if have("tmux"):
+            pipe = (
+                f"{shlex.join(cmd)} 2>&1 | while IFS= read -r line || [ -n \"$line\" ]; do "
+                f"printf '%s %s\\n' {shlex.quote(prefix)} \"$line\"; done"
+            )
+            script = f"cd {shlex.quote(str(dest))} && {pipe} | tee -a {shlex.quote(str(RUN_LOG))}"
+            subprocess.run(["tmux", "new-session", "-d", "-s", session, "bash", "-lc", script], check=False)
+            while tmux_has(session):
+                time.sleep(3)
+        else:
+            subprocess.run(cmd, cwd=dest, check=False)
+        payload = []
+        if out.is_file():
+            payload = parse_json_array(out.read_text())
+        if not payload and RUN_LOG.is_file():
+            payload = parse_json_array(RUN_LOG.read_text()[-20000:])
+        for item in payload[:12]:
+            if not isinstance(item, dict) or not item.get("title"):
+                continue
+            drafts.append(
+                new_draft(
+                    repo,
+                    item.get("title") or "",
+                    item.get("body") or "",
+                    item.get("label") or "blocked",
+                    item.get("kind") or "build",
+                    why=item.get("why") or "",
+                    vs_prd=item.get("vs_prd") or "",
+                    vs_open=item.get("vs_open") or "",
+                )
+            )
+        if not drafts:
+            stage = project_stage(reg, project["name"])
+            if stage["stage"] == "нет спеки":
+                drafts.append(new_draft(repo, "написать SPEC", "В репо нет SPEC/PRD. Написать минимальную спеку.", "ready", "build"))
+        set_orch_state(project["name"], "done", drafts=len(drafts), kind=kind)
+    except Exception:
+        set_orch_state(project["name"], "failed", drafts=len(drafts), kind=kind)
+        raise
     buttons = [[{"text": f"Approve {d['title'][:24]}", "callback_data": f"a:{d['id']}"}, {"text": "Skip", "callback_data": f"s:{d['id']}"}] for d in drafts]
     notify_safe(f"{project['name']} · {len(drafts)} черновиков оркестратора", buttons=buttons or None)
     return {"ok": True, "drafts": drafts, "stage": project_stage(reg, project["name"])}
@@ -1483,10 +1535,55 @@ def tmux_session(project: str) -> str:
     return f"corp-run-{project}"
 
 
-def tmux_alive(project: str) -> bool:
+def tmux_has(session: str) -> bool:
     if not have("tmux"):
         return False
-    return run(["tmux", "has-session", "-t", tmux_session(project)], check=False).returncode == 0
+    return run(["tmux", "has-session", "-t", session], check=False).returncode == 0
+
+
+def tmux_alive(project: str) -> bool:
+    return tmux_has(tmux_session(project))
+
+
+def orch_alive(project: str) -> bool:
+    return tmux_has(orch_session(project))
+
+
+def capture_pane(session: str, lines: int = 80) -> str:
+    if not tmux_has(session):
+        return ""
+    proc = subprocess.run(
+        ["tmux", "capture-pane", "-pt", session, "-S", f"-{int(lines)}"],
+        text=True,
+        capture_output=True,
+    )
+    return proc.stdout or ""
+
+
+def set_orch_state(name: str, status: str, **extra) -> dict:
+    data = load_workshop()
+    row = dict((data.get("orch") or {}).get(name) or {})
+    row.update(extra)
+    row["status"] = status
+    row["updated"] = time.time()
+    data.setdefault("orch", {})[name] = row
+    save_workshop(data)
+    return row
+
+
+def orch_status(name: str) -> dict:
+    row = dict((load_workshop().get("orch") or {}).get(name) or {})
+    alive = orch_alive(name)
+    row["running"] = alive or row.get("status") == "running"
+    if alive:
+        row["status"] = "running"
+        row["pane"] = capture_pane(orch_session(name), 60)
+    else:
+        row["pane"] = ""
+    row["log"] = last_log_lines(12, prefix=f"orch {name}")
+    if row["log"] == "тишина" and RUN_LOG.is_file() and row["running"]:
+        row["log"] = last_log_lines(8)
+    return row
 
 
 def claim(repo: str, number: int, kind: str, note: str) -> None:

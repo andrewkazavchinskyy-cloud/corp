@@ -9,7 +9,6 @@ import json
 import os
 import secrets
 import sqlite3
-import subprocess
 import threading
 import time
 from pathlib import Path
@@ -303,14 +302,18 @@ def api_map() -> dict:
     corp.load_env()
     reg = corp.load_registry()
     live = []
+    orch = []
     for project in corp.active_projects(reg):
         if corp.tmux_alive(project["name"]):
             live.append(project["name"])
+        if corp.orch_alive(project["name"]):
+            orch.append(project["name"])
     workshop = corp.load_workshop()
     return {
         "doctor": corp.doctor_payload(),
         "projects": corp.research_report(reg),
         "live": live,
+        "orch": orch,
         "queue_running": workshop.get("queue_running"),
         "queue": workshop.get("queue"),
     }
@@ -410,17 +413,27 @@ def api_project(name: str) -> dict:
         prune()
     stage = call(corp.project_stage, corp.load_registry(), name)
     drafts = [d for d in corp.load_workshop().get("drafts") or [] if d.get("repo") == stage.get("repo")]
-    return {"stage": stage, "drafts": drafts, "slots": corp.slots_for(name)}
+    return {
+        "stage": stage,
+        "drafts": drafts,
+        "slots": corp.slots_for(name),
+        "orch": corp.orch_status(name),
+    }
 
 
 @app.post("/api/orchestrate")
 async def api_orchestrate(request: Request) -> dict:
     body = await request.json()
+    reg = corp.load_registry()
     repo = body.get("repo") or ""
     if not repo:
-        project = corp.project_by_name(corp.load_registry(), body.get("project") or "")
+        project = corp.project_by_name(reg, body.get("project") or "")
         repo = project.get("repo") or ""
-    threading.Thread(target=lambda: corp.orchestrate(corp.load_registry(), repo), daemon=True).start()
+    else:
+        project = corp.project_by_repo(reg, repo)
+    if corp.orch_alive(project["name"]):
+        return {"ok": True, "started": False}
+    threading.Thread(target=lambda: corp.orchestrate(reg, repo), daemon=True).start()
     return {"ok": True, "started": True}
 
 
@@ -530,15 +543,24 @@ def api_console(project: str = "") -> dict:
     if corp.RUN_LOG.is_file():
         log = corp.RUN_LOG.read_text()[-20000:]
     pane = ""
-    if project and corp.tmux_alive(project):
-        proc = subprocess.run(
-            ["tmux", "capture-pane", "-pt", corp.tmux_session(project), "-S", "-80"],
-            text=True,
-            capture_output=True,
-        )
-        pane = proc.stdout
-    live = [p["name"] for p in corp.active_projects(corp.load_registry()) if corp.tmux_alive(p["name"])]
-    return {"log": log, "pane": pane, "live": live}
+    kind = "log"
+    if project.startswith("orch:"):
+        name = project.split(":", 1)[1]
+        pane = corp.capture_pane(corp.orch_session(name), 80)
+        kind = "orch"
+    elif project and corp.tmux_alive(project):
+        pane = corp.capture_pane(corp.tmux_session(project), 80)
+        kind = "run"
+    elif project and corp.orch_alive(project):
+        pane = corp.capture_pane(corp.orch_session(project), 80)
+        kind = "orch"
+    live = []
+    for p in corp.active_projects(corp.load_registry()):
+        if corp.tmux_alive(p["name"]):
+            live.append(p["name"])
+        if corp.orch_alive(p["name"]):
+            live.append(f"orch:{p['name']}")
+    return {"log": log, "pane": pane, "live": live, "kind": kind}
 
 
 @app.get("/api/console/stream")

@@ -99,7 +99,17 @@ def main() -> None:
     assert "#20 [ready] SHIP-4" in lines and "old" not in lines and "other" not in lines
     prompt = corp.orch_prompt(Path("/tmp/clarity"), Path("/tmp/orch.json"), ["docs/SPEC.md"], lines, "clarity")
     assert "docs/SPEC.md" in prompt and "#20" in prompt and "do not duplicate" in prompt.lower()
+    assert "vs_prd" in prompt and "vs_open" in prompt
     assert "workshop/static" not in prompt
+    built_body = corp.draft_issue_body({
+        "title": "t",
+        "body": "сделать x",
+        "why": "дырка в спеке",
+        "vs_prd": "SHIP-4 экран",
+        "vs_open": "не дубль #20",
+    })
+    assert "сделать x" in built_body and "Зачем" in built_body
+    assert "SHIP-4" in built_body and "не дубль #20" in built_body
     corp_prompt = corp.orch_prompt(Path("/tmp/corp"), Path("/tmp/orch.json"), ["docs/WORKSHOP.md"], "(none)", "corp")
     assert "workshop/static" in corp_prompt and "preview.html" in corp_prompt
     built = corp.agent_prompt("andrewkazavchinskyy-cloud/corp", 27, "t", "u", ROOT, "corp")

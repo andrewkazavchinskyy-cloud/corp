@@ -41,6 +41,14 @@ button { cursor: pointer; }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .row, .toolbar, .split { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 #orch-hint { flex: 1 1 100%; margin: 0; }
+.card.orch.live { box-shadow: inset 3px 0 0 var(--sage); }
+.orch-log, .draft-body {
+  margin: 8px 0 0; padding: 12px; max-height: 220px; overflow: auto;
+  background: #09090b; border: 1px solid var(--line); border-radius: 10px;
+  font: 12px/1.5 "IBM Plex Mono", ui-monospace, monospace; color: #c8c2b4;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.draft-why { margin: 8px 0 0; color: var(--text); }
 .col { display: grid; gap: 10px; }
 .stack { display: grid; gap: 8px; }
 .note, .err, .kicker, .meta { color: var(--dim); font-size: 13px; }
