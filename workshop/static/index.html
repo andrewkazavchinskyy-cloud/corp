@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Schibsted+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=13">
+  <link rel="stylesheet" href="/static/app.css?v=14">
 </head>
 <body>
   <div id="gate" class="gate hidden">
@@ -105,7 +105,9 @@
             <button type="button" class="btn primary" id="save-settings">Сохранить</button>
           </div>
           <p id="catalog-note" class="note"></p>
+          <h2 class="block-title">Слоты</h2>
           <div id="slots" class="stack"></div>
+          <h2 class="block-title">Подписки</h2>
           <div id="profiles" class="stack"></div>
           <div class="panel">
             <h2>Репозитории</h2>
@@ -144,12 +146,12 @@
         <button data-tab="auto" type="button">Автоном</button>
         <button data-tab="project" type="button">Проект</button>
         <button data-tab="map" type="button">Карта</button>
-        <button data-tab="settings" type="button">Ещё</button>
+        <button data-tab="settings" type="button">Настройки</button>
       </nav>
     </section>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/static/app.js?v=13"></script>
+  <script src="/static/app.js?v=14"></script>
 </body>
 </html>

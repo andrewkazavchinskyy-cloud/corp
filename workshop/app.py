@@ -317,7 +317,12 @@ def api_map() -> dict:
 
 
 @app.get("/api/settings")
-def api_settings() -> dict:
+def api_settings(probe: bool = False) -> dict:
+    if probe:
+        try:
+            corp.probe_catalog()
+        except Exception:
+            pass
     data = corp.load_workshop()
     data["catalog"] = corp.load_catalog()
     data["pins"] = [{"name": p["name"], "repo": p.get("repo")} for p in corp.pinned_projects(corp.load_registry())]

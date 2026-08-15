@@ -21,6 +21,7 @@ let phoneCol = "ready";
 let settingsDirty = false;
 let lastBoardKey = "";
 let refreshBusy = false;
+let catalogProbed = false;
 
 function cookieGet(name) {
   const m = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
@@ -168,6 +169,23 @@ function setTab(name) {
   $("page-kicker").textContent = titles[name][1];
   if (name === "console") pollConsole();
   if (name === "project") renderProject();
+  if (name === "settings" && !catalogProbed) {
+    catalogProbed = true;
+    $("catalog-note").textContent = "снимаю каталог с VPS…";
+    api("/api/settings?probe=1").then((data) => {
+      if (!settingsDirty) {
+        state.catalog = data.catalog || state.catalog;
+        state.profiles = data.profiles || state.profiles;
+        state.slots = data.slots || state.slots;
+      } else {
+        state.catalog = data.catalog || state.catalog;
+      }
+      renderSettings();
+      renderSlots();
+    }).catch((err) => {
+      $("catalog-note").textContent = err.message;
+    });
+  }
 }
 
 document.querySelectorAll("[data-tab]").forEach((btn) => {
@@ -415,6 +433,25 @@ function optionList(values, selected, extra) {
   return all.map((v) => `<option ${v === selected ? "selected" : ""}>${escapeHtml(v)}</option>`).join("");
 }
 
+function kindStatus(kind) {
+  const row = catalogKind(kind);
+  if (!row.installed) return ["nopill", "нет CLI"];
+  if (row.stale) return ["nopill", "кэш"];
+  if (!(row.models || []).length) return ["nopill", "пусто"];
+  return ["okpill", "готов"];
+}
+
+function modelField(kind, selected, slot, role) {
+  const models = catalogKind(kind).models || [];
+  const attrs = slot ? `data-slot="${slot}" data-role="${role}"` : "";
+  const select = `<select ${attrs} data-k="model">
+            <option value="">auto</option>
+            ${optionList(models, selected, selected)}
+          </select>`;
+  if (models.length) return select;
+  return `${select}<input ${attrs} data-k="model-custom" placeholder="свой id с CLI" value="${escapeHtml(selected || "")}">`;
+}
+
 function renderSettings() {
   $("max-parallel").value = state.max_parallel || 3;
   const catalog = (state.catalog && state.catalog.kinds) || {};
@@ -422,12 +459,12 @@ function renderSettings() {
   $("catalog-note").textContent = probed;
   $("profiles").innerHTML = (state.profiles || []).map((p, i) => {
     const kind = catalog[p.kind] || {};
-    const models = kind.models || [];
     const efforts = kind.efforts || [];
+    const [pill, status] = kindStatus(p.kind);
     return `<article class="plan ${escapeHtml(p.kind)}" data-i="${i}"><i class="accent"></i><div class="plan-b">
       <div class="plan-h"><div><h3>${escapeHtml(p.label || p.kind)}</h3>
         <p>${escapeHtml(p.kind)}</p></div>
-        <span class="${kind.installed ? "okpill" : "nopill"}">${kind.installed ? "готов" : "нет CLI"}</span></div>
+        <span class="${pill}">${status}</span></div>
       <div class="grid2">
         <label>Имя <input data-k="label" value="${escapeHtml(p.label || "")}"></label>
         <label>Адаптер
@@ -437,10 +474,7 @@ function renderSettings() {
           </select>
         </label>
         <label>Модель
-          <select data-k="model">
-            <option value="">auto</option>
-            ${optionList(models, p.model, p.model)}
-          </select>
+          ${modelField(p.kind, p.model)}
         </label>
         <label>Effort
           <select data-k="effort">
@@ -467,16 +501,14 @@ function renderSlots() {
     const slots = (state.slots || {})[p.name] || {};
     return `<article class="panel"><h2>${escapeHtml(p.name)} · слоты</h2>${["orchestrator", "build", "design", "qa"].map((role) => {
       const s = slots[role] || {};
-      const kind = catalog[s.kind] || catalog.claude || {};
+      const kindName = s.kind || "claude";
+      const kind = catalog[kindName] || {};
       return `<label>${role}
         <select data-slot="${p.name}" data-role="${role}" data-k="kind">
           ${["claude", "codex", "grok", "cursor"].map((k) =>
-            `<option ${s.kind === k ? "selected" : ""} ${catalog[k] && catalog[k].installed === false ? "disabled" : ""}>${k}</option>`).join("")}
+            `<option ${kindName === k ? "selected" : ""} ${catalog[k] && catalog[k].installed === false ? "disabled" : ""}>${k}</option>`).join("")}
         </select>
-        <select data-slot="${p.name}" data-role="${role}" data-k="model">
-          <option value="">auto</option>
-          ${optionList(kind.models || [], s.model, s.model)}
-        </select>
+        ${modelField(kindName, s.model, p.name, role)}
         <select data-slot="${p.name}" data-role="${role}" data-k="effort">
           ${(kind.efforts || []).map((e) => `<option ${s.effort === e ? "selected" : ""}>${e}</option>`).join("")}
         </select>
@@ -487,7 +519,33 @@ function renderSlots() {
 }
 
 $("tab-settings").addEventListener("input", () => { settingsDirty = true; });
-$("tab-settings").addEventListener("change", () => { settingsDirty = true; });
+$("tab-settings").addEventListener("change", (evt) => {
+  settingsDirty = true;
+  if (evt.target && evt.target.dataset.k === "kind") {
+    const card = evt.target.closest("[data-i]");
+    if (card) {
+      const i = Number(card.dataset.i);
+      const get = (k) => card.querySelector(`[data-k="${k}"]`);
+      state.profiles[i] = {
+        ...state.profiles[i],
+        kind: get("kind").value,
+        label: get("label").value,
+        model: "",
+        effort: get("effort")?.value || "",
+        fast: Boolean(get("fast")?.checked),
+      };
+      renderSettings();
+      return;
+    }
+    if (evt.target.dataset.slot) {
+      const name = evt.target.dataset.slot;
+      const role = evt.target.dataset.role;
+      state.slots[name] = state.slots[name] || {};
+      state.slots[name][role] = { ...(state.slots[name][role] || {}), kind: evt.target.value, model: "" };
+      renderSlots();
+    }
+  }
+});
 
 $("refresh-catalog").onclick = async () => {
   $("catalog-note").textContent = "снимаю каталог с VPS…";
@@ -517,7 +575,7 @@ $("save-settings").onclick = async () => {
       id: prev.id,
       kind: get("kind").value,
       label: get("label").value,
-      model: get("model").value,
+      model: get("model-custom")?.value.trim() || get("model").value,
       effort: get("effort").value,
       fast: Boolean(get("fast")?.checked),
     };
@@ -529,7 +587,8 @@ $("save-settings").onclick = async () => {
     slots[name] = slots[name] || {};
     slots[name][role] = slots[name][role] || { kind: "claude", model: "", effort: "high", fast: false };
     if (el.dataset.k === "fast") slots[name][role].fast = el.checked;
-    else slots[name][role][el.dataset.k] = el.value;
+    else if (el.dataset.k === "model-custom" && el.value.trim()) slots[name][role].model = el.value.trim();
+    else if (el.dataset.k !== "model-custom") slots[name][role][el.dataset.k] = el.value;
   });
   await api("/api/settings", { profiles, max_parallel: Number($("max-parallel").value), slots });
   settingsDirty = false;

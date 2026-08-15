@@ -615,7 +615,7 @@ _MODEL_SKIP = {
 _MODEL_ALIASES = {"sonnet", "opus", "haiku", "fable", "composer"}
 _MODEL_LIST = {
     "claude": [],
-    "codex": [],
+    "codex": [["codex", "debug", "models"]],
     "grok": [["grok", "models"]],
     "cursor": [["agent", "models"]],
 }
@@ -627,7 +627,42 @@ def _looks_like_model(token: str) -> bool:
     if any(ch in token for ch in "/\\:"):
         return False
     low = token.lower()
+    if low.startswith(("gpt-", "grok-", "claude-", "codex-")):
+        return True
     return bool(any(ch.isdigit() for ch in token) or low in _MODEL_ALIASES)
+
+
+def _models_from_json(text: str) -> tuple[list[str], list[str], bool]:
+    start = text.find("{")
+    if start < 0:
+        start = text.find("[")
+    if start < 0:
+        return [], [], False
+    try:
+        payload = json.loads(text[start:])
+    except json.JSONDecodeError:
+        return [], [], False
+    rows = payload.get("models") if isinstance(payload, dict) else payload
+    if not isinstance(rows, list):
+        return [], [], False
+    models: list[str] = []
+    efforts: list[str] = []
+    fast = False
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if row.get("visibility") == "hide":
+            continue
+        slug = str(row.get("slug") or row.get("id") or row.get("model") or "")
+        if _looks_like_model(slug) and slug not in models:
+            models.append(slug)
+        for item in row.get("supported_reasoning_levels") or []:
+            effort = item.get("effort") if isinstance(item, dict) else ""
+            if effort and effort not in efforts:
+                efforts.append(str(effort))
+        if row.get("additional_speed_tiers") or row.get("service_tiers"):
+            fast = True
+    return models[:40], efforts, fast
 
 
 def _parse_models(text: str) -> list[str]:
@@ -673,10 +708,19 @@ def probe_kind(kind: str) -> dict:
         row["efforts"] = _parse_efforts(help_text) or ["low", "high"]
     if "service_tier" in help_l or re.search(r"--fast\b", help_l):
         row["fast"] = True
-    models = _parse_models(help_text)
+    models = _parse_models(help_text) if kind == "claude" else []
     for args in _MODEL_LIST.get(kind) or []:
-        proc = run(args, check=False, timeout=8)
-        listed = _parse_models((proc.stdout or "") + "\n" + (proc.stderr or ""))
+        proc = run(args, cwd=Path.home(), check=False, timeout=20)
+        raw = (proc.stdout or "") + "\n" + (proc.stderr or "")
+        json_models, json_efforts, json_fast = _models_from_json(raw)
+        if json_models:
+            models = json_models
+            if json_efforts:
+                row["efforts"] = json_efforts
+            if json_fast:
+                row["fast"] = True
+            break
+        listed = _parse_models(raw)
         if listed:
             models = listed
             break

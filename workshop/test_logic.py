@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import importlib.machinery
 import importlib.util
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -52,6 +53,16 @@ def main() -> None:
     assert corp._parse_efforts("Effort (low, medium, high, xhigh, max)") == ["low", "medium", "high", "xhigh", "max"]
     assert corp._parse_efforts("max-turns and prompt-cache") == []
     assert corp.default_slot()["kind"] == "claude"
+    blob = json.dumps({
+        "models": [
+            {"slug": "gpt-5.6-sol", "visibility": "list", "supported_reasoning_levels": [{"effort": "low"}, {"effort": "high"}], "additional_speed_tiers": ["fast"]},
+            {"slug": "gpt-daybreak-blue-latest", "visibility": "list"},
+            {"slug": "codex-auto-review", "visibility": "hide"},
+        ]
+    })
+    models, efforts, fast = corp._models_from_json(blob)
+    assert models == ["gpt-5.6-sol", "gpt-daybreak-blue-latest"]
+    assert efforts == ["low", "high"] and fast
     print("ok")
 
 
