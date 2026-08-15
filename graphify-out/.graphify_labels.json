@@ -1,1 +1,18 @@
-{"0": "main", "1": "bootstrap", "2": "corp", "3": "collect_issues", "4": "project_dir"}
+{
+  "0": "main",
+  "1": "run",
+  "2": "corp",
+  "3": "board_payload",
+  "4": "app.py",
+  "5": "app.js",
+  "6": "Workshop operating contract",
+  "7": "run_issue",
+  "8": "die",
+  "9": "2026-08-15",
+  "10": "2026-08-16",
+  "11": "probe_kind",
+  "12": "pulse_loop",
+  "13": "CorpError",
+  "14": "memory/README.md",
+  "15": "CLAUDE.md"
+}
