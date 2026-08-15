@@ -127,26 +127,30 @@ def pull_projects(reg: dict) -> None:
         print(f"{project['name']}: {status}")
 
 
-def issues_for(repo: str, label: str | None) -> list[dict]:
-    cmd = [
-        "gh",
-        "issue",
-        "list",
-        "-R",
-        repo,
-        "--state",
-        "open",
-        "--limit",
-        "50",
-        "--json",
-        "number,title,url,labels,updatedAt",
-    ]
-    if label:
-        cmd.extend(["--label", label])
-    proc = run(cmd, check=False)
+def issues_enabled(project: dict) -> bool:
+    return project.get("issues", True)
+
+
+def issues_for(repo: str) -> list[dict]:
+    proc = run(
+        [
+            "gh",
+            "issue",
+            "list",
+            "-R",
+            repo,
+            "--state",
+            "open",
+            "--limit",
+            "50",
+            "--json",
+            "number,title,url,labels,updatedAt",
+        ],
+        check=False,
+    )
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout).strip()
-        if "label" in err.lower() and label:
+        if "disabled issues" in err.lower():
             return []
         print(f"{repo}: {err}", file=sys.stderr)
         return []
@@ -167,20 +171,6 @@ def rank(issue: dict) -> tuple:
     return (pri, issue.get("updatedAt") or "")
 
 
-def collect_ready(reg: dict) -> list[dict]:
-    ready_label = reg.get("labels", {}).get("ready", "ready")
-    blocked_label = reg.get("labels", {}).get("blocked", "blocked")
-    found = []
-    for project in active_projects(reg):
-        for issue in issues_for(project["repo"], ready_label):
-            names = label_names(issue)
-            if blocked_label in names:
-                continue
-            found.append({**issue, "project": project["name"], "repo": project["repo"]})
-    found.sort(key=rank)
-    return found
-
-
 def project_by_name(reg: dict, name: str) -> dict:
     for project in reg.get("projects", []):
         if project["name"] == name:
@@ -188,17 +178,25 @@ def project_by_name(reg: dict, name: str) -> dict:
     return {"name": name, "roots": []}
 
 
-def collect_open(reg: dict) -> list[dict]:
+def collect_issues(reg: dict) -> list[dict]:
     blocked_label = reg.get("labels", {}).get("blocked", "blocked")
     found = []
     for project in active_projects(reg):
-        for issue in issues_for(project["repo"], None):
-            names = label_names(issue)
-            if blocked_label in names:
+        if not issues_enabled(project):
+            continue
+        for issue in issues_for(project["repo"]):
+            if blocked_label in label_names(issue):
                 continue
             found.append({**issue, "project": project["name"], "repo": project["repo"]})
     found.sort(key=rank)
     return found
+
+
+def split_ready(reg: dict, issues: list[dict]) -> tuple[list[dict], list[dict]]:
+    ready_label = reg.get("labels", {}).get("ready", "ready")
+    ready = [issue for issue in issues if ready_label in label_names(issue)]
+    other = [issue for issue in issues if ready_label not in label_names(issue)]
+    return ready, other
 
 
 def research_report(reg: dict) -> list[dict]:
@@ -228,7 +226,8 @@ def cycle_payload(reg: dict) -> dict:
     if not gh_ready():
         die("gh is missing or not logged in. Run: gh auth login")
 
-    ready = collect_ready(reg)
+    issues = collect_issues(reg)
+    ready, other = split_ready(reg, issues)
     if ready:
         nxt = ready[0]
         dest = project_dir(project_by_name(reg, nxt["project"]))
@@ -248,7 +247,7 @@ def cycle_payload(reg: dict) -> dict:
     return {
         "mode": "research",
         "next": None,
-        "open_unblocked": collect_open(reg)[:20],
+        "open_unblocked": other[:20],
         "research": research_report(reg),
         "instruction": (
             "No ready Issues. Follow HARNESS.md research loop. "

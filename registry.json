@@ -57,6 +57,7 @@
       "name": "OpenJarvis",
       "repo": "andrewkazavchinskyy-cloud/OpenJarvis",
       "status": "active",
+      "issues": false,
       "roots": ["~/Developer/OpenJarvis"]
     },
     {
