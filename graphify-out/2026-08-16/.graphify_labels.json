@@ -1,18 +1,19 @@
 {
-  "0": "project_dir",
+  "0": "orchestrate",
   "1": "die",
   "2": "load_workshop",
-  "3": "queue_add",
+  "3": "corp",
   "4": "app.py",
   "5": "app.js",
   "6": "Workshop operating contract",
-  "7": "corp",
+  "7": "main",
   "8": "main",
   "9": "2026-08-15",
   "10": "2026-08-16",
   "11": "run_issue",
-  "12": "main",
+  "12": "board_payload",
   "13": "CorpError",
   "14": "memory/README.md",
-  "15": "CLAUDE.md"
+  "15": "CLAUDE.md",
+  "16": "project_dir"
 }
