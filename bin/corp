@@ -381,13 +381,25 @@ def pick_agent() -> str:
     die("no agent CLI found. Install claude, codex, or grok")
 
 
-def agent_argv(name: str, prompt: str) -> list[str]:
+def agent_argv(name: str, prompt: str, dest: Path) -> list[str]:
+    workspace_root = workspace()
     if name == "claude":
-        return ["claude", "-p", prompt]
+        return [
+            "claude",
+            "-p",
+            prompt,
+            "--dangerously-skip-permissions",
+            "--add-dir",
+            str(dest),
+            "--add-dir",
+            str(workspace_root),
+            "--add-dir",
+            "/opt/corp",
+        ]
     if name == "codex":
-        return ["codex", "exec", prompt]
+        return ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", prompt]
     if name == "grok":
-        return ["grok", "-p", prompt]
+        return ["grok", "-p", prompt, "--permission-mode", "auto"]
     die(f"unknown agent {name}")
 
 
@@ -409,8 +421,10 @@ def run_next(reg: dict) -> None:
 
     agent = pick_agent()
     prompt = (
-        f"Follow AGENTS.md and HARNESS.md in the corp repo. "
-        f"Do only this GitHub Issue and nothing else: {nxt['repo']}#{nxt['issue']} {nxt['title']} {nxt['url']}"
+        f"Follow /opt/corp/AGENTS.md and /opt/corp/HARNESS.md. "
+        f"Do only this GitHub Issue and nothing else: {nxt['repo']}#{nxt['issue']} {nxt['title']} {nxt['url']}. "
+        f"Active project checkouts are in {workspace()}. Control plane is /opt/corp. "
+        f"Commit and push results in the relevant repos. Never rewrite git history."
     )
     started = f"corp: start {nxt['repo']}#{nxt['issue']} via {agent}\n{nxt['title']}\n{nxt['url']}"
     try:
@@ -418,7 +432,7 @@ def run_next(reg: dict) -> None:
     except SystemExit:
         print("telegram skipped", file=sys.stderr)
 
-    cmd = agent_argv(agent, prompt)
+    cmd = agent_argv(agent, prompt, dest)
     print(f"running: {' '.join(cmd[:2])} ...", file=sys.stderr)
     proc = subprocess.run(cmd, cwd=dest)
     status = "ok" if proc.returncode == 0 else f"exit {proc.returncode}"
