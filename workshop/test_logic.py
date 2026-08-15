@@ -2,9 +2,14 @@
 import importlib.machinery
 import importlib.util
 import json
+import os
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# Isolate workshop.json so this test never touches a real queue on the machine
+# that runs it (the VPS runs this same repo as its live control plane).
+os.environ.setdefault("CORP_WORKSHOP_JSON", str(Path(tempfile.gettempdir()) / f"corp-workshop-test-{os.getpid()}.json"))
 _loader = importlib.machinery.SourceFileLoader("corpbin", str(ROOT / "bin" / "corp"))
 corp = importlib.util.module_from_spec(importlib.util.spec_from_loader(_loader.name, _loader))
 _loader.exec_module(corp)
@@ -150,6 +155,44 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert parsed["groups"][0]["name"] == "main" and parsed["groups"][0]["size"] == 33
     assert parsed["groups"][0]["nodes"] == ["active_projects()", "board_payload()"]
     assert parsed["bridges"][0]["a"] == "run_issue()" and parsed["bridges"][0]["b"] == "pulse_loop()"
+
+    # Regression corp#38: launch_agent/wait_tmux must surface the agent's
+    # real exit code instead of tee's (always 0), and two consecutive runs
+    # must land in distinct, unambiguously tied log files.
+    if corp.have("tmux"):
+        project = f"test-regress-{corp.secrets.token_hex(4)}"
+        ok_id = corp.new_run_id()
+        code = corp.launch_agent("claude", ["bash", "-c", "exit 0"], Path("/tmp"), project, run_id=ok_id)
+        assert code == 0, f"expected exit 0, got {code}"
+        fail_id = corp.new_run_id()
+        code = corp.launch_agent("claude", ["bash", "-c", "exit 17"], Path("/tmp"), project, run_id=fail_id)
+        assert code == 17, f"expected exit 17, got {code}"
+        assert ok_id != fail_id
+        assert corp.run_log_path(ok_id) != corp.run_log_path(fail_id)
+        assert corp.run_log_path(ok_id).is_file() and corp.run_log_path(fail_id).is_file()
+
+    # Regression corp#38: a queue row left `running` by a process that died
+    # mid-run must be reconciled deterministically (never left stuck, never
+    # silently replayed as success) once its tmux session is confirmed gone.
+    # A row whose project still has a live watcher — in-process or a live
+    # tmux session — is left untouched and never auto-relaunched.
+    data = corp.default_workshop()
+    data["queue"] = [
+        {"repo": "o/r", "issue": 1, "project": "corp-test-orphan-missing", "status": "running"},
+        {"repo": "o/r", "issue": 2, "project": "corp-test-orphan-missing", "status": "waiting"},
+    ]
+    corp.save_workshop(data)
+    changed = corp.reconcile_running(active_projects=set())
+    assert [c["issue"] for c in changed] == [1]
+    rows = {i["issue"]: i for i in corp.load_workshop()["queue"]}
+    assert rows[1]["status"] == "interrupted" and "finished" in rows[1]
+    assert rows[2]["status"] == "waiting"
+
+    data["queue"] = [{"repo": "o/r", "issue": 3, "project": "corp-test-orphan-watched", "status": "running"}]
+    corp.save_workshop(data)
+    assert corp.reconcile_running(active_projects={"corp-test-orphan-watched"}) == []
+    assert corp.load_workshop()["queue"][0]["status"] == "running"
+
     print("ok")
 
 

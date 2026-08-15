@@ -34,7 +34,8 @@ let consolePick = "";
 let stripHold = 0;
 let stripTarget = "";
 const ROLE_RU = { orchestrator: "Оркестр", build: "Сборка", design: "Дизайн", qa: "QA" };
-const QUEUE_RU = { waiting: "ждёт", running: "идёт", failed: "упал", done: "готово" };
+const QUEUE_RU = { waiting: "ждёт", running: "идёт", failed: "упал", done: "готово", skipped: "пропущен", interrupted: "прервано · restart" };
+const QUEUE_CLASS = { done: "q-done", failed: "q-failed", interrupted: "q-failed", running: "q-running", skipped: "q-dim" };
 
 function cookieGet(name) {
   const m = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
@@ -571,12 +572,15 @@ function renderAuto() {
     el.onclick = () => goNext(el);
   });
   $("auto-add").disabled = !$("auto-ready").querySelector("input:checked");
-  $("auto-queue").innerHTML = (state.queue || []).map((q) =>
-    `<article class="card"><header><span>${escapeHtml(q.project)}</span><span>${escapeHtml(QUEUE_RU[q.status] || q.status)}</span></header>
+  $("auto-queue").innerHTML = (state.queue || []).map((q) => {
+    const cls = QUEUE_CLASS[q.status] || "";
+    const hasCode = (q.status === "failed" || q.status === "done") && q.exit_code !== undefined && q.exit_code !== null;
+    const label = QUEUE_RU[q.status] || q.status;
+    return `<article class="card"><header><span>${escapeHtml(q.project)}</span><span class="badge ${cls}">${escapeHtml(label)}${hasCode ? ` · exit ${Number(q.exit_code)}` : ""}</span></header>
       <h3>#${q.issue} ${escapeHtml(q.title || "")}</h3>
       <p class="meta">${escapeHtml(q.profile || "")}</p>
-      ${q.status === "waiting" ? `<button class="btn" data-rm="${q.repo}#${q.issue}">Убрать</button>` : ""}</article>`
-  ).join("") || '<p class="meta">Очередь пуста</p>';
+      ${q.status !== "running" ? `<button class="btn" data-rm="${q.repo}#${q.issue}">Убрать</button>` : ""}</article>`;
+  }).join("") || '<p class="meta">Очередь пуста</p>';
   $("auto-queue").querySelectorAll("[data-rm]").forEach((btn) => {
     btn.onclick = async () => {
       try { await write("/api/queue/rm", { issue: btn.dataset.rm }, "убрал"); } catch (_) { /* strip */ }
@@ -1179,6 +1183,25 @@ function liveLabel(p) {
   return p.startsWith("orch:") ? `orch · ${p.slice(5)}` : p;
 }
 
+const RUN_STATUS_RU = { running: "идёт", done: "готово", failed: "упал" };
+
+function fmtDur(started, finished) {
+  if (!started) return "";
+  const secs = Math.max(0, Math.round((finished || Date.now() / 1000) - started));
+  const mins = Math.floor(secs / 60);
+  return mins ? `${mins}м` : `${secs}с`;
+}
+
+function renderRuns(runs) {
+  $("runs").innerHTML = (runs || []).map((r) => {
+    const cls = QUEUE_CLASS[r.status] || "";
+    const code = r.code !== undefined && r.code !== null ? ` · exit ${Number(r.code)}` : "";
+    return `<article class="card"><header><span>${escapeHtml(r.repo || "")}#${r.issue ?? ""}</span>
+      <span class="badge ${cls}">${escapeHtml(RUN_STATUS_RU[r.status] || r.status || "")}${code}</span></header>
+      <p class="meta">${escapeHtml(r.kind || "")} · ${fmtDur(r.started, r.finished)}</p></article>`;
+  }).join("") || '<p class="meta">Пусто</p>';
+}
+
 async function pollConsole() {
   const f = currentFilter();
   let pick = consolePick || $("console-project").value;
@@ -1186,7 +1209,10 @@ async function pollConsole() {
   if (consolePick) pick = consolePick;
   consolePick = "";
   try {
-    const data = await api(`/api/console?project=${encodeURIComponent(pick)}`);
+    const [data, runs] = await Promise.all([
+      api(`/api/console?project=${encodeURIComponent(pick)}`),
+      api("/api/runs?limit=12"),
+    ]);
     $("console").textContent = data.pane || data.log || "пусто";
     $("console").scrollTop = $("console").scrollHeight;
     const live = data.live || [];
@@ -1194,6 +1220,7 @@ async function pollConsole() {
     $("console-project").innerHTML = `<option value="">сессия</option>` + names.map((p) =>
       `<option value="${escapeHtml(p)}" ${p === pick ? "selected" : ""}>${live.includes(p) ? "● " : ""}${escapeHtml(liveLabel(p))}</option>`
     ).join("");
+    renderRuns(runs.runs);
   } catch (err) {
     flash(err.message, true);
   }

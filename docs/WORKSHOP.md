@@ -94,3 +94,15 @@ Approve/Skip one issue per tap. Workshop duplicates Approve.
 
 One writing runner per repo. Orchestrator may run in parallel.
 `self` blocks VPS writers and orchestrator. Different pins may run in parallel.
+
+## Runner
+
+Each run gets a `run_id`, its own log under `~/.config/corp/runs/`, and a
+result row in `~/.config/corp/runs.json` (repo, issue, kind, started,
+finished, exit code, status). Queue/label/Telegram success requires a
+confirmed `exit code == 0` and the expected GitHub state — a crash never
+reports as success. Queue status: `waiting`, `running`, `done`, `failed`,
+`skipped`, `interrupted`. On workshop startup, and before every queue tick,
+rows stuck on `running` with no live in-process watcher and no matching
+tmux session are closed out as `interrupted` — never silently left stuck,
+never auto-relaunched. Console tab shows recent runs from `runs.json`.

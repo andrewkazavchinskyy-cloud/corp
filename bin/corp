@@ -34,6 +34,8 @@ CONFIG_DIR = Path.home() / ".config" / "corp"
 WORKSHOP_JSON = Path(os.environ["CORP_WORKSHOP_JSON"]) if os.environ.get("CORP_WORKSHOP_JSON") else CONFIG_DIR / "workshop.json"
 TOKEN_PATH = CONFIG_DIR / "workshop-setup-token"
 RUN_LOG = CONFIG_DIR / "run.log"
+RUNS_JSON = CONFIG_DIR / "runs.json"
+RUNS_KEEP = 200
 DEFAULT_PROFILES = [
     {"id": "claude", "kind": "claude", "label": "Claude", "model": "sonnet", "effort": "high", "fast": False},
     {"id": "codex", "kind": "codex", "label": "Codex", "model": "", "effort": "high", "fast": False},
@@ -1837,14 +1839,65 @@ def append_log(text: str) -> None:
             handle.write("\n")
 
 
-def wait_tmux(project: str) -> int:
+def run_dir() -> Path:
+    path = config_dir() / "runs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def new_run_id() -> str:
+    return f"{time.strftime('%Y%m%dT%H%M%S')}-{secrets.token_hex(3)}"
+
+
+def run_log_path(run_id: str) -> Path:
+    return run_dir() / f"{run_id}.log"
+
+
+def run_exit_path(run_id: str) -> Path:
+    return run_dir() / f"{run_id}.exit"
+
+
+def load_runs() -> list[dict]:
+    if not RUNS_JSON.is_file():
+        return []
+    try:
+        return json.loads(RUNS_JSON.read_text())
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def save_runs(records: list[dict]) -> None:
+    config_dir()
+    RUNS_JSON.write_text(json.dumps(records[-RUNS_KEEP:], indent=2) + "\n")
+
+
+def record_run(run_id: str, **fields) -> dict:
+    records = load_runs()
+    row = next((r for r in records if r.get("id") == run_id), None)
+    if row is None:
+        row = {"id": run_id}
+        records.append(row)
+    row.update(fields)
+    save_runs(records)
+    return row
+
+
+def wait_tmux(project: str, run_id: str = "") -> int:
     session = tmux_session(project)
     while run(["tmux", "has-session", "-t", session], check=False).returncode == 0:
         time.sleep(3)
-    return 0
+    if not run_id:
+        return 0
+    exit_path = run_exit_path(run_id)
+    if not exit_path.is_file():
+        return -1
+    try:
+        return int(exit_path.read_text().strip())
+    except ValueError:
+        return -1
 
 
-def launch_agent(kind: str, cmd: list[str], dest: Path, project: str, prefix: str = "") -> int:
+def launch_agent(kind: str, cmd: list[str], dest: Path, project: str, prefix: str = "", run_id: str = "") -> int:
     tag = prefix or project
     append_log(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} {tag} via {kind} ===\n")
     if have("tmux"):
@@ -1857,14 +1910,25 @@ def launch_agent(kind: str, cmd: list[str], dest: Path, project: str, prefix: st
                 f" | while IFS= read -r line || [ -n \"$line\" ]; do "
                 f"printf '%s %s\\n' {shlex.quote(prefix)} \"$line\"; done"
             )
+        tee_targets = [str(RUN_LOG)]
+        exit_path = None
+        if run_id:
+            tee_targets.append(str(run_log_path(run_id)))
+            exit_path = run_exit_path(run_id)
+        tee_cmd = " ".join(shlex.quote(t) for t in tee_targets)
+        # PIPESTATUS[0] is the agent's own exit code, unaffected by the
+        # prefix/tee stages tacked onto the end of the pipeline.
         script = (
-            f"cd {shlex.quote(str(dest))} && {pipe} | tee -a {shlex.quote(str(RUN_LOG))}; "
-            f"echo {shlex.quote(prefix) if prefix else ''} EXIT:$? | tee -a {shlex.quote(str(RUN_LOG))}"
+            f"cd {shlex.quote(str(dest))} && {pipe} | tee -a {tee_cmd}; "
+            f"code=${{PIPESTATUS[0]}}; "
+            + (f"echo \"$code\" > {shlex.quote(str(exit_path))}; " if exit_path else "")
+            + f"echo {shlex.quote(prefix) if prefix else ''} EXIT:$code | tee -a {shlex.quote(str(RUN_LOG))}; "
+            f"exit \"$code\""
         )
         proc = subprocess.run(["tmux", "new-session", "-d", "-s", session, "bash", "-lc", script])
         if proc.returncode != 0:
             return proc.returncode
-        return wait_tmux(project)
+        return wait_tmux(project, run_id)
     proc = subprocess.run(cmd, cwd=dest)
     return proc.returncode
 
@@ -1921,12 +1985,18 @@ def run_issue(
     notify_safe(f"{repo}#{number} · {kind} · старт · {issue.get('title')}\n{issue.get('url')}")
     cmd = agent_argv(kind, prompt, dest, model=model, effort=effort, fast=fast)
     print(f"running: {cmd[0]} {repo}#{number}", file=sys.stderr)
+    run_id = new_run_id()
+    record_run(
+        run_id, repo=repo, issue=number, project=project["name"], kind=kind,
+        status="running", started=time.time(), finished=None, code=None,
+    )
     stop = threading.Event()
     threading.Thread(target=pulse_loop, args=(repo, number, kind, time.time(), stop, model), daemon=True).start()
     try:
-        code = launch_agent(kind, cmd, dest, project["name"], prefix=issue_ref(repo, number))
+        code = launch_agent(kind, cmd, dest, project["name"], prefix=issue_ref(repo, number), run_id=run_id)
     finally:
         stop.set()
+    record_run(run_id, status="done" if code == 0 else "failed", finished=time.time(), code=code)
     latest = get_issue(repo, number)
     closed = (latest.get("state") or "").upper() == "CLOSED"
     graph = ""
@@ -1937,7 +2007,7 @@ def run_issue(
         remove_labels(repo, number, ["in-progress", *VIA.values()])
         add_labels(repo, number, ["ready"])
         notify_safe(f"{repo}#{number} · {kind} · design · {latest.get('title')}\n{latest.get('url')}")
-        return {"ok": code == 0, "code": code, "repo": repo, "issue": number, "kind": kind, "graph": "", "closed": False}
+        return {"ok": code == 0, "code": code, "repo": repo, "issue": number, "kind": kind, "graph": "", "closed": False, "run_id": run_id}
     if role == "build" and "qa" in names:
         if closed:
             run(["gh", "issue", "reopen", str(number), "-R", repo], check=False)
@@ -1956,8 +2026,11 @@ def run_issue(
         remove_labels(repo, number, ["in-progress", *VIA.values()])
         add_labels(repo, number, ["ready", "qa-fail"])
         notify_safe(f"{repo}#{number} · {kind} · qa-fail · {latest.get('title')}\n{latest.get('url')}")
-        return {"ok": False, "code": code, "repo": repo, "issue": number, "kind": kind, "graph": "", "closed": False}
-    if closed:
+        return {"ok": False, "code": code, "repo": repo, "issue": number, "kind": kind, "graph": "", "closed": False, "run_id": run_id}
+    # Success requires both a confirmed zero exit code and the expected
+    # GitHub state (issue closed) — a nonzero exit never reports as success
+    # even if the issue happened to be closed already.
+    if code == 0 and closed:
         graph = refresh_graph(dest, repo, number)
         notify_safe(f"{repo}#{number} · {kind} · закрыл · {latest.get('title')}\n{latest.get('url')}\n{graph}")
         maybe_orchestrate(reg, project["name"])
@@ -1971,6 +2044,7 @@ def run_issue(
         "kind": kind,
         "graph": graph,
         "closed": closed,
+        "run_id": run_id,
     }
 
 
@@ -2063,6 +2137,34 @@ def queue_set_running(running: bool) -> dict:
 
 def queue_status() -> dict:
     return load_workshop()
+
+
+def reconcile_running(active_projects: set[str] | None = None) -> list[dict]:
+    """Mark queue rows stuck on `running` with no live watcher as `interrupted`.
+
+    Call at workshop startup and before every queue tick. A `running` row is
+    trustworthy only if either its project has a live in-process watcher
+    (`active_projects`, tracked by the workshop process) or its tmux session
+    is still alive. Otherwise the process that launched it died mid-run and
+    the real outcome can't be confirmed, so the row is closed out
+    deterministically as `interrupted` rather than left stuck forever or
+    reported as done/failed by guesswork. Never relaunches the issue.
+    """
+    active = active_projects or set()
+    data = load_workshop()
+    changed = []
+    for item in data["queue"]:
+        if item.get("status") != "running":
+            continue
+        project = item.get("project") or ""
+        if project in active or tmux_alive(project):
+            continue
+        item["status"] = "interrupted"
+        item["finished"] = time.time()
+        changed.append(item)
+    if changed:
+        save_workshop(data)
+    return changed
 
 
 def setup_token_ok(token: str, path: Path | None = None) -> bool:

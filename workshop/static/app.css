@@ -170,6 +170,10 @@ input, select { width: 100%; }
 .pill.p0, .badge.blocked { color: var(--clay); }
 .pill.me, .badge.self { color: var(--self); }
 .pill.vps, .badge.vps { color: var(--brass); }
+.badge.q-done { color: var(--sage); border-color: rgba(143, 173, 138, 0.35); }
+.badge.q-failed { color: var(--clay); border-color: rgba(197, 107, 85, 0.35); }
+.badge.q-running { color: var(--brass); border-color: rgba(201, 163, 106, 0.35); }
+.badge.q-dim { opacity: 0.7; }
 
 .panel { background: var(--paper); border: 1px solid var(--line); border-radius: 16px; padding: 14px; }
 .panel h2, .block-title { margin: 16px 0 10px; font-size: 12px; color: var(--dim); font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }

@@ -45,6 +45,8 @@ corp = importlib.util.module_from_spec(importlib.util.spec_from_loader(_loader.n
 _loader.exec_module(corp)
 
 LOCK = threading.Lock()
+ACTIVE_LOCK = threading.Lock()
+ACTIVE_PROJECTS: set[str] = set()
 app = FastAPI(title="Мастерская")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
@@ -537,6 +539,12 @@ def api_queue() -> dict:
     return corp.queue_status()
 
 
+@app.get("/api/runs")
+def api_runs(limit: int = 30) -> dict:
+    records = corp.load_runs()
+    return {"runs": records[-max(1, min(200, limit)):][::-1]}
+
+
 @app.get("/api/console")
 def api_console(project: str = "") -> dict:
     log = ""
@@ -574,7 +582,15 @@ def api_console_stream(project: str = "") -> StreamingResponse:
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
+def reconcile_running() -> None:
+    with LOCK:
+        with ACTIVE_LOCK:
+            active = set(ACTIVE_PROJECTS)
+        corp.reconcile_running(active)
+
+
 def queue_tick() -> None:
+    reconcile_running()
     with LOCK:
         data = corp.load_workshop()
         if not data.get("queue_running"):
@@ -608,11 +624,14 @@ def queue_tick() -> None:
             item["status"] = "running"
             running_projects.add(project)
             corp.save_workshop(data)
-            threading.Thread(target=_queue_job, args=(item["repo"], item["issue"], profile), daemon=True).start()
+            threading.Thread(target=_queue_job, args=(item["repo"], item["issue"], profile, project), daemon=True).start()
             return
 
 
-def _queue_job(repo: str, number: int, profile: dict) -> None:
+def _queue_job(repo: str, number: int, profile: dict, project: str) -> None:
+    with ACTIVE_LOCK:
+        ACTIVE_PROJECTS.add(project)
+    run_id, code = "", None
     try:
         result = corp.run_issue(
             corp.load_registry(),
@@ -624,13 +643,21 @@ def _queue_job(repo: str, number: int, profile: dict) -> None:
             fast=bool(profile.get("fast")),
         )
         status = "done" if result.get("ok") else "failed"
+        run_id = result.get("run_id") or ""
+        code = result.get("code")
     except Exception:
         status = "failed"
+    finally:
+        with ACTIVE_LOCK:
+            ACTIVE_PROJECTS.discard(project)
     with LOCK:
         data = corp.load_workshop()
         for item in data["queue"]:
             if item["repo"] == repo and item["issue"] == number and item.get("status") == "running":
                 item["status"] = status
+                item["run_id"] = run_id
+                item["exit_code"] = code
+                item["finished"] = time.time()
         corp.save_workshop(data)
 
 
@@ -648,6 +675,7 @@ def queue_loop() -> None:
 def startup() -> None:
     db().close()
     corp.load_workshop()
+    reconcile_running()
     threading.Thread(target=queue_loop, daemon=True).start()
 
 
