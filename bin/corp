@@ -14,11 +14,30 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 REGISTRY_PATH = ROOT / "registry.json"
 PRIORITY = ("P0", "P1", "P2")
+ENV_PATHS = (
+    Path(os.environ["CORP_ENV"]).expanduser() if os.environ.get("CORP_ENV") else None,
+    Path.home() / ".config" / "corp" / "env",
+    Path("/root/.config/corp/env"),
+)
+AGENTS = ("claude", "codex", "grok")
 
 
 def die(msg: str, code: int = 1) -> None:
     print(msg, file=sys.stderr)
     raise SystemExit(code)
+
+
+def load_env() -> None:
+    for path in ENV_PATHS:
+        if path is None or not path.is_file():
+            continue
+        for raw in path.read_text().splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        return
 
 
 def load_registry() -> dict:
@@ -308,18 +327,123 @@ def status(reg: dict) -> None:
         print(f"{project['status']:7} {project['name']:28} {mark}")
 
 
+def doctor() -> None:
+    load_env()
+    print(f"corp: {ROOT}")
+    print(f"workspace: {workspace()}")
+    checks = [
+        ("git", have("git")),
+        ("gh", have("gh")),
+        ("gh auth", gh_ready()),
+        ("python3", have("python3")),
+        ("uv", have("uv")),
+        ("graphify", have("graphify")),
+        ("claude", have("claude")),
+        ("codex", have("codex")),
+        ("grok", have("grok")),
+        ("telegram token", bool(os.environ.get("TELEGRAM_BOT_TOKEN"))),
+        ("telegram chat", bool(os.environ.get("TELEGRAM_CHAT_ID"))),
+    ]
+    for name, ok in checks:
+        print(f"{'ok' if ok else 'NO':2}  {name}")
+
+
+def notify(text: str) -> None:
+    load_env()
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat = os.environ.get("TELEGRAM_CHAT_ID")
+    if not token or not chat:
+        die("telegram not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in ~/.config/corp/env")
+    import urllib.parse
+    import urllib.request
+
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    body = urllib.parse.urlencode(
+        {"chat_id": chat, "text": text, "disable_web_page_preview": "true"}
+    ).encode()
+    try:
+        urllib.request.urlopen(url, data=body, timeout=20)
+    except Exception as exc:
+        die(f"telegram send failed: {exc}")
+    print("notified")
+
+
+def pick_agent() -> str:
+    load_env()
+    preferred = os.environ.get("CORP_AGENT", "").strip()
+    if preferred:
+        if not have(preferred):
+            die(f"CORP_AGENT={preferred} is not installed")
+        return preferred
+    for name in AGENTS:
+        if have(name):
+            return name
+    die("no agent CLI found. Install claude, codex, or grok")
+
+
+def agent_argv(name: str, prompt: str) -> list[str]:
+    if name == "claude":
+        return ["claude", "-p", prompt]
+    if name == "codex":
+        return ["codex", "exec", prompt]
+    if name == "grok":
+        return ["grok", "-p", prompt]
+    die(f"unknown agent {name}")
+
+
+def run_next(reg: dict) -> None:
+    load_env()
+    payload = cycle_payload(reg)
+    print(render(payload), end="")
+    if payload["mode"] != "execute":
+        try:
+            notify("corp: no ready Issue. Research loop. Do not start greenfield work.")
+        except SystemExit:
+            pass
+        return
+
+    nxt = payload["next"]
+    dest = Path(nxt["cwd"]) if nxt.get("cwd") else None
+    if dest is None or not dest.is_dir():
+        die(f"project not cloned: {nxt['project']}. Run ./bin/corp bootstrap")
+
+    agent = pick_agent()
+    prompt = (
+        f"Follow AGENTS.md and HARNESS.md in the corp repo. "
+        f"Do only this GitHub Issue and nothing else: {nxt['repo']}#{nxt['issue']} {nxt['title']} {nxt['url']}"
+    )
+    started = f"corp: start {nxt['repo']}#{nxt['issue']} via {agent}\n{nxt['title']}\n{nxt['url']}"
+    try:
+        notify(started)
+    except SystemExit:
+        print("telegram skipped", file=sys.stderr)
+
+    cmd = agent_argv(agent, prompt)
+    print(f"running: {' '.join(cmd[:2])} ...", file=sys.stderr)
+    proc = subprocess.run(cmd, cwd=dest)
+    status = "ok" if proc.returncode == 0 else f"exit {proc.returncode}"
+    finished = f"corp: {status} {nxt['repo']}#{nxt['issue']} via {agent}\n{nxt['title']}\n{nxt['url']}"
+    try:
+        notify(finished)
+    except SystemExit:
+        pass
+    raise SystemExit(proc.returncode)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="corp", description="Corporation harness")
     parser.add_argument(
         "command",
         nargs="?",
         default="cycle",
-        choices=["bootstrap", "cycle", "pull", "status"],
+        choices=["bootstrap", "cycle", "pull", "status", "doctor", "notify", "run"],
     )
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--write", action="store_true", help="write memory/next.local.md")
     parser.add_argument("--all", action="store_true", help="bootstrap paused projects too")
+    parser.add_argument("message", nargs="?", help="text for notify")
     args = parser.parse_args()
+    load_env()
     reg = load_registry()
 
     if args.command == "bootstrap":
@@ -330,6 +454,17 @@ def main() -> None:
         return
     if args.command == "status":
         status(reg)
+        return
+    if args.command == "doctor":
+        doctor()
+        return
+    if args.command == "notify":
+        if not args.message:
+            die("usage: corp notify 'text'")
+        notify(args.message)
+        return
+    if args.command == "run":
+        run_next(reg)
         return
 
     payload = cycle_payload(reg)

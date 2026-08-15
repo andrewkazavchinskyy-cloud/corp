@@ -27,7 +27,12 @@ cd corp
 ./bin/corp cycle       # next ready Issue, or research report
 ./bin/corp cycle --json
 ./bin/corp status      # local checkouts vs registry
+./bin/corp doctor      # tools, logins, telegram
+./bin/corp notify 'text'
+./bin/corp run         # execute next ready Issue via claude/codex/grok
 ```
+
+Сервер: [`SERVER.md`](SERVER.md).
 
 ## Документы
 

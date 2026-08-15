@@ -113,16 +113,23 @@ agent subscription.
 Linear or Jira can be added later as a synced view. Do not make them required.
 If you want Linear later, keep GitHub Issues canonical and sync one way.
 
+## Server runner
+
+The VPS is the work machine. See `SERVER.md`.
+
+```bash
+./bin/corp doctor   # git, gh, agents, telegram
+./bin/corp notify 'text'
+./bin/corp run      # take the next ready Issue with claude/codex/grok and ping Telegram
+```
+
+Secrets live in `~/.config/corp/env`, never in git.
+
 ## Persistent runner
 
-Do not start this unless the user asks.
-
-On the always-on Mac mini, `launchd/com.corp.cycle.plist.example` refreshes
-`memory/next.local.md`. It does not spawn an agent.
-
-To actually execute work unattended, the user must name the CLI (`codex exec`,
-Cursor agent, Claude) and approve a LaunchAgent or VPS unit. Until then, a
-human (or an interactive agent) runs `./bin/corp cycle` and does the Issue.
+Do not enable a systemd unit until GitHub and at least one agent are logged in
+and Telegram notify works. The example LaunchAgent on the Mac mini only
+refreshes `memory/next.local.md`. It does not spawn an agent.
 
 ## Memory
 
