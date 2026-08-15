@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Schibsted+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=20">
+  <link rel="stylesheet" href="/static/app.css?v=21">
 </head>
 <body>
   <div id="gate" class="gate hidden">
@@ -16,14 +16,17 @@
       <small>Корпорация</small>
       <h1>Мастерская</h1>
       <p>Только Tailscale. Вход — Passkey.<br>Задачи живут в GitHub.</p>
-      <label id="token-wrap" class="hidden">
-        <span id="token-label">Токен первого входа</span>
-        <input id="token" autocomplete="off" spellcheck="false">
-      </label>
       <div class="row">
         <button id="btn-login" class="btn primary hidden" type="button">Войти</button>
-        <button id="btn-register" class="btn primary hidden" type="button">Записать ключ</button>
       </div>
+      <details id="recover">
+        <summary>Не могу войти</summary>
+        <label id="token-wrap">
+          <span id="token-label">Токен первого входа</span>
+          <input id="token" autocomplete="off" spellcheck="false">
+        </label>
+        <button id="btn-register" class="btn" type="button">Записать ключ</button>
+      </details>
       <p id="gate-err" class="err"></p>
     </div>
   </div>
@@ -32,7 +35,7 @@
     <aside class="rail">
       <div class="brand"><small>Корпорация</small><strong>Мастерская</strong></div>
       <nav class="nav">
-        <button data-tab="board" class="on" type="button">Доска</button>
+        <button data-tab="board" class="on" type="button" aria-current="page">Доска</button>
         <button data-tab="auto" type="button">Автоном</button>
         <button data-tab="project" type="button">Проект</button>
         <button data-tab="graphs" type="button">Графы</button>
@@ -40,7 +43,7 @@
         <button data-tab="console" type="button">Консоль</button>
         <button data-tab="settings" type="button">Настройки</button>
       </nav>
-      <div class="rail-foot"><span class="dot"></span>vmi3510874 · tailnet</div>
+      <div class="rail-foot">tailnet</div>
     </aside>
 
     <section class="main">
@@ -50,7 +53,7 @@
             <h1 id="page-title">Доска</h1>
             <p id="page-kicker">GitHub Issues</p>
           </div>
-          <p id="strip" class="live"><i class="pulse"></i><b>загрузка…</b></p>
+          <button type="button" id="strip" class="live" disabled><i class="pulse"></i><b>загрузка…</b></button>
         </div>
         <div class="filters" id="project-filters"></div>
       </header>
@@ -63,14 +66,13 @@
 
         <section id="tab-auto" class="tab">
           <div class="toolbar">
-            <select id="bulk-profile"></select>
-            <button type="button" class="btn" id="auto-add">В очередь</button>
+            <label class="field tight"><span>Профиль</span><select id="bulk-profile"></select></label>
+            <button type="button" class="btn" id="auto-add" disabled>В очередь</button>
             <button type="button" class="btn primary" id="auto-start">Запустить</button>
-            <button type="button" class="btn" id="auto-pause">Пауза</button>
           </div>
           <div class="split">
             <div class="panel">
-              <h2>Ready</h2>
+              <h2>Можно взять</h2>
               <div id="auto-ready" class="stack"></div>
             </div>
             <div class="panel">
@@ -83,7 +85,6 @@
         <section id="tab-project" class="tab">
           <div class="toolbar">
             <button type="button" class="btn primary" id="orch-run">Разобрать</button>
-            <p class="meta" id="orch-hint">Сверит PRD, репо и открытые ишью. На corp — ещё функции и UI/UX мастерской.</p>
           </div>
           <div id="project-box" class="stack"></div>
         </section>
@@ -99,43 +100,51 @@
         <section id="tab-console" class="tab">
           <div class="term">
             <div class="term-h">
-              <select id="console-project"></select>
+              <select id="console-project" aria-label="Сессия"></select>
             </div>
             <pre id="console"></pre>
           </div>
         </section>
 
         <section id="tab-settings" class="tab">
-          <div class="toolbar">
+          <div class="toolbar savebar">
             <label>Параллель <input id="max-parallel" type="number" min="1" max="3" value="3"></label>
             <button type="button" class="btn" id="refresh-catalog">Обновить CLI</button>
             <button type="button" class="btn" id="add-profile">Добавить подписку</button>
-            <button type="button" class="btn primary" id="save-settings">Сохранить</button>
+            <button type="button" class="btn primary" id="save-settings" disabled>Сохранить</button>
           </div>
           <p id="catalog-note" class="note"></p>
-          <div class="panel">
-            <h2>Доступ</h2>
-            <p class="note">Passkey · Tailscale only · Funnel выключен</p>
-            <div class="toolbar">
-              <button type="button" class="btn" id="btn-add-key">Добавить ключ</button>
-              <button type="button" class="btn" id="btn-logout">Выйти</button>
+          <details class="block" open>
+            <summary class="block-title">Доступ</summary>
+            <div class="panel">
+              <p class="note">Passkey · Tailscale only · Funnel выключен</p>
+              <div class="toolbar">
+                <button type="button" class="btn" id="btn-add-key">Добавить ключ</button>
+                <button type="button" class="btn" id="btn-logout">Выйти</button>
+              </div>
+              <p id="auth-note" class="note"></p>
             </div>
-            <p id="auth-note" class="note"></p>
-          </div>
-          <h2 class="block-title">Слоты</h2>
-          <div id="slots" class="stack"></div>
-          <h2 class="block-title">Подписки</h2>
-          <div id="profiles" class="stack"></div>
-          <div class="panel">
-            <h2>Репозитории</h2>
-            <div class="toolbar">
-              <input id="add-repo" placeholder="org/name или имя">
-              <button type="button" class="btn" id="btn-add-repo">Добавить</button>
-              <input id="new-repo" placeholder="новое имя">
-              <button type="button" class="btn" id="btn-create-repo">Создать</button>
+          </details>
+          <details class="block" open>
+            <summary class="block-title">Слоты</summary>
+            <div id="slots" class="stack"></div>
+          </details>
+          <details class="block">
+            <summary class="block-title">Подписки</summary>
+            <div id="profiles" class="stack"></div>
+          </details>
+          <details class="block">
+            <summary class="block-title">Репозитории</summary>
+            <div class="panel">
+              <div class="toolbar">
+                <input id="add-repo" placeholder="org/name существующего">
+                <button type="button" class="btn" id="btn-add-repo">Добавить</button>
+                <input id="new-repo" placeholder="имя нового репо">
+                <button type="button" class="btn" id="btn-create-repo">Создать</button>
+              </div>
+              <div id="repo-list" class="stack"></div>
             </div>
-            <div id="repo-list" class="stack"></div>
-          </div>
+          </details>
         </section>
       </div>
 
@@ -153,7 +162,7 @@
       </aside>
 
       <nav class="dock">
-        <button data-tab="board" class="on" type="button">Доска</button>
+        <button data-tab="board" class="on" type="button" aria-current="page">Доска</button>
         <button data-tab="auto" type="button">Автоном</button>
         <button data-tab="project" type="button">Проект</button>
         <button data-tab="graphs" type="button">Графы</button>
@@ -164,6 +173,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/static/app.js?v=20"></script>
+  <script src="/static/app.js?v=21"></script>
 </body>
 </html>

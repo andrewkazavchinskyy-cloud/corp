@@ -28,6 +28,9 @@ let graphsCache = [];
 let orchPoll = 0;
 let consolePick = "";
 let stripHold = 0;
+let stripTarget = "";
+const ROLE_RU = { orchestrator: "Оркестр", build: "Сборка", design: "Дизайн", qa: "QA" };
+const QUEUE_RU = { waiting: "ждёт", running: "идёт", failed: "упал", done: "готово" };
 
 function cookieGet(name) {
   const m = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
@@ -150,10 +153,11 @@ function showGate(hasPasskey, unknown) {
   $("app").classList.add("hidden");
   $("gate").classList.remove("hidden");
   $("btn-login").classList.toggle("hidden", !hasPasskey && !unknown);
-  $("token-wrap").classList.remove("hidden");
-  $("btn-register").classList.remove("hidden");
   $("btn-register").textContent = hasPasskey ? "Новый ключ" : "Записать ключ";
+  $("btn-register").classList.toggle("primary", !hasPasskey);
   $("token-label").textContent = hasPasskey ? "Токен восстановления" : "Токен первого входа";
+  $("recover").open = !hasPasskey || Boolean(unknown) || Boolean($("token").value.trim());
+  if (hasPasskey && !unknown) $("btn-login").focus();
 }
 
 async function boot() {
@@ -214,8 +218,13 @@ $("btn-logout").onclick = async () => {
 
 function visibleCards() {
   const f = currentFilter();
-  if (f === "all") return state.cards || [];
-  return (state.cards || []).filter((c) => c.project === f);
+  const cards = (state.cards || []).filter((c) => f === "all" || c.project === f);
+  return cards.slice().sort((a, b) => {
+    const pa = (a.labels || []).some((l) => l.name === "P0") ? 0 : 1;
+    const pb = (b.labels || []).some((l) => l.name === "P0") ? 0 : 1;
+    if (pa !== pb) return pa - pb;
+    return (a.runner === "self" ? 0 : 1) - (b.runner === "self" ? 0 : 1);
+  });
 }
 
 function renderFilters() {
@@ -235,7 +244,12 @@ function renderFilters() {
 
 function setTab(name) {
   document.querySelectorAll(".tab").forEach((el) => el.classList.toggle("on", el.id === `tab-${name}`));
-  document.querySelectorAll("[data-tab]").forEach((el) => el.classList.toggle("on", el.dataset.tab === name));
+  document.querySelectorAll("[data-tab]").forEach((el) => {
+    const on = el.dataset.tab === name;
+    el.classList.toggle("on", on);
+    if (on) el.setAttribute("aria-current", "page");
+    else el.removeAttribute("aria-current");
+  });
   $("page-title").textContent = titles[name][0];
   $("page-kicker").textContent = titles[name][1];
   renderFilters();
@@ -272,7 +286,7 @@ function issueRef(card) {
 
 function badge(card) {
   const bits = [];
-  if (card.blocked) bits.push('<span class="badge blocked">blocked</span>');
+  if (card.blocked) bits.push('<span class="badge blocked">блок</span>');
   if (card.queued) bits.push('<span class="badge">очередь</span>');
   if (card.runner === "self") bits.push('<span class="badge self">я</span>');
   else if (card.runner && card.runner !== "queued") bits.push(`<span class="badge vps">VPS · ${escapeHtml(card.runner)}</span>`);
@@ -291,11 +305,12 @@ function cardClass(card) {
 }
 
 function cardHtml(card) {
-  return `<article class="${cardClass(card)}" data-issue="${issueRef(card)}" data-col="${card.column}">
-    <header><span>${escapeHtml(card.project)}</span><span>#${card.number}</span></header>
+  const project = currentFilter() === "all" ? escapeHtml(card.project) : "";
+  return `<button type="button" class="${cardClass(card)}" data-issue="${issueRef(card)}" data-col="${card.column}">
+    <header><span>${project}</span><span>#${card.number}</span></header>
     <h3>${escapeHtml(card.title || "")}</h3>
     <div class="badges">${badge(card)}</div>
-  </article>`;
+  </button>`;
 }
 
 function escapeHtml(text) {
@@ -336,7 +351,7 @@ function nextCardHtml(next) {
   if (next.kind === "drafts") {
     return `<article class="card next" data-next="drafts" data-project="${escapeHtml(next.project || "")}">
       <header><span>следующий шаг</span><span>черновик</span></header>
-      <h3>${next.count} ${next.count === 1 ? "черновик" : "черновиков"} · Approve на Проекте</h3></article>`;
+      <h3>${next.count} ${next.count === 1 ? "черновик" : "черновиков"} · на Проекте</h3></article>`;
   }
   if (next.kind === "backlog") {
     return `<article class="card next" data-next="backlog" data-issue="${escapeHtml(next.issue)}">
@@ -420,6 +435,12 @@ function catalogKind(kind) {
   return ((state.catalog || {}).kinds || {})[kind] || {};
 }
 
+function buildProfileId(project) {
+  const kind = ((state.slots || {})[project] || {}).build?.kind;
+  const hit = (state.profiles || []).find((p) => p.kind === kind);
+  return (hit || state.profiles[0] || {}).id || "";
+}
+
 function fillProfiles(select, selected) {
   select.innerHTML = (state.profiles || []).map((p) => {
     const installed = catalogKind(p.kind).installed !== false;
@@ -431,12 +452,22 @@ function vpsRunner(card) {
   return card.runner && card.runner !== "self" && card.runner !== "queued";
 }
 
+function colWord(column) {
+  return ({ backlog: "backlog", ready: "ready", "in-progress": "ход", done: "закрыто" }[column] || column);
+}
+
+function githubLink(card) {
+  return card.url
+    ? `<a class="btn link" href="${escapeHtml(card.url)}" target="_blank" rel="noreferrer">Открыть на GitHub</a>`
+    : "";
+}
+
 function sheetExits(card, extra = "") {
   const moves = [["ready", "В ready"], ["backlog", "В backlog"]]
     .filter(([id]) => id !== card.column)
     .map(([id, label]) => `<button type="button" class="btn" data-col="${id}">${label}</button>`)
     .join("");
-  return `${extra}${moves}<button type="button" class="btn" id="sheet-close">Закрыть</button>`;
+  return `${extra}${moves}${githubLink(card)}<button type="button" class="btn danger" id="sheet-close">Закрыть ишью</button>`;
 }
 
 function bindSheetExits() {
@@ -464,13 +495,11 @@ function openSheet(issue) {
   if (!card) return;
   sheetIssue = issue;
   $("sheet-title").textContent = card.title || `${card.project} #${card.number}`;
-  $("sheet-kicker").textContent = `${card.project} #${card.number}`;
+  $("sheet-kicker").textContent = `${card.project} #${card.number} · ${colWord(card.column)}`;
   const acts = $("sheet-acts");
   if (card.column === "done") {
     $("sheet-note").textContent = "Закрыто";
-    acts.innerHTML = card.url
-      ? `<a class="btn" href="${escapeHtml(card.url)}" target="_blank" rel="noreferrer">Открыть на GitHub</a>`
-      : "";
+    acts.innerHTML = githubLink(card);
   } else if (card.runner === "self") {
     $("sheet-note").textContent = "Это ты. Карточка у тебя. VPS не стартует.";
     acts.innerHTML = sheetExits(card);
@@ -485,11 +514,11 @@ function openSheet(issue) {
     };
     bindSheetExits();
   } else {
-    $("sheet-note").textContent = card.title || "";
-    acts.innerHTML = sheetExits(card, `<button type="button" class="btn" id="sheet-self">Я сам</button>
-      <label class="field"><span>Профиль VPS</span><select id="sheet-profile"></select></label>
-      <button type="button" class="btn primary" id="sheet-run">Запустить на VPS</button>`);
-    fillProfiles($("sheet-profile"));
+    $("sheet-note").textContent = card.blocked ? "blocked" : "Готово к запуску";
+    acts.innerHTML = sheetExits(card, `<button type="button" class="btn primary" id="sheet-run">Запустить на VPS</button>
+      <button type="button" class="btn" id="sheet-self">Я сам</button>
+      <label class="field"><span>Профиль VPS</span><select id="sheet-profile"></select></label>`);
+    fillProfiles($("sheet-profile"), buildProfileId(card.project));
     $("sheet-self").onclick = async () => {
       try {
         await write("/api/take", { issue: sheetIssue }, "взял");
@@ -517,17 +546,27 @@ function closeSheet() {
 
 $("sheet-cancel").onclick = closeSheet;
 $("scrim").onclick = closeSheet;
+document.addEventListener("keydown", (evt) => {
+  if (evt.key === "Escape" && !$("sheet").classList.contains("hidden")) closeSheet();
+});
 
 function renderAuto() {
   fillProfiles($("bulk-profile"));
+  $("auto-start").textContent = state.queue_running ? "Пауза" : "Запустить";
+  $("auto-start").classList.toggle("primary", !state.queue_running);
   const ready = visibleCards().filter((c) => c.column === "ready" && c.runner !== "self");
+  const next = nextMove();
   $("auto-ready").innerHTML = ready.map((c) =>
     `<label class="pick card"><input type="checkbox" value="${issueRef(c)}">
       <div><strong>${escapeHtml(c.project)} #${c.number}</strong>
       <div>${escapeHtml(c.title || "")}</div></div></label>`
-  ).join("") || '<p class="meta">Нет ready</p>';
+  ).join("") || (next ? nextCardHtml(next) : '<p class="meta">Нет ready</p>');
+  $("auto-ready").querySelectorAll(".card.next").forEach((el) => {
+    el.onclick = () => goNext(el);
+  });
+  $("auto-add").disabled = !$("auto-ready").querySelector("input:checked");
   $("auto-queue").innerHTML = (state.queue || []).map((q) =>
-    `<article class="card"><header><span>${escapeHtml(q.project)}</span><span>${escapeHtml(q.status)}</span></header>
+    `<article class="card"><header><span>${escapeHtml(q.project)}</span><span>${escapeHtml(QUEUE_RU[q.status] || q.status)}</span></header>
       <h3>#${q.issue} ${escapeHtml(q.title || "")}</h3>
       <p class="meta">${escapeHtml(q.profile || "")}</p>
       ${q.status === "waiting" ? `<button class="btn" data-rm="${q.repo}#${q.issue}">Убрать</button>` : ""}</article>`
@@ -540,6 +579,9 @@ function renderAuto() {
   });
 }
 
+$("auto-ready").addEventListener("change", () => {
+  $("auto-add").disabled = !$("auto-ready").querySelector("input:checked");
+});
 $("auto-add").onclick = async () => {
   const profile = $("bulk-profile").value;
   const boxes = [...$("auto-ready").querySelectorAll("input:checked")];
@@ -550,11 +592,14 @@ $("auto-add").onclick = async () => {
   } catch (_) { /* strip */ }
   refresh();
 };
-$("auto-start").onclick = async () => { try { await write("/api/queue/start", {}, "автоном"); } catch (_) { /* strip */ } refresh(); };
-$("auto-pause").onclick = async () => { try { await write("/api/queue/pause", {}, "пауза"); } catch (_) { /* strip */ } refresh(); };
+$("auto-start").onclick = async () => {
+  const path = state.queue_running ? "/api/queue/pause" : "/api/queue/start";
+  try { await write(path, {}, state.queue_running ? "пауза" : "автоном"); } catch (_) { /* strip */ }
+  refresh();
+};
 
 function orbSize(nodes) {
-  return Math.max(72, Math.min(132, 72 + Math.round((nodes || 0) / 8)));
+  return Math.max(52, Math.min(84, 52 + Math.round((nodes || 0) / 10)));
 }
 
 function graphSky(groups) {
@@ -616,21 +661,17 @@ async function renderGraphs() {
   if (!box) return;
   try {
     const f = currentFilter();
-    const want = isPin(f) ? f : graphFocus;
+    const want = graphFocus === "*" ? "" : (graphFocus || (isPin(f) ? f : ""));
     if (want) {
       const g = await api(`/api/graphs/view?name=${encodeURIComponent(want)}`);
       if (!g.has_graph) {
         box.innerHTML = `<article class="g-detail"><button type="button" class="btn" id="g-back">Все проекты</button>
           <h2>${escapeHtml(g.name)}</h2><p class="meta">Графа ещё нет. Появится после close и graphify.</p></article>`;
-        $("g-back").onclick = () => { graphFocus = ""; if (isPin(currentFilter())) setFilter("all"); else renderGraphs(); };
+        $("g-back").onclick = () => { graphFocus = "*"; renderGraphs(); };
         return;
       }
       box.innerHTML = graphDetailHtml(g);
-      $("g-back").onclick = () => {
-        graphFocus = "";
-        if (isPin(currentFilter())) setFilter("all");
-        else renderGraphs();
-      };
+      $("g-back").onclick = () => { graphFocus = "*"; renderGraphs(); };
       return;
     }
     const data = await api("/api/graphs");
@@ -639,7 +680,10 @@ async function renderGraphs() {
     box.querySelectorAll("[data-graph]").forEach((btn) => {
       btn.onclick = () => {
         const row = graphsCache.find((p) => p.name === btn.dataset.graph);
-        if (!row || !row.has_graph) return;
+        if (!row || !row.has_graph) {
+          flash("граф появится после close", true);
+          return;
+        }
         graphFocus = row.name;
         renderGraphs();
       };
@@ -650,33 +694,40 @@ async function renderGraphs() {
 }
 
 function renderMap(data) {
-  const checks = (data.doctor?.checks || []).map((c) => `<li>${c.ok ? "ok" : "нет"} ${escapeHtml(c.name)}</li>`).join("");
+  const checks = (data.doctor?.checks || []).map((c) =>
+    `<li><span class="${c.ok ? "okpill" : "nopill"}">${c.ok ? "ok" : "нет"}</span> ${escapeHtml(c.name)}</li>`
+  ).join("");
   const projects = (data.projects || []).map((p) =>
-    `<li>${escapeHtml(p.name)} — ${p.graphify ? "граф есть" : "графа нет"} — ${escapeHtml(p.cwd || "не клонирован")}</li>`
+    `<li>${escapeHtml(p.name)} — ${p.graphify ? "граф есть" : "графа нет"}</li>`
   ).join("");
   const live = (data.live || []).join(", ") || "тихо";
   const orch = (data.orch || []).join(", ") || "тихо";
   $("map").innerHTML = `
-    <article><h2>Контур</h2><p class="meta">corp в /opt/corp · проекты в /home/corp/projects · GitHub Issues · Tailscale</p>
+    <article><h2>Контур</h2><p class="meta">/opt/corp · Tailscale · GitHub Issues</p>
       <ul>${checks}</ul></article>
-    <article><h2>Сейчас</h2><p>VPS: ${escapeHtml(live)}</p>
-      <p>orch: ${escapeHtml(orch)}</p>
-      <p>Автоном: ${data.queue_running ? "идёт" : "пауза"}</p></article>
+    <article><h2>Сейчас</h2>
+      <div class="map-now">
+        <div><b>${escapeHtml(live)}</b><span>VPS</span></div>
+        <div><b>${escapeHtml(orch)}</b><span>orch</span></div>
+        <div><b>${data.queue_running ? "идёт" : "пауза"}</b><span>Автоном</span></div>
+      </div>
+    </article>
     <article><h2>Проекты</h2><ul>${projects}</ul></article>`;
 }
 
 function draftCard(d) {
   const why = d.why ? `<p class="draft-why">${escapeHtml(d.why)}</p>` : "";
-  const body = d.body ? `<pre class="draft-body">${escapeHtml(d.body)}</pre>` : "";
+  const body = d.body ? `<details><summary class="meta">тело</summary><pre class="draft-body">${escapeHtml(d.body)}</pre></details>` : "";
   const prd = d.vs_prd ? `<p class="meta">В спеке: ${escapeHtml(d.vs_prd)}</p>` : "";
   const open = d.vs_open ? `<p class="meta">На доске: ${escapeHtml(d.vs_open)}</p>` : "";
   return `<article class="card draft"><header><span>${escapeHtml(d.kind || "build")}</span><span>${escapeHtml(d.label || "")}</span></header>
     <h3>${escapeHtml(d.title)}</h3>
-    ${why}${body}${prd}${open}
+    ${why}${prd}${open}
     <div class="row">
       <button class="btn primary" data-approve="${d.id}">Approve</button>
       <button class="btn" data-skip="${d.id}">Skip</button>
-    </div></article>`;
+    </div>
+    ${body}</article>`;
 }
 
 function orchCard(orch, name) {
@@ -703,9 +754,18 @@ function watchOrch(running) {
   }
 }
 
+function stageLine(s) {
+  if ((s.p0 || 0) > 0) return `${s.p0} P0 ждёт`;
+  if ((s.in_progress || 0) > 0) return `Идёт · ход ${s.in_progress}`;
+  if ((s.ready || 0) === 0) return "Нет ready — пора разобрать";
+  return `${s.ready} ready`;
+}
+
 async function renderProject() {
   const name = currentFilter();
   if (!isPin(name)) {
+    $("orch-run").disabled = true;
+    $("orch-run").textContent = "Разобрать";
     $("project-box").innerHTML = '<p class="meta">Выберите corp или clarity в шапке</p>';
     return;
   }
@@ -716,8 +776,9 @@ async function renderProject() {
     const orch = data.orch || {};
     const researching = Boolean(orch.running || orch.status === "running");
     $("orch-run").disabled = researching;
+    $("orch-run").textContent = researching ? "Идёт разбор…" : "Разобрать";
     $("project-box").innerHTML = `
-      <article class="card"><h3>${escapeHtml(s.stage || "")}</h3>
+      <article class="card"><h3>${escapeHtml(stageLine(s))}</h3>
         <p class="meta">open ${s.open || 0} · ready ${s.ready || 0} · P0 ${s.p0 || 0} · ход ${s.in_progress || 0}</p>
         <p class="meta">граф ${escapeHtml(s.graph_age || "нет")} · ${(s.docs || []).join(", ") || "нет спеки"}</p>
       </article>
@@ -743,7 +804,10 @@ async function renderProject() {
 
 $("orch-run").onclick = async () => {
   const name = currentFilter();
-  if (!isPin(name)) return alert("Сначала выберите corp или clarity");
+  if (!isPin(name)) {
+    flash("сначала выберите corp или clarity", true);
+    return;
+  }
   try { await write("/api/orchestrate", { project: name }, "orch"); } catch (_) { /* strip */ }
   renderProject();
 };
@@ -812,7 +876,7 @@ function renderSettings() {
 
 $("add-profile").onclick = () => {
   state.profiles.push({ id: `p${Date.now()}`, kind: "claude", label: "Новая", model: "", effort: "high", fast: false });
-  settingsDirty = true;
+  markDirty();
   renderSettings();
 };
 
@@ -825,24 +889,31 @@ function renderSlots() {
       const s = slots[role] || {};
       const kindName = s.kind || "claude";
       const kind = catalog[kindName] || {};
-      return `<label>${role}
+      return `<div class="grid2">
+        <label>${ROLE_RU[role] || role}
         <select data-slot="${p.name}" data-role="${role}" data-k="kind">
           ${["claude", "codex", "grok", "cursor"].map((k) =>
             `<option ${kindName === k ? "selected" : ""} ${catalog[k] && catalog[k].installed === false ? "disabled" : ""}>${k}</option>`).join("")}
-        </select>
-        ${modelField(kindName, s.model, p.name, role)}
+        </select></label>
+        <label>модель ${modelField(kindName, s.model, p.name, role)}</label>
+        <label>effort
         <select data-slot="${p.name}" data-role="${role}" data-k="effort">
           ${(kind.efforts || []).map((e) => `<option ${s.effort === e ? "selected" : ""}>${e}</option>`).join("")}
-        </select>
-        ${kind.fast ? `<label>Fast <input type="checkbox" data-slot="${p.name}" data-role="${role}" data-k="fast" ${s.fast ? "checked" : ""}></label>` : ""}
-      </label>`;
+        </select></label>
+        ${kind.fast ? `<label class="pick">Fast <input type="checkbox" data-slot="${p.name}" data-role="${role}" data-k="fast" ${s.fast ? "checked" : ""}></label>` : ""}
+      </div>`;
     }).join("")}</article>`;
   }).join("");
 }
 
-$("tab-settings").addEventListener("input", () => { settingsDirty = true; });
-$("tab-settings").addEventListener("change", (evt) => {
+function markDirty() {
   settingsDirty = true;
+  $("save-settings").disabled = false;
+}
+
+$("tab-settings").addEventListener("input", markDirty);
+$("tab-settings").addEventListener("change", (evt) => {
+  markDirty();
   if (evt.target && evt.target.dataset.k === "kind") {
     const card = evt.target.closest("[data-i]");
     if (card) {
@@ -873,7 +944,7 @@ $("refresh-catalog").onclick = async () => {
   $("catalog-note").textContent = "снимаю каталог с VPS…";
   try {
     state.catalog = await api("/api/catalog", {});
-    settingsDirty = true;
+    markDirty();
     renderSettings();
     renderSlots();
   } catch (err) {
@@ -971,6 +1042,7 @@ $("save-settings").onclick = async () => {
   });
   try { await write("/api/settings", { profiles, max_parallel: Number($("max-parallel").value), slots }, "сохранил"); } catch (_) { return; }
   settingsDirty = false;
+  $("save-settings").disabled = true;
   refresh();
 };
 
@@ -989,10 +1061,11 @@ async function pollConsole() {
   try {
     const data = await api(`/api/console?project=${encodeURIComponent(pick)}`);
     $("console").textContent = data.pane || data.log || "пусто";
+    $("console").scrollTop = $("console").scrollHeight;
     const live = data.live || [];
     const names = [...new Set([...pinNames(), ...live, ...(isPin(f) ? [f, `orch:${f}`] : [])])];
-    $("console-project").innerHTML = `<option value="">лог</option>` + names.map((p) =>
-      `<option value="${escapeHtml(p)}" ${p === pick ? "selected" : ""}>${escapeHtml(liveLabel(p))}</option>`
+    $("console-project").innerHTML = `<option value="">сессия</option>` + names.map((p) =>
+      `<option value="${escapeHtml(p)}" ${p === pick ? "selected" : ""}>${live.includes(p) ? "● " : ""}${escapeHtml(liveLabel(p))}</option>`
     ).join("");
   } catch (err) {
     flash(err.message, true);
@@ -1018,6 +1091,8 @@ async function refresh() {
     const q = (settings.queue || []).filter((i) => i.status === "waiting").length;
     if (Date.now() >= stripHold) {
       $("strip").classList.remove("bad");
+      stripTarget = running ? "console" : researching ? "project" : "";
+      $("strip").disabled = !stripTarget;
       $("strip").innerHTML = running
         ? `<i class="pulse"></i><b>VPS · ${escapeHtml(running)}${q ? ` · очередь ${q}` : ""}</b>`
         : researching
@@ -1045,5 +1120,16 @@ async function refresh() {
   }
 }
 
+$("strip").onclick = () => {
+  if (stripTarget) setTab(stripTarget);
+};
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && !$("app").classList.contains("hidden")) refresh();
+});
+
 boot();
-setInterval(() => { if (!$("app").classList.contains("hidden")) refresh(); }, 15000);
+setInterval(() => {
+  if (document.hidden || $("app").classList.contains("hidden")) return;
+  refresh();
+}, 15000);
