@@ -158,6 +158,29 @@ $("btn-login").onclick = async () => {
   }
 };
 
+$("btn-add-key").onclick = async () => {
+  $("auth-note").textContent = "";
+  try {
+    const begin = await api("/api/auth/register/options", {});
+    const cred = await navigator.credentials.create({ publicKey: revivePublicKey(begin.options) });
+    await api("/api/auth/register/verify", { challenge: begin.challenge, credential: packAttestation(cred) });
+    $("auth-note").textContent = "ключ записан";
+  } catch (err) {
+    $("auth-note").textContent = err.message;
+  }
+};
+
+$("btn-logout").onclick = async () => {
+  try {
+    await api("/api/auth/logout", {});
+  } catch (_) { /* still leave */ }
+  $("app").classList.add("hidden");
+  $("gate").classList.remove("hidden");
+  $("btn-login").classList.remove("hidden");
+  $("token-wrap").classList.add("hidden");
+  $("btn-register").classList.add("hidden");
+};
+
 function visibleCards() {
   const f = currentFilter();
   if (f === "all") return state.cards || [];
@@ -285,16 +308,13 @@ function renderBoard() {
     Sortable.create(lane, {
       group: "board",
       animation: 150,
+      onMove: (evt) => evt.to.dataset.col !== "in-progress",
       onEnd: async (evt) => {
         const issue = evt.item.dataset.issue;
         const column = evt.to.dataset.col;
         const from = evt.from.dataset.col;
-        if (column === from) return;
+        if (column === from || column === "in-progress") return;
         lastBoardKey = "";
-        if (column === "in-progress") {
-          openSheet(issue);
-          return;
-        }
         try {
           if (column === "done") {
             if (!confirm("Закрыть ишью на GitHub?")) {
@@ -329,6 +349,34 @@ function vpsRunner(card) {
   return card.runner && card.runner !== "self" && card.runner !== "queued";
 }
 
+function sheetExits(card, extra = "") {
+  const moves = [["ready", "В ready"], ["backlog", "В backlog"]]
+    .filter(([id]) => id !== card.column)
+    .map(([id, label]) => `<button type="button" class="btn" data-col="${id}">${label}</button>`)
+    .join("");
+  return `${extra}${moves}<button type="button" class="btn" id="sheet-close">Закрыть</button>`;
+}
+
+function bindSheetExits() {
+  $("sheet-acts").querySelectorAll("[data-col]").forEach((b) => {
+    b.onclick = async () => {
+      try {
+        await api("/api/move", { issue: sheetIssue, column: b.dataset.col });
+        closeSheet();
+      } catch (err) { alert(err.message); }
+    };
+  });
+  if ($("sheet-close")) {
+    $("sheet-close").onclick = async () => {
+      if (!confirm("Закрыть ишью на GitHub?")) return;
+      try {
+        await api("/api/close", { issue: sheetIssue });
+        closeSheet();
+      } catch (err) { alert(err.message); }
+    };
+  }
+}
+
 function openSheet(issue) {
   const card = state.cards.find((c) => issueRef(c) === issue);
   if (!card) return;
@@ -342,38 +390,37 @@ function openSheet(issue) {
       ? `<a class="btn" href="${escapeHtml(card.url)}" target="_blank" rel="noreferrer">Открыть на GitHub</a>`
       : "";
   } else if (card.runner === "self") {
-    $("sheet-note").textContent = "Это ты. Карточка у тебя.";
-    acts.innerHTML = '<p class="meta">VPS не стартует, пока висит self.</p>';
+    $("sheet-note").textContent = "Это ты. Карточка у тебя. VPS не стартует.";
+    acts.innerHTML = sheetExits(card);
+    bindSheetExits();
   } else if (card.column === "in-progress" && vpsRunner(card)) {
     $("sheet-note").textContent = `Уже бежит на VPS · ${card.runner}`;
-    acts.innerHTML = '<button type="button" class="btn primary" id="sheet-console">Консоль</button>';
+    acts.innerHTML = sheetExits(card, '<button type="button" class="btn primary" id="sheet-console">Консоль</button>');
     $("sheet-console").onclick = () => {
       closeSheet();
       setFilter(card.project);
       setTab("console");
     };
+    bindSheetExits();
   } else {
     $("sheet-note").textContent = card.title || "";
-    acts.innerHTML = `<button type="button" class="btn" id="sheet-self">Я сам</button>
+    acts.innerHTML = sheetExits(card, `<button type="button" class="btn" id="sheet-self">Я сам</button>
       <label class="field"><span>Профиль VPS</span><select id="sheet-profile"></select></label>
-      <button type="button" class="btn primary" id="sheet-run">Запустить на VPS</button>`;
+      <button type="button" class="btn primary" id="sheet-run">Запустить на VPS</button>`);
     fillProfiles($("sheet-profile"));
     $("sheet-self").onclick = async () => {
       try {
         await api("/api/take", { issue: sheetIssue });
         closeSheet();
-        lastBoardKey = "";
-        refresh();
       } catch (err) { alert(err.message); }
     };
     $("sheet-run").onclick = async () => {
       try {
         await api("/api/run", { issue: sheetIssue, profile: $("sheet-profile").value });
         closeSheet();
-        lastBoardKey = "";
-        refresh();
       } catch (err) { alert(err.message); }
     };
+    bindSheetExits();
   }
   $("sheet").classList.remove("hidden");
   $("scrim").classList.remove("hidden");

@@ -28,6 +28,12 @@ No first issue. Graphify after first close. Pin immediately.
 - Archive product: confirm, `gh repo archive`, unpin.
 - Reverse: unarchive + Add. Never delete a repo.
 
+## Access
+
+Settings: add another Passkey while logged in. Logout ends the session.
+Sheet: close, ready, backlog, and drop `self` on phone and desktop.
+Drag to in-progress is not a move — take or run from the sheet.
+
 ## Filter
 
 Header: All / each pin. One choice for Board, Autopilot, Project, Console.
