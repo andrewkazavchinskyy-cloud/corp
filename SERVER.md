@@ -36,6 +36,10 @@ sudo systemctl status workshop
 corp workshop-token
 ```
 
+The unit PATH must include `/home/corp/.local/bin` so Claude/Codex/Grok/`agent`
+are visible. If `registry.json` is not writable by `corp`, pins and new
+repos persist in `~/.config/corp/workshop.json`.
+
 Open the Tailscale hostname, register the first Passkey with the token,
 then use the board. Autopilot, console, and settings sit behind the same
 login.

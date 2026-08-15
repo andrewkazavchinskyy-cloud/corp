@@ -1,16 +1,46 @@
 const $ = (id) => document.getElementById(id);
 const titles = {
-  board: ["Доска", "Задачи"],
+  board: ["Доска", "GitHub Issues"],
   auto: ["Автоном", "Очередь VPS"],
   project: ["Проект", "Этап"],
   map: ["Карта", "Сервер"],
   console: ["Консоль", "Агенты"],
   settings: ["Настройки", "Слоты и CLI"],
 };
+const FILTER_KEY = "corp_project";
+const COLS = [
+  ["backlog", "Backlog"],
+  ["ready", "Ready"],
+  ["in-progress", "Ход"],
+  ["done", "Done"],
+];
 
 let state = { cards: [], projects: [], profiles: [], queue: [], queue_running: false, pins: [], slots: {}, catalog: {} };
-const FILTER_KEY = "corp_project";
 let sheetIssue = "";
+let phoneCol = "ready";
+let settingsDirty = false;
+let lastBoardKey = "";
+let refreshBusy = false;
+
+function cookieGet(name) {
+  const m = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  return m ? decodeURIComponent(m[1]) : "";
+}
+function cookieSet(name, value) {
+  document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=31536000; SameSite=Lax`;
+}
+function currentFilter() {
+  return cookieGet(FILTER_KEY) || localStorage.getItem(FILTER_KEY) || "all";
+}
+function setFilter(value) {
+  cookieSet(FILTER_KEY, value);
+  localStorage.setItem(FILTER_KEY, value);
+  lastBoardKey = "";
+  renderFilters();
+  renderBoard();
+  renderAuto();
+  if ($("tab-project").classList.contains("on")) renderProject();
+}
 
 function b64urlToBuf(value) {
   const pad = "=".repeat((4 - (value.length % 4)) % 4);
@@ -111,29 +141,31 @@ $("btn-login").onclick = async () => {
   }
 };
 
-function currentFilter() {
-  return localStorage.getItem(FILTER_KEY) || "all";
-}
-
 function visibleCards() {
   const f = currentFilter();
   if (f === "all") return state.cards || [];
+  if (f === "p0") return (state.cards || []).filter((c) => (c.labels || []).some((l) => l.name === "P0"));
+  if (f === "me") return (state.cards || []).filter((c) => c.runner === "self");
   return (state.cards || []).filter((c) => c.project === f);
 }
 
-function fillFilter() {
+function renderFilters() {
   const pins = state.pins || [];
   const cur = currentFilter();
-  $("project-filter").innerHTML = `<option value="all">Все</option>` + pins.map((p) =>
-    `<option value="${p.name}" ${p.name === cur ? "selected" : ""}>${p.name}</option>`
+  const chips = [["all", "Все"], ...pins.map((p) => [p.name, p.name]), ["p0", "P0"], ["me", "Мои"]];
+  $("project-filters").innerHTML = chips.map(([id, label]) =>
+    `<button type="button" class="chip${id === cur ? " on" : ""}" data-filter="${id}">${escapeHtml(label)}</button>`
   ).join("");
+  $("project-filters").querySelectorAll("[data-filter]").forEach((btn) => {
+    btn.onclick = () => setFilter(btn.dataset.filter);
+  });
 }
 
 function setTab(name) {
   document.querySelectorAll(".tab").forEach((el) => el.classList.toggle("on", el.id === `tab-${name}`));
   document.querySelectorAll("[data-tab]").forEach((el) => el.classList.toggle("on", el.dataset.tab === name));
-  $("page-kicker").textContent = titles[name][0];
-  $("page-title").textContent = titles[name][1];
+  $("page-title").textContent = titles[name][0];
+  $("page-kicker").textContent = titles[name][1];
   if (name === "console") pollConsole();
   if (name === "project") renderProject();
 }
@@ -151,37 +183,62 @@ function badge(card) {
   if (card.blocked) bits.push('<span class="badge blocked">blocked</span>');
   if (card.queued) bits.push('<span class="badge">очередь</span>');
   if (card.runner === "self") bits.push('<span class="badge self">я</span>');
-  else if (card.runner && card.runner !== "queued") bits.push(`<span class="badge vps">VPS · ${card.runner}</span>`);
+  else if (card.runner && card.runner !== "queued") bits.push(`<span class="badge vps">VPS · ${escapeHtml(card.runner)}</span>`);
   (card.labels || []).forEach((l) => {
-    if (["P0", "P1", "P2"].includes(l.name)) bits.push(`<span class="badge">${l.name}</span>`);
+    if (["P0", "P1", "P2"].includes(l.name)) bits.push(`<span class="badge${l.name === "P0" ? " blocked" : ""}">${l.name}</span>`);
   });
   return bits.join("");
 }
 
+function cardClass(card) {
+  const bits = ["card"];
+  if ((card.labels || []).some((l) => l.name === "P0")) bits.push("p0");
+  if (card.runner === "self") bits.push("me");
+  else if (card.runner && card.runner !== "queued") bits.push("vps");
+  return bits.join(" ");
+}
+
 function cardHtml(card) {
-  return `<article class="card" data-issue="${issueRef(card)}" data-col="${card.column}">
-    <header><span>${card.project}</span><span>#${card.number}</span></header>
+  return `<article class="${cardClass(card)}" data-issue="${issueRef(card)}" data-col="${card.column}">
+    <header><span>${escapeHtml(card.project)}</span><span>#${card.number}</span></header>
     <h3>${escapeHtml(card.title || "")}</h3>
     <div class="badges">${badge(card)}</div>
   </article>`;
 }
 
 function escapeHtml(text) {
-  return text.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+  return String(text).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+}
+
+function renderColnav() {
+  const cards = visibleCards();
+  $("colnav").innerHTML = COLS.map(([id, label]) => {
+    const n = cards.filter((c) => c.column === id).length;
+    return `<button type="button" data-col="${id}" class="${id === phoneCol ? "on" : ""}">${label} ${n}</button>`;
+  }).join("");
+  $("colnav").querySelectorAll("[data-col]").forEach((btn) => {
+    btn.onclick = () => {
+      phoneCol = btn.dataset.col;
+      lastBoardKey = "";
+      renderBoard();
+    };
+  });
 }
 
 function renderBoard() {
-  const cols = [
-    ["backlog", "Backlog"],
-    ["ready", "Ready"],
-    ["in-progress", "In Progress"],
-    ["done", "Done"],
-  ];
-  $("board").innerHTML = cols.map(([id, label]) => {
-    const cards = visibleCards().filter((c) => c.column === id);
-    return `<div class="col-wrap"><h2>${label} <span class="count">${cards.length}</span></h2>
-      <div class="lane" data-col="${id}">${cards.map(cardHtml).join("")}</div></div>`;
+  const cards = visibleCards();
+  const key = JSON.stringify(cards.map((c) => [c.repo, c.number, c.column, c.runner, c.title, phoneCol, currentFilter()]));
+  if (key === lastBoardKey && $("board").children.length) {
+    renderColnav();
+    return;
+  }
+  lastBoardKey = key;
+  $("board").innerHTML = COLS.map(([id, label]) => {
+    const list = cards.filter((c) => c.column === id);
+    return `<div class="col-wrap${id === phoneCol ? " show" : ""}" data-col="${id}"><h2>${label} <span class="count">${list.length}</span></h2>
+      <div class="lane" data-col="${id}">${list.map(cardHtml).join("")}</div></div>`;
   }).join("");
+  renderColnav();
   $("board").querySelectorAll(".card").forEach((el) => {
     el.onclick = () => openSheet(el.dataset.issue);
   });
@@ -192,6 +249,7 @@ function renderBoard() {
       onEnd: async (evt) => {
         const issue = evt.item.dataset.issue;
         const column = evt.to.dataset.col;
+        lastBoardKey = "";
         if (column === "in-progress") {
           openSheet(issue);
           refresh();
@@ -209,10 +267,15 @@ function renderBoard() {
   });
 }
 
+function catalogKind(kind) {
+  return ((state.catalog || {}).kinds || {})[kind] || {};
+}
+
 function fillProfiles(select, selected) {
-  select.innerHTML = state.profiles.map((p) =>
-    `<option value="${p.id}" ${p.id === selected ? "selected" : ""}>${escapeHtml(p.label || p.id)} · ${escapeHtml(p.model || p.kind)}</option>`
-  ).join("");
+  select.innerHTML = (state.profiles || []).map((p) => {
+    const installed = catalogKind(p.kind).installed !== false;
+    return `<option value="${p.id}" ${p.id === selected ? "selected" : ""} ${installed ? "" : "disabled"}>${escapeHtml(p.label || p.id)} · ${escapeHtml(p.model || p.kind)}</option>`;
+  }).join("");
 }
 
 function openSheet(issue) {
@@ -220,22 +283,32 @@ function openSheet(issue) {
   if (!card) return;
   sheetIssue = issue;
   $("sheet-title").textContent = `${card.project} #${card.number}`;
+  $("sheet-note").textContent = card.title || "";
   fillProfiles($("sheet-profile"));
   $("sheet").classList.remove("hidden");
+  $("scrim").classList.remove("hidden");
 }
 
-$("sheet-cancel").onclick = () => $("sheet").classList.add("hidden");
+function closeSheet() {
+  $("sheet").classList.add("hidden");
+  $("scrim").classList.add("hidden");
+}
+
+$("sheet-cancel").onclick = closeSheet;
+$("scrim").onclick = closeSheet;
 $("sheet-self").onclick = async () => {
   try {
     await api("/api/take", { issue: sheetIssue });
-    $("sheet").classList.add("hidden");
+    closeSheet();
+    lastBoardKey = "";
     refresh();
   } catch (err) { alert(err.message); }
 };
 $("sheet-run").onclick = async () => {
   try {
     await api("/api/run", { issue: sheetIssue, profile: $("sheet-profile").value });
-    $("sheet").classList.add("hidden");
+    closeSheet();
+    lastBoardKey = "";
     refresh();
   } catch (err) { alert(err.message); }
 };
@@ -249,10 +322,10 @@ function renderAuto() {
       <div>${escapeHtml(c.title || "")}</div></div></label>`
   ).join("") || '<p class="meta">Нет ready</p>';
   $("auto-queue").innerHTML = (state.queue || []).map((q) =>
-    `<article class="card"><header><span>${q.project}</span><span>${q.status}</span></header>
+    `<article class="card"><header><span>${escapeHtml(q.project)}</span><span>${escapeHtml(q.status)}</span></header>
       <h3>#${q.issue} ${escapeHtml(q.title || "")}</h3>
-      <p class="meta">${q.profile}</p>
-      ${q.status === "waiting" ? `<button data-rm="${q.repo}#${q.issue}">Убрать</button>` : ""}</article>`
+      <p class="meta">${escapeHtml(q.profile || "")}</p>
+      ${q.status === "waiting" ? `<button class="btn" data-rm="${q.repo}#${q.issue}">Убрать</button>` : ""}</article>`
   ).join("") || '<p class="meta">Очередь пуста</p>';
   $("auto-queue").querySelectorAll("[data-rm]").forEach((btn) => {
     btn.onclick = async () => {
@@ -274,9 +347,9 @@ $("auto-start").onclick = async () => { await api("/api/queue/start", {}); refre
 $("auto-pause").onclick = async () => { await api("/api/queue/pause", {}); refresh(); };
 
 function renderMap(data) {
-  const checks = (data.doctor?.checks || []).map((c) => `<li>${c.ok ? "ok" : "нет"} ${c.name}</li>`).join("");
+  const checks = (data.doctor?.checks || []).map((c) => `<li>${c.ok ? "ok" : "нет"} ${escapeHtml(c.name)}</li>`).join("");
   const projects = (data.projects || []).map((p) =>
-    `<li>${p.name} — ${p.graphify ? "граф есть" : "графа нет"} — ${p.cwd || "не клонирован"}</li>`
+    `<li>${escapeHtml(p.name)} — ${p.graphify ? "граф есть" : "графа нет"} — ${escapeHtml(p.cwd || "не клонирован")}</li>`
   ).join("");
   const live = (data.live || []).join(", ") || "тихо";
   $("map").innerHTML = `
@@ -289,7 +362,7 @@ function renderMap(data) {
 
 async function renderProject() {
   const name = currentFilter();
-  if (name === "all") {
+  if (name === "all" || name === "p0" || name === "me") {
     $("project-box").innerHTML = '<p class="meta">Выберите проект в шапке</p>';
     return;
   }
@@ -301,13 +374,13 @@ async function renderProject() {
       <article class="card"><h3>${escapeHtml(s.stage || "")}</h3>
         <p class="meta">open ${s.open || 0} · ready ${s.ready || 0} · P0 ${s.p0 || 0} · ход ${s.in_progress || 0}</p>
         <p class="meta">граф ${escapeHtml(s.graph_age || "нет")} · ${(s.docs || []).join(", ") || "нет спеки"}</p>
-        <button data-hide="${name}">Скрыть</button>
-        <button data-archive="${name}">Архивировать продукт</button>
+        <button class="btn" data-hide="${name}">Скрыть</button>
+        <button class="btn" data-archive="${name}">Архивировать продукт</button>
       </article>
       ${drafts.map((d) => `<article class="card"><h3>${escapeHtml(d.title)}</h3>
-        <p class="meta">${d.label} · ${d.kind}</p>
-        <button data-approve="${d.id}">Approve</button>
-        <button data-skip="${d.id}">Skip</button></article>`).join("") || '<p class="meta">Черновиков нет</p>'}`;
+        <p class="meta">${escapeHtml(d.label)} · ${escapeHtml(d.kind)}</p>
+        <button class="btn primary" data-approve="${d.id}">Approve</button>
+        <button class="btn" data-skip="${d.id}">Skip</button></article>`).join("") || '<p class="meta">Черновиков нет</p>'}`;
     $("project-box").querySelectorAll("[data-approve]").forEach((b) => {
       b.onclick = async () => { await api("/api/draft", { id: b.dataset.approve, action: "approve" }); renderProject(); };
     });
@@ -331,72 +404,101 @@ async function renderProject() {
 
 $("orch-run").onclick = async () => {
   const name = currentFilter();
-  if (name === "all") return alert("Сначала выберите проект");
+  if (name === "all" || name === "p0" || name === "me") return alert("Сначала выберите проект");
   await api("/api/orchestrate", { project: name });
   alert("Оркестратор запущен");
 };
 
-$("project-filter").onchange = () => {
-  localStorage.setItem(FILTER_KEY, $("project-filter").value);
-  renderBoard();
-  renderAuto();
-  if ($("tab-project").classList.contains("on")) renderProject();
-};
+function optionList(values, selected, extra) {
+  const all = [...values];
+  if (extra && !all.includes(extra)) all.unshift(extra);
+  return all.map((v) => `<option ${v === selected ? "selected" : ""}>${escapeHtml(v)}</option>`).join("");
+}
 
 function renderSettings() {
   $("max-parallel").value = state.max_parallel || 3;
-  $("profiles").innerHTML = state.profiles.map((p, i) => `
-    <article class="card" data-i="${i}">
-      <div class="split">
+  const catalog = (state.catalog && state.catalog.kinds) || {};
+  const probed = state.catalog && state.catalog.probed_at ? `каталог ${state.catalog.probed_at}` : "каталог ещё не снимали";
+  $("catalog-note").textContent = probed;
+  $("profiles").innerHTML = (state.profiles || []).map((p, i) => {
+    const kind = catalog[p.kind] || {};
+    const models = kind.models || [];
+    const efforts = kind.efforts || [];
+    return `<article class="plan ${escapeHtml(p.kind)}" data-i="${i}"><i class="accent"></i><div class="plan-b">
+      <div class="plan-h"><div><h3>${escapeHtml(p.label || p.kind)}</h3>
+        <p>${escapeHtml(p.kind)}</p></div>
+        <span class="${kind.installed ? "okpill" : "nopill"}">${kind.installed ? "готов" : "нет CLI"}</span></div>
+      <div class="grid2">
         <label>Имя <input data-k="label" value="${escapeHtml(p.label || "")}"></label>
         <label>Адаптер
           <select data-k="kind">
             ${["claude", "codex", "grok", "cursor"].map((k) =>
-              `<option ${p.kind === k ? "selected" : ""}>${k}</option>`).join("")}
+              `<option ${p.kind === k ? "selected" : ""} ${catalog[k] && catalog[k].installed === false ? "disabled" : ""}>${k}</option>`).join("")}
           </select>
         </label>
-        <label>Модель <input data-k="model" value="${escapeHtml(p.model || "")}"></label>
-        <label>Effort <input data-k="effort" value="${escapeHtml(p.effort || "")}"></label>
-        <label>Fast <input data-k="fast" type="checkbox" ${p.fast ? "checked" : ""}></label>
+        <label>Модель
+          <select data-k="model">
+            <option value="">auto</option>
+            ${optionList(models, p.model, p.model)}
+          </select>
+        </label>
+        <label>Effort
+          <select data-k="effort">
+            <option value=""></option>
+            ${optionList(efforts, p.effort, p.effort)}
+          </select>
+        </label>
+        <label>Fast <input data-k="fast" type="checkbox" ${p.fast ? "checked" : ""} ${kind.fast ? "" : "disabled"}></label>
       </div>
-    </article>`).join("");
+    </div></article>`;
+  }).join("");
 }
 
 $("add-profile").onclick = () => {
-  state.profiles.push({ id: `p${Date.now()}`, kind: "claude", label: "Новая", model: "sonnet", effort: "high", fast: false });
+  state.profiles.push({ id: `p${Date.now()}`, kind: "claude", label: "Новая", model: "", effort: "high", fast: false });
+  settingsDirty = true;
   renderSettings();
 };
+
 function renderSlots() {
   const pins = state.pins || [];
   const catalog = (state.catalog && state.catalog.kinds) || {};
   $("slots").innerHTML = pins.map((p) => {
     const slots = (state.slots || {})[p.name] || {};
-    return `<article class="card"><h3>${p.name}</h3>${["orchestrator", "build", "design", "qa"].map((role) => {
+    return `<article class="panel"><h2>${escapeHtml(p.name)} · слоты</h2>${["orchestrator", "build", "design", "qa"].map((role) => {
       const s = slots[role] || {};
       const kind = catalog[s.kind] || catalog.claude || {};
-      const models = kind.models || [];
-      const efforts = kind.efforts || [];
       return `<label>${role}
         <select data-slot="${p.name}" data-role="${role}" data-k="kind">
           ${["claude", "codex", "grok", "cursor"].map((k) =>
-            `<option ${s.kind === k ? "selected" : ""} ${catalog[k] && !catalog[k].installed ? "disabled" : ""}>${k}</option>`).join("")}
+            `<option ${s.kind === k ? "selected" : ""} ${catalog[k] && catalog[k].installed === false ? "disabled" : ""}>${k}</option>`).join("")}
         </select>
         <select data-slot="${p.name}" data-role="${role}" data-k="model">
           <option value="">auto</option>
-          ${models.map((m) => `<option ${s.model === m ? "selected" : ""}>${m}</option>`).join("")}
+          ${optionList(kind.models || [], s.model, s.model)}
         </select>
-        ${efforts.length ? `<select data-slot="${p.name}" data-role="${role}" data-k="effort">
-          ${efforts.map((e) => `<option ${s.effort === e ? "selected" : ""}>${e}</option>`).join("")}
-        </select>` : ""}
+        <select data-slot="${p.name}" data-role="${role}" data-k="effort">
+          ${(kind.efforts || []).map((e) => `<option ${s.effort === e ? "selected" : ""}>${e}</option>`).join("")}
+        </select>
         ${kind.fast ? `<label>Fast <input type="checkbox" data-slot="${p.name}" data-role="${role}" data-k="fast" ${s.fast ? "checked" : ""}></label>` : ""}
       </label>`;
     }).join("")}</article>`;
   }).join("");
 }
 
+$("tab-settings").addEventListener("input", () => { settingsDirty = true; });
+$("tab-settings").addEventListener("change", () => { settingsDirty = true; });
+
 $("refresh-catalog").onclick = async () => {
-  state.catalog = await api("/api/catalog", {});
-  renderSlots();
+  $("catalog-note").textContent = "снимаю каталог с VPS…";
+  try {
+    state.catalog = await api("/api/catalog", {});
+    settingsDirty = true;
+    renderSettings();
+    renderSlots();
+  } catch (err) {
+    $("catalog-note").textContent = err.message;
+  }
 };
 $("btn-add-repo").onclick = async () => {
   await api("/api/projects/add", { repo: $("add-repo").value.trim() });
@@ -408,7 +510,7 @@ $("btn-create-repo").onclick = async () => {
 };
 
 $("save-settings").onclick = async () => {
-  const profiles = [...$("profiles").children].map((card, i) => {
+  const profiles = [...$("profiles").querySelectorAll("[data-i]")].map((card, i) => {
     const prev = state.profiles[i];
     const get = (k) => card.querySelector(`[data-k="${k}"]`);
     return {
@@ -417,7 +519,7 @@ $("save-settings").onclick = async () => {
       label: get("label").value,
       model: get("model").value,
       effort: get("effort").value,
-      fast: get("fast").checked,
+      fast: Boolean(get("fast")?.checked),
     };
   });
   const slots = {};
@@ -430,6 +532,7 @@ $("save-settings").onclick = async () => {
     else slots[name][role][el.dataset.k] = el.value;
   });
   await api("/api/settings", { profiles, max_parallel: Number($("max-parallel").value), slots });
+  settingsDirty = false;
   refresh();
 };
 
@@ -439,36 +542,45 @@ async function pollConsole() {
   $("console").textContent = data.pane || data.log || "пусто";
   const live = data.live || [];
   if ($("console-project").options.length !== live.length + 1) {
-    $("console-project").innerHTML = `<option value="">лог</option>` + live.map((p) => `<option>${p}</option>`).join("");
+    $("console-project").innerHTML = `<option value="">лог</option>` + live.map((p) => `<option>${escapeHtml(p)}</option>`).join("");
   }
 }
 
 async function refresh() {
+  if (refreshBusy) return;
+  refreshBusy = true;
   try {
     const [board, settings, mapped] = await Promise.all([
       api("/api/board"),
       api("/api/settings"),
       api("/api/map"),
     ]);
-    state = { ...state, ...board, ...settings };
-    fillFilter();
-    renderSlots();
+    const keepProfiles = settingsDirty ? state.profiles : settings.profiles;
+    const keepSlots = settingsDirty ? state.slots : settings.slots;
+    state = { ...state, ...board, ...settings, profiles: keepProfiles, slots: keepSlots };
+    if (!settingsDirty) state.catalog = settings.catalog || state.catalog;
+    renderFilters();
     const running = (mapped.live || [])[0];
     const q = (settings.queue || []).filter((i) => i.status === "waiting").length;
-    $("strip").textContent = running
-      ? `VPS · ${running}` + (q ? ` · очередь ${q}` : "")
-      : (settings.queue_running ? `автоном · ждут ${q}` : "тихо");
+    $("strip").innerHTML = running
+      ? `<i class="pulse"></i><b>VPS · ${escapeHtml(running)}${q ? ` · очередь ${q}` : ""}</b>`
+      : `<i class="pulse"></i><b>${settings.queue_running ? `автоном · ждут ${q}` : "тихо"}</b>`;
     renderBoard();
     renderAuto();
     renderMap(mapped);
-    renderSettings();
-    if (!$("tab-console").classList.contains("on")) return;
-    pollConsole();
+    if (!settingsDirty) {
+      renderSlots();
+      renderSettings();
+    }
+    if ($("tab-console").classList.contains("on")) pollConsole();
+    if ($("tab-project").classList.contains("on")) renderProject();
   } catch (err) {
     if (String(err.message).includes("passkey")) {
       $("app").classList.add("hidden");
       $("gate").classList.remove("hidden");
     }
+  } finally {
+    refreshBusy = false;
   }
 }
 

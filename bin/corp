@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
 import shlex
 import shutil
@@ -51,7 +52,14 @@ def die(msg: str, code: int = 1) -> None:
     raise CorpError(msg, code)
 
 
+def ensure_path() -> None:
+    extras = [str(Path.home() / ".local" / "bin"), "/usr/local/bin"]
+    parts = [p for p in os.environ.get("PATH", "").split(":") if p]
+    os.environ["PATH"] = ":".join([p for p in extras if p not in parts] + parts)
+
+
 def load_env() -> None:
+    ensure_path()
     for path in ENV_PATHS:
         if path is None or not path.is_file():
             continue
@@ -64,8 +72,40 @@ def load_env() -> None:
         return
 
 
+def _registry_overlay() -> dict:
+    if not WORKSHOP_JSON.is_file():
+        return {}
+    try:
+        return json.loads(WORKSHOP_JSON.read_text()).get("registry") or {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
 def load_registry() -> dict:
-    return json.loads(REGISTRY_PATH.read_text())
+    raw = json.loads(REGISTRY_PATH.read_text())
+    extra = _registry_overlay()
+    if not extra:
+        return raw
+    by_name = {p.get("name"): dict(p) for p in raw.get("projects") or [] if p.get("name")}
+    for project in extra.get("projects") or []:
+        name = project.get("name")
+        if name:
+            by_name[name] = {**by_name.get(name, {}), **project}
+    pins = extra.get("pins") or {}
+    projects = []
+    seen = set()
+    for project in list(raw.get("projects") or []) + list(extra.get("projects") or []):
+        name = project.get("name")
+        if not name or name in seen:
+            continue
+        row = by_name[name]
+        if name in pins:
+            row["workshop"] = bool(pins[name])
+        projects.append(row)
+        seen.add(name)
+    out = dict(raw)
+    out["projects"] = projects
+    return out
 
 
 def workspace() -> Path:
@@ -93,11 +133,17 @@ def project_dir(project: dict) -> Path | None:
     return None
 
 
-def run(cmd: list[str], cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, cwd=cwd, check=check, text=True, capture_output=True)
+def run(cmd: list[str], cwd: Path | None = None, check: bool = True, timeout: float | None = None) -> subprocess.CompletedProcess:
+    try:
+        return subprocess.run(cmd, cwd=cwd, check=check, text=True, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        out = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode()
+        err = exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"timeout").decode()
+        return subprocess.CompletedProcess(cmd, 124, out or "", err or "timeout")
 
 
 def have(cmd: str) -> bool:
+    ensure_path()
     return shutil.which(cmd) is not None
 
 
@@ -124,7 +170,19 @@ def pinned_projects(reg: dict) -> list[dict]:
 
 
 def save_registry(reg: dict) -> None:
-    REGISTRY_PATH.write_text(json.dumps(reg, indent=2) + "\n")
+    invalidate_board()
+    text = json.dumps(reg, indent=2) + "\n"
+    try:
+        REGISTRY_PATH.write_text(text)
+        return
+    except OSError:
+        pass
+    data = load_workshop()
+    data["registry"] = {
+        "pins": {p.get("name"): bool(p.get("workshop")) for p in reg.get("projects") or [] if p.get("name")},
+        "projects": [dict(p) for p in reg.get("projects") or [] if p.get("name")],
+    }
+    save_workshop(data)
 
 
 def org_name(reg: dict) -> str:
@@ -474,6 +532,7 @@ def default_workshop() -> dict:
         "slots": {},
         "drafts": [],
         "tg_offset": 0,
+        "registry": {},
     }
 
 
@@ -492,6 +551,7 @@ def load_workshop() -> dict:
     data.setdefault("slots", {})
     data.setdefault("drafts", [])
     data.setdefault("tg_offset", 0)
+    data.setdefault("registry", {})
     return data
 
 
@@ -540,31 +600,58 @@ def slot_for_issue(name: str, issue: dict) -> tuple[str, dict]:
 
 def _help_text(binary: str) -> str:
     chunks = []
-    for args in ([binary, "--help"], [binary, "help"]):
-        proc = run(args, check=False)
+    for args in ([binary, "--help"],):
+        proc = run(args, check=False, timeout=8)
         chunks.append(proc.stdout or "")
         chunks.append(proc.stderr or "")
-    return "\n".join(chunks).lower()
+    return "\n".join(chunks)
+
+
+_MODEL_TOKEN = re.compile(r"^[A-Za-z][A-Za-z0-9._+-]{1,80}$")
+_MODEL_SKIP = {
+    "available", "default", "model", "models", "name", "id", "you", "the",
+    "usage", "options", "commands", "arguments", "help", "logged", "with",
+}
+_MODEL_ALIASES = {"sonnet", "opus", "haiku", "fable", "composer"}
+_MODEL_LIST = {
+    "claude": [],
+    "codex": [],
+    "grok": [["grok", "models"]],
+    "cursor": [["agent", "models"]],
+}
+
+
+def _looks_like_model(token: str) -> bool:
+    if not _MODEL_TOKEN.match(token) or token.lower() in _MODEL_SKIP:
+        return False
+    if any(ch in token for ch in "/\\:"):
+        return False
+    low = token.lower()
+    return bool(any(ch.isdigit() for ch in token) or "-" in token or low in _MODEL_ALIASES)
 
 
 def _parse_models(text: str) -> list[str]:
     found = []
     for raw in text.splitlines():
-        if raw.strip().startswith("-"):
-            continue
-        line = raw.strip()
-        if not line or " " in line.split("\t")[0] and len(line) > 40:
-            token = line.split()[0] if line.split() else ""
-        else:
-            token = line.split()[0] if line.split() else ""
-        token = token.strip(",").strip()
-        if not token or token.startswith("-") or token.lower() in {"model", "models", "name", "id"}:
-            continue
-        if any(ch in token for ch in "/\\:"):
-            continue
-        if token not in found:
+        line = raw.strip().lstrip("*").strip()
+        if line.startswith(("- ", "• ", "+ ")):
+            line = line[2:].strip()
+        token = (line.split() or [""])[0].strip("`,\"'()[]")
+        if _looks_like_model(token) and token not in found:
+            found.append(token)
+    for token in re.findall(r"'([A-Za-z][A-Za-z0-9._+-]{1,60})'", text):
+        if _looks_like_model(token) and token not in found:
             found.append(token)
     return found[:40]
+
+
+def _parse_efforts(text: str) -> list[str]:
+    order = ["low", "med", "medium", "high", "xhigh", "max"]
+    low = text.lower()
+    found = [name for name in order if re.search(rf"\b{name}\b", low)]
+    if "medium" in found and "med" in found:
+        found = [name for name in found if name != "med"]
+    return found
 
 
 def probe_kind(kind: str) -> dict:
@@ -573,22 +660,32 @@ def probe_kind(kind: str) -> dict:
     if not row["installed"]:
         return row
     help_text = _help_text(binary)
-    if "--effort" in help_text or "effort" in help_text:
-        row["efforts"] = ["low", "med", "high", "xhigh"]
-    if "fast" in help_text or "service_tier" in help_text:
+    help_l = help_text.lower()
+    if "--effort" in help_l or "reasoning effort" in help_l:
+        row["efforts"] = _parse_efforts(help_text) or ["low", "high"]
+    if "service_tier" in help_l or re.search(r"--fast\b", help_l):
         row["fast"] = True
-    for args in ([binary, "models"], [binary, "model", "ls"], [binary, "--list-models"]):
-        proc = run(args, check=False)
-        if proc.returncode == 0 and (proc.stdout or "").strip():
-            models = _parse_models(proc.stdout)
-            if models:
-                row["models"] = models
-                break
+    models = _parse_models(help_text)
+    for args in _MODEL_LIST.get(kind) or []:
+        proc = run(args, check=False, timeout=8)
+        listed = _parse_models((proc.stdout or "") + "\n" + (proc.stderr or ""))
+        if listed:
+            models = listed
+            break
+    row["models"] = models
     return row
 
 
 def probe_catalog() -> dict:
-    catalog = {kind: probe_kind(kind) for kind in KIND_BIN}
+    prev = (load_workshop().get("catalog") or {}).get("kinds") or {}
+    catalog = {}
+    for kind in KIND_BIN:
+        try:
+            row = probe_kind(kind)
+        except Exception:
+            row = dict(prev.get(kind) or {"kind": kind, "installed": False, "models": [], "efforts": [], "fast": False})
+            row["stale"] = True
+        catalog[kind] = row
     data = load_workshop()
     data["catalog"] = {"probed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "kinds": catalog}
     save_workshop(data)
@@ -814,6 +911,7 @@ def approve_draft(draft_id: str) -> dict:
         die((proc.stderr or proc.stdout or "create issue failed").strip())
     drop_draft(draft_id)
     url = (proc.stdout or "").strip()
+    invalidate_board()
     notify_safe(f"{draft['repo']} · завёл · {draft['title']}\n{url}")
     return {"ok": True, "url": url, "draft": draft}
 
@@ -1020,7 +1118,19 @@ def column_of(issue: dict) -> str:
     return "backlog"
 
 
+_board_memo = {"t": 0.0, "key": "", "data": None}
+
+
+def invalidate_board() -> None:
+    _board_memo["t"] = 0
+    _board_memo["data"] = None
+
+
 def board_payload(reg: dict) -> dict:
+    cache_key = ",".join(p["name"] for p in pinned_projects(reg))
+    now = time.time()
+    if _board_memo["data"] is not None and _board_memo["key"] == cache_key and now - _board_memo["t"] < 20:
+        return _board_memo["data"]
     cards = []
     for project in pinned_projects(reg):
         if not issues_enabled(project):
@@ -1029,10 +1139,10 @@ def board_payload(reg: dict) -> dict:
         closed = issues_for(project["repo"], "closed", 20)
         seen = set()
         for issue in open_issues + closed:
-            key = issue.get("number")
-            if key in seen:
+            number = issue.get("number")
+            if number in seen:
                 continue
-            seen.add(key)
+            seen.add(number)
             row = {
                 **issue,
                 "project": project["name"],
@@ -1045,7 +1155,9 @@ def board_payload(reg: dict) -> dict:
             cards.append(row)
     cards.sort(key=lambda item: (item["column"], rank(item)))
     pins = [{"name": p["name"], "repo": p.get("repo")} for p in pinned_projects(reg)]
-    return {"cards": cards, "projects": research_report(reg), "pins": pins}
+    payload = {"cards": cards, "projects": research_report(reg), "pins": pins}
+    _board_memo.update({"t": time.time(), "key": cache_key, "data": payload})
+    return payload
 
 
 def vps_owns_project(reg: dict, project_name: str, except_issue: int | None = None) -> bool:
@@ -1077,6 +1189,7 @@ def claim(repo: str, number: int, kind: str, note: str) -> None:
     add_labels(repo, number, ["in-progress", "self"] if kind == "self" else ["in-progress", VIA[kind]])
     assign_me(repo, number)
     comment(repo, number, note)
+    invalidate_board()
 
 
 def take_issue(reg: dict, repo: str, number: int) -> dict:
@@ -1087,6 +1200,7 @@ def take_issue(reg: dict, repo: str, number: int) -> dict:
     if vps_owns_project(reg, project["name"], except_issue=number):
         die(f"VPS is writing {project['name']}. Wait or pause that run.")
     claim(repo, number, "self", "corp-claim: self")
+    invalidate_board()
     return {"ok": True, "repo": repo, "issue": number, "runner": "self"}
 
 
@@ -1121,6 +1235,7 @@ def close_issue(reg: dict, repo: str, number: int) -> dict:
     if proc.returncode != 0:
         die((proc.stderr or proc.stdout).strip())
     graph = refresh_graph(dest, repo, number) if dest else "no checkout"
+    invalidate_board()
     maybe_orchestrate(reg, project["name"])
     return {"ok": True, "repo": repo, "issue": number, "graph": graph}
 
@@ -1142,6 +1257,7 @@ def move_issue(reg: dict, repo: str, number: int, column: str) -> dict:
     else:
         add_labels(repo, number, ["in-progress"])
         remove_labels(repo, number, ["ready"])
+    invalidate_board()
     return {"ok": True, "repo": repo, "issue": number, "column": column}
 
 

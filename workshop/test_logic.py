@@ -36,6 +36,16 @@ def main() -> None:
     }
     assert [p["name"] for p in corp.pinned_projects(reg2)] == ["corp"]
     assert corp._parse_models("sonnet\nopus\n--help") == ["sonnet", "opus"]
+    grok = (
+        "You are logged in with grok.com.\n"
+        "Default model: grok-4.6\n"
+        "Available models:\n"
+        "  * grok-4.6 (default)\n"
+        "  - grok-4.5\n"
+    )
+    assert corp._parse_models(grok) == ["grok-4.6", "grok-4.5"]
+    help_models = corp._parse_models("Provide an alias (e.g. 'fable', 'opus', or 'sonnet')")
+    assert help_models == ["fable", "opus", "sonnet"]
     assert corp.default_slot()["kind"] == "claude"
     print("ok")
 
