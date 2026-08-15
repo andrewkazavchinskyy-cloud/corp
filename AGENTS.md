@@ -34,6 +34,8 @@ They must not weaken the Git preservation boundary.
 
 - If `graphify-out/GRAPH_REPORT.md` exists, read it, then `graphify query` for this Issue before broad file reads.
 - Keep changes small. Reuse existing code. Prefer the standard library.
+- On corp, workshop work expands useful function and pushes `workshop/static`
+  UI/UX on phone and desktop. `workshop/preview.html` is a reference, not a dump.
 - After meaningful work, update `memory/sessions/` (this repo or the project), commit, and push when practical.
 - Record user-visible requests, outcomes, decisions, assumptions, open questions, and links. Never record hidden chain-of-thought or raw tool dumps.
 

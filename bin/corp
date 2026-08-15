@@ -355,6 +355,98 @@ def research_report(reg: dict) -> list[dict]:
     return rows
 
 
+def parse_graph_report(text: str) -> dict:
+    out = {
+        "nodes": 0,
+        "edges": 0,
+        "communities": 0,
+        "hubs": [],
+        "gods": [],
+        "groups": [],
+        "fresh": "",
+    }
+    stats = re.search(r"(\d+)\s+nodes\s+·\s+(\d+)\s+edges\s+·\s+(\d+)\s+communities", text)
+    if stats:
+        out["nodes"] = int(stats.group(1))
+        out["edges"] = int(stats.group(2))
+        out["communities"] = int(stats.group(3))
+    commit = re.search(r"Built from commit:\s+`([^`]+)`", text)
+    if commit:
+        out["fresh"] = commit.group(1)
+    hubs = re.search(r"## Community Hubs.*?\n(?:- .+\n)+", text)
+    if hubs:
+        out["hubs"] = [line[2:].strip() for line in hubs.group(0).splitlines() if line.startswith("- ")][:12]
+    for line in text.splitlines():
+        god = re.search(r"^\d+\.\s+`([^`]+)`\s+-\s+(\d+)\s+edges", line)
+        if god:
+            out["gods"].append({"name": god.group(1), "edges": int(god.group(2))})
+    for block in re.finditer(
+        r'### Community \d+ - "([^"]+)"\s*\nCohesion:\s*([0-9.]+)\s*\nNodes \((\d+)\):',
+        text,
+    ):
+        out["groups"].append(
+            {
+                "name": block.group(1),
+                "cohesion": float(block.group(2)),
+                "size": int(block.group(3)),
+            }
+        )
+    out["gods"] = out["gods"][:10]
+    return out
+
+
+def graphs_index(reg: dict) -> list[dict]:
+    rows = []
+    for project in active_projects(reg):
+        dest = project_dir(project)
+        report = dest / "graphify-out" / "GRAPH_REPORT.md" if dest else None
+        parsed = parse_graph_report(report.read_text()) if report and report.is_file() else parse_graph_report("")
+        age = ""
+        if report and report.is_file():
+            age = time.strftime("%Y-%m-%d", time.localtime(report.stat().st_mtime))
+        rows.append(
+            {
+                "name": project["name"],
+                "repo": project.get("repo"),
+                "pinned": is_pinned(project),
+                "cwd": str(dest) if dest else None,
+                "has_graph": bool(report and report.is_file()),
+                "age": age,
+                **parsed,
+            }
+        )
+    rows.sort(key=lambda row: (not row["pinned"], not row["has_graph"], row["name"] or ""))
+    return rows
+
+
+def graph_detail(reg: dict, name: str) -> dict:
+    project = project_by_name(reg, name)
+    dest = project_dir(project)
+    report = dest / "graphify-out" / "GRAPH_REPORT.md" if dest else None
+    if report is None or not report.is_file():
+        return {
+            "name": project["name"],
+            "repo": project.get("repo"),
+            "pinned": is_pinned(project),
+            "cwd": str(dest) if dest else None,
+            "has_graph": False,
+            "age": "",
+            **parse_graph_report(""),
+        }
+    parsed = parse_graph_report(report.read_text())
+    parsed.update(
+        {
+            "name": project["name"],
+            "repo": project.get("repo"),
+            "pinned": is_pinned(project),
+            "cwd": str(dest) if dest else None,
+            "has_graph": True,
+            "age": time.strftime("%Y-%m-%d", time.localtime(report.stat().st_mtime)),
+        }
+    )
+    return parsed
+
+
 def cycle_payload(reg: dict) -> dict:
     if not gh_ready():
         die("gh is missing or not logged in. Run: gh auth login")
@@ -1039,6 +1131,63 @@ def orch_session(project: str) -> str:
     return f"corp-orch-{project}"
 
 
+def orch_spec_rels(dest: Path | None, research_files: list[str] | None = None) -> list[str]:
+    if dest is None or not dest.is_dir():
+        return []
+    names = list(research_files or [])
+    for rel in ("docs/PRD.md", "docs/SPEC.md", "docs/SHIP.md", "docs/roadmap.md", "PRD.md", "SPEC.md"):
+        if rel not in names:
+            names.append(rel)
+    return [rel for rel in names if (dest / rel).is_file()]
+
+
+def orch_open_lines(cards: list, project: str) -> str:
+    rows = []
+    for card in cards:
+        if card.get("project") != project:
+            continue
+        if (card.get("state") or "OPEN").upper() == "CLOSED":
+            continue
+        rows.append(f"#{card.get('number')} [{card.get('column')}] {card.get('title') or ''}")
+    return "\n".join(rows[:40]) or "(none)"
+
+
+def orch_workshop_extra(project: str) -> str:
+    if project != "corp":
+        return ""
+    return (
+        " This repo is the live workshop. Also propose drafts that expand its "
+        "function and push UI/UX/design of workshop/static as far as phone and "
+        "desktop will go. Read workshop/preview.html as a reference, not a dump. "
+        "Keep Passkey, Tailscale, the pin list, and GitHub as planner. "
+        "Use kind=design for visual/UX cards and kind=build for behavior. "
+    )
+
+
+def orch_prompt(dest: Path, out: Path, spec_rels: list[str], open_lines: str, project: str = "") -> str:
+    spec = ", ".join(spec_rels) or "NONE"
+    prd = next((rel for rel in spec_rels if rel.endswith("PRD.md") or rel.endswith("SPEC.md")), "")
+    source = prd or spec
+    return (
+        f"Read-only review of {dest}. Follow {ROOT}/docs/WORKSHOP.md. "
+        f"You are the project orchestrator. Compare three things:\n"
+        f"1) The product spec in the repo (prefer PRD, else SPEC): {source}. "
+        f"Also read: {spec}.\n"
+        f"2) What is already shipped: code, README, graphify-out/GRAPH_REPORT.md, closed work.\n"
+        f"3) Open GitHub issues already on the board (do not duplicate these):\n{open_lines}\n"
+        f"Propose NEW drafts only for PRD/SPEC work that is not shipped and not already an open issue. "
+        f"Each draft is a concrete follow-up against that spec. "
+        f"{orch_workshop_extra(project)}"
+        f"If there is no PRD/SPEC, output one draft titled 'написать SPEC'. "
+        f"No new product ideas. No code. No git writes. "
+        f"Do not run git commit, git push, or edit files in {dest}. "
+        f"Draft titles and bodies in Russian. "
+        f"Print a JSON array to stdout. You may also write it to {out} "
+        f"(outside the repo) as "
+        f'[{{"title":"...","body":"...","label":"ready|blocked","kind":"build|design|qa"}}].'
+    )
+
+
 def orchestrate(reg: dict, repo: str) -> dict:
     project = project_by_repo(reg, repo)
     dest = project_dir(project)
@@ -1052,15 +1201,13 @@ def orchestrate(reg: dict, repo: str) -> dict:
     if not have(KIND_BIN[kind]):
         die(f"{kind} CLI is not installed")
     out = config_dir() / f"orch-{project['name']}.json"
-    prompt = (
-        f"Read-only review of {dest}. Follow {ROOT}/docs/WORKSHOP.md. "
-        f"Look at open issues, graphify-out/GRAPH_REPORT.md, and any SPEC/PRD/SHIP/roadmap. "
-        f"Propose only gaps vs those docs. If no SPEC/PRD, output one draft titled "
-        f"'написать SPEC'. No new product ideas. No code. No git writes. "
-        f"Do not run git commit, git push, or edit files in {dest}. "
-        f"Print a JSON array to stdout. You may also write it to {out} "
-        f"(outside the repo) as "
-        f'[{{"title":"...","body":"...","label":"ready|blocked","kind":"build|design|qa"}}].'
+    cards = board_payload(reg)["cards"]
+    prompt = orch_prompt(
+        dest,
+        out,
+        orch_spec_rels(dest, reg.get("research_files") or []),
+        orch_open_lines(cards, project["name"]),
+        project["name"],
     )
     cmd = agent_argv(
         kind,
@@ -1436,12 +1583,21 @@ def pick_agent() -> str:
     die("no agent CLI found. Install claude, codex, grok, or cursor agent")
 
 
-def agent_prompt(repo: str, number: int, title: str, url: str, dest: Path) -> str:
+def agent_prompt(repo: str, number: int, title: str, url: str, dest: Path, project: str = "") -> str:
+    workshop = ""
+    if project == "corp" or dest.resolve() == ROOT.resolve():
+        workshop = (
+            " This is the live workshop. Within this issue, expand useful function "
+            "and push workshop/static UI/UX on phone and desktop as far as it will go. "
+            "workshop/preview.html is a reference, not a wholesale port. "
+            "Keep Passkey, Tailscale, pins, and GitHub as planner. No new product repo."
+        )
     return (
         f"Follow {ROOT}/AGENTS.md and {ROOT}/HARNESS.md "
         f"(on the VPS that is /opt/corp/AGENTS.md and /opt/corp/HARNESS.md). "
         f"Do only this GitHub Issue and nothing else: {repo}#{number} {title} {url}. "
         f"Work in {dest}. Control plane is {ROOT}. "
+        f"{workshop} "
         f"If graphify-out/GRAPH_REPORT.md exists, read it, then run "
         f'`graphify query` for this issue before broad file reads. '
         f"Commit and push in this product repo. After the issue is closed, "
@@ -1606,7 +1762,13 @@ def run_issue(
         die(f"{kind} CLI is not installed ({KIND_BIN[kind]})")
     names = label_names(issue)
     if role == "design":
-        extra = " This is a design issue: change only preview/docs, not production code. Do not close the issue."
+        if project["name"] == "corp":
+            extra = (
+                " This is a workshop design issue: change workshop/static for phone and desktop. "
+                "workshop/preview.html is a reference, not a dump. Do not close the issue."
+            )
+        else:
+            extra = " This is a design issue: change only preview/docs, not production code. Do not close the issue."
     elif role == "qa":
         extra = " This is QA. If it passes, close the issue. If it fails, leave it open and say qa-fail."
     elif "qa" in names:
@@ -1614,7 +1776,7 @@ def run_issue(
     else:
         extra = ""
     claim(repo, number, kind, f"corp-claim: vps {kind}")
-    prompt = agent_prompt(repo, number, issue.get("title") or "", issue.get("url") or "", dest) + extra
+    prompt = agent_prompt(repo, number, issue.get("title") or "", issue.get("url") or "", dest, project["name"]) + extra
     notify_safe(f"{repo}#{number} · {kind} · старт · {issue.get('title')}\n{issue.get('url')}")
     cmd = agent_argv(kind, prompt, dest, model=model, effort=effort, fast=fast)
     print(f"running: {cmd[0]} {repo}#{number}", file=sys.stderr)

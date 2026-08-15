@@ -3,6 +3,7 @@ const titles = {
   board: ["Доска", "GitHub Issues"],
   auto: ["Автоном", "Очередь VPS"],
   project: ["Проект", "Этап"],
+  graphs: ["Графы", "Все проекты"],
   map: ["Карта", "Сервер"],
   console: ["Консоль", "Агенты"],
   settings: ["Настройки", "Слоты и CLI"],
@@ -22,6 +23,8 @@ let settingsDirty = false;
 let lastBoardKey = "";
 let refreshBusy = false;
 let catalogProbed = false;
+let graphFocus = "";
+let graphsCache = [];
 
 function cookieGet(name) {
   const m = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
@@ -44,12 +47,14 @@ function isPin(name) {
 function setFilter(value) {
   cookieSet(FILTER_KEY, value);
   localStorage.setItem(FILTER_KEY, value);
+  graphFocus = "";
   lastBoardKey = "";
   renderFilters();
   renderBoard();
   renderAuto();
   if ($("tab-project").classList.contains("on")) renderProject();
   if ($("tab-console").classList.contains("on")) pollConsole();
+  if ($("tab-graphs").classList.contains("on")) renderGraphs();
 }
 
 function b64urlToBuf(value) {
@@ -180,6 +185,7 @@ function setTab(name) {
   renderFilters();
   if (name === "console") pollConsole();
   if (name === "project") renderProject();
+  if (name === "graphs") renderGraphs();
   if (name === "settings") renderRepos();
   if (name === "settings" && !catalogProbed) {
     catalogProbed = true;
@@ -413,6 +419,102 @@ $("auto-add").onclick = async () => {
 };
 $("auto-start").onclick = async () => { await api("/api/queue/start", {}); refresh(); };
 $("auto-pause").onclick = async () => { await api("/api/queue/pause", {}); refresh(); };
+
+function orbSize(nodes) {
+  return Math.max(72, Math.min(132, 72 + Math.round((nodes || 0) / 8)));
+}
+
+function graphSky(groups) {
+  const n = Math.max(groups.length, 1);
+  return groups.map((g, i) => {
+    const a = (i / n) * Math.PI * 2 - Math.PI / 2;
+    const r = 34 + (i % 2) * 6;
+    const left = 50 + r * Math.cos(a);
+    const top = 50 + r * Math.sin(a);
+    const size = Math.max(44, Math.min(88, 36 + (g.size || 1) * 1.4));
+    return `<button type="button" class="g-star c${i % 5}" style="left:${left}%;top:${top}%;width:${size}px;height:${size}px" title="${escapeHtml(g.name)} · ${g.size}">
+      <b>${escapeHtml(g.name)}</b><span>${g.size}</span></button>`;
+  }).join("");
+}
+
+function graphDetailHtml(g) {
+  const gods = (g.gods || []).map((x) =>
+    `<li><b>${escapeHtml(x.name)}</b><span>${x.edges}</span></li>`
+  ).join("") || "<li class=\"meta\">нет</li>";
+  const hubs = (g.hubs || []).map((h) => `<span class="chip">${escapeHtml(h)}</span>`).join("");
+  return `<article class="g-detail">
+    <header class="g-hero">
+      <button type="button" class="btn" id="g-back">Все проекты</button>
+      <div>
+        <p class="kicker">${g.pinned ? "пин" : "репо"} · ${escapeHtml(g.age || "")}</p>
+        <h2>${escapeHtml(g.name)}</h2>
+      </div>
+      <div class="g-stats">
+        <div><b>${g.nodes || 0}</b><span>узлы</span></div>
+        <div><b>${g.edges || 0}</b><span>рёбра</span></div>
+        <div><b>${g.communities || 0}</b><span>сообщества</span></div>
+      </div>
+    </header>
+    <div class="g-sky">${graphSky(g.groups || [])}</div>
+    <div class="g-meta">
+      <section><h3>Хабы</h3><div class="filters">${hubs || '<span class="meta">нет</span>'}</div></section>
+      <section><h3>Ядра</h3><ol class="g-gods">${gods}</ol></section>
+    </div>
+    <p class="meta">${escapeHtml(g.fresh ? `commit ${g.fresh}` : "")} · ${escapeHtml(g.repo || "")}</p>
+  </article>`;
+}
+
+function graphGalaxyHtml(list) {
+  const withG = list.filter((p) => p.has_graph).length;
+  return `<div class="g-bar"><p class="meta">${withG} с графом · ${list.length - withG} без</p></div>
+    <div class="g-galaxy">${list.map((p) => {
+      const size = orbSize(p.nodes);
+      const cls = `g-orb${p.pinned ? " pin" : ""}${p.has_graph ? "" : " miss"}`;
+      return `<button type="button" class="${cls}" data-graph="${escapeHtml(p.name)}" style="--orb:${size}px">
+        <i>${p.has_graph ? (p.nodes || 0) : "—"}</i>
+        <b>${escapeHtml(p.name)}</b>
+        <span>${p.has_graph ? `${p.communities || 0} сообществ` : "графа нет"}</span>
+      </button>`;
+    }).join("")}</div>`;
+}
+
+async function renderGraphs() {
+  const box = $("graphs");
+  if (!box) return;
+  try {
+    const f = currentFilter();
+    const want = isPin(f) ? f : graphFocus;
+    if (want) {
+      const g = await api(`/api/graphs/view?name=${encodeURIComponent(want)}`);
+      if (!g.has_graph) {
+        box.innerHTML = `<article class="g-detail"><button type="button" class="btn" id="g-back">Все проекты</button>
+          <h2>${escapeHtml(g.name)}</h2><p class="meta">Графа ещё нет. Появится после close и graphify.</p></article>`;
+        $("g-back").onclick = () => { graphFocus = ""; if (isPin(currentFilter())) setFilter("all"); else renderGraphs(); };
+        return;
+      }
+      box.innerHTML = graphDetailHtml(g);
+      $("g-back").onclick = () => {
+        graphFocus = "";
+        if (isPin(currentFilter())) setFilter("all");
+        else renderGraphs();
+      };
+      return;
+    }
+    const data = await api("/api/graphs");
+    graphsCache = data.projects || [];
+    box.innerHTML = graphGalaxyHtml(graphsCache);
+    box.querySelectorAll("[data-graph]").forEach((btn) => {
+      btn.onclick = () => {
+        const row = graphsCache.find((p) => p.name === btn.dataset.graph);
+        if (!row || !row.has_graph) return;
+        graphFocus = row.name;
+        renderGraphs();
+      };
+    });
+  } catch (err) {
+    box.innerHTML = `<p class="err">${escapeHtml(err.message)}</p>`;
+  }
+}
 
 function renderMap(data) {
   const checks = (data.doctor?.checks || []).map((c) => `<li>${c.ok ? "ok" : "нет"} ${escapeHtml(c.name)}</li>`).join("");
@@ -736,6 +838,7 @@ async function refresh() {
     }
     if ($("tab-console").classList.contains("on")) pollConsole();
     if ($("tab-project").classList.contains("on")) renderProject();
+    if ($("tab-graphs").classList.contains("on")) renderGraphs();
   } catch (err) {
     if (String(err.message).includes("passkey")) {
       $("app").classList.add("hidden");

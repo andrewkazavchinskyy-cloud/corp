@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Schibsted+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=15">
+  <link rel="stylesheet" href="/static/app.css?v=17">
 </head>
 <body>
   <div id="gate" class="gate hidden">
@@ -35,6 +35,7 @@
         <button data-tab="board" class="on" type="button">Доска</button>
         <button data-tab="auto" type="button">Автоном</button>
         <button data-tab="project" type="button">Проект</button>
+        <button data-tab="graphs" type="button">Графы</button>
         <button data-tab="map" type="button">Карта</button>
         <button data-tab="console" type="button">Консоль</button>
         <button data-tab="settings" type="button">Настройки</button>
@@ -82,8 +83,13 @@
         <section id="tab-project" class="tab">
           <div class="toolbar">
             <button type="button" class="btn primary" id="orch-run">Разобрать</button>
+            <p class="meta" id="orch-hint">Сверит PRD, репо и открытые ишью. На corp — ещё функции и UI/UX мастерской.</p>
           </div>
           <div id="project-box" class="stack"></div>
+        </section>
+
+        <section id="tab-graphs" class="tab">
+          <div id="graphs" class="graphs"></div>
         </section>
 
         <section id="tab-map" class="tab">
@@ -141,6 +147,7 @@
         <button data-tab="board" class="on" type="button">Доска</button>
         <button data-tab="auto" type="button">Автоном</button>
         <button data-tab="project" type="button">Проект</button>
+        <button data-tab="graphs" type="button">Графы</button>
         <button data-tab="console" type="button">Консоль</button>
         <button data-tab="settings" type="button">Настройки</button>
       </nav>
@@ -148,6 +155,6 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/static/app.js?v=15"></script>
+  <script src="/static/app.js?v=17"></script>
 </body>
 </html>

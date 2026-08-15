@@ -316,6 +316,18 @@ def api_map() -> dict:
     }
 
 
+@app.get("/api/graphs")
+def api_graphs() -> dict:
+    corp.load_env()
+    return {"projects": call(corp.graphs_index, corp.load_registry())}
+
+
+@app.get("/api/graphs/view")
+def api_graph_view(name: str) -> dict:
+    corp.load_env()
+    return call(corp.graph_detail, corp.load_registry(), name)
+
+
 @app.get("/api/settings")
 def api_settings(probe: bool = False) -> dict:
     if probe:

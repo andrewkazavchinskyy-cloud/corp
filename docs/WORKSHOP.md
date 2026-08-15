@@ -49,16 +49,27 @@ Per pin: Orchestrator, Build, Design, QA. Design/QA default to Build.
 Derived stage only (SPEC?, open/ready/P0, in-progress, graph age).
 Button «Разобрать», drafts, Approve/Skip. Map stays infra.
 
+## Graphs
+
+Tab «Графы»: graphify for every cloned project. All = constellation of
+orbs. One project = communities, hubs, god-nodes. Not a vis.js dump.
+Map stays the server contour.
+
 ## Orchestrator
 
 Manual + auto-suggest when the repo has no open ready/in-progress.
-Read-only. May run beside a writer. No git writes. Gaps vs
-SPEC/PRD/SHIP/roadmap/issues/graph only. No spec → one draft «написать SPEC».
-GitHub only after Approve. Batch Approve only in the workshop. Drafts: 7 days.
+Read-only. May run beside a writer. No git writes. Reads the project
+PRD/SPEC, what is already shipped, and open issues. Drafts are **new**
+follow-ups for spec work that is not shipped and not already a card.
+On **corp** (the workshop): also draft functional expansion and maximum
+UI/UX of the live app. `workshop/preview.html` is a reference, not a dump.
+No spec → one draft «написать SPEC». No new product. GitHub only after
+Approve. Batch Approve only in the workshop. Drafts: 7 days.
 
 ## Design / QA
 
-`design`: preview/docs only, does not close.
+`design`: preview/docs only, does not close. On corp, design may change
+`workshop/static`.
 `qa`: opt-in. qa-ok → `corp close` + graphify. qa-fail → ready+qa-fail.
 No `qa` label: Build closes as today.
 

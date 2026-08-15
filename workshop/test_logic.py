@@ -88,6 +88,40 @@ def main() -> None:
     assert corp.pulse_label("claude", "") == "auto · claude"
     assert corp.pulse_label("claude", "sonnet") == "sonnet"
     assert corp.parse_json_array('noise [{"title":"x"}] tail') == [{"title": "x"}]
+    lines = corp.orch_open_lines(
+        [
+            {"project": "clarity", "number": 20, "state": "OPEN", "column": "ready", "title": "SHIP-4"},
+            {"project": "clarity", "number": 1, "state": "CLOSED", "column": "done", "title": "old"},
+            {"project": "corp", "number": 2, "state": "OPEN", "column": "ready", "title": "other"},
+        ],
+        "clarity",
+    )
+    assert "#20 [ready] SHIP-4" in lines and "old" not in lines and "other" not in lines
+    prompt = corp.orch_prompt(Path("/tmp/clarity"), Path("/tmp/orch.json"), ["docs/SPEC.md"], lines, "clarity")
+    assert "docs/SPEC.md" in prompt and "#20" in prompt and "do not duplicate" in prompt.lower()
+    assert "workshop/static" not in prompt
+    corp_prompt = corp.orch_prompt(Path("/tmp/corp"), Path("/tmp/orch.json"), ["docs/WORKSHOP.md"], "(none)", "corp")
+    assert "workshop/static" in corp_prompt and "preview.html" in corp_prompt
+    built = corp.agent_prompt("andrewkazavchinskyy-cloud/corp", 27, "t", "u", ROOT, "corp")
+    assert "workshop/static" in built
+    sample = """# Graph Report
+- 290 nodes · 819 edges · 16 communities
+- Built from commit: `c09220e2`
+## Community Hubs (Navigation)
+- main
+- run
+## God Nodes
+1. `call()` - 18 edges
+2. `refresh()` - 15 edges
+### Community 0 - "main"
+Cohesion: 0.12
+Nodes (33): active_projects()
+"""
+    parsed = corp.parse_graph_report(sample)
+    assert parsed["nodes"] == 290 and parsed["edges"] == 819 and parsed["communities"] == 16
+    assert parsed["hubs"][:2] == ["main", "run"]
+    assert parsed["gods"][0] == {"name": "call()", "edges": 18}
+    assert parsed["groups"][0]["name"] == "main" and parsed["groups"][0]["size"] == 33
     print("ok")
 
 
