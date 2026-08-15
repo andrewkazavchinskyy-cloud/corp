@@ -138,15 +138,18 @@ def main() -> None:
 ## God Nodes
 1. `call()` - 18 edges
 2. `refresh()` - 15 edges
+- `run_issue()` --calls--> `pulse_loop()`  [INFERRED]
 ### Community 0 - "main"
 Cohesion: 0.12
-Nodes (33): active_projects()
+Nodes (33): active_projects(), board_payload() (+31 more)
 """
     parsed = corp.parse_graph_report(sample)
     assert parsed["nodes"] == 290 and parsed["edges"] == 819 and parsed["communities"] == 16
     assert parsed["hubs"][:2] == ["main", "run"]
     assert parsed["gods"][0] == {"name": "call()", "edges": 18}
     assert parsed["groups"][0]["name"] == "main" and parsed["groups"][0]["size"] == 33
+    assert parsed["groups"][0]["nodes"] == ["active_projects()", "board_payload()"]
+    assert parsed["bridges"][0]["a"] == "run_issue()" and parsed["bridges"][0]["b"] == "pulse_loop()"
     print("ok")
 
 

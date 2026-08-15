@@ -25,6 +25,10 @@ let refreshBusy = false;
 let catalogProbed = false;
 let graphFocus = "";
 let graphsCache = [];
+let graphView = null;
+let graphPick = "";
+let graphQuery = "";
+let graphsKey = "";
 let orchPoll = 0;
 let consolePick = "";
 let stripHold = 0;
@@ -54,6 +58,8 @@ function setFilter(value) {
   cookieSet(FILTER_KEY, value);
   localStorage.setItem(FILTER_KEY, value);
   graphFocus = "";
+  graphPick = "";
+  graphsKey = "";
   lastBoardKey = "";
   renderFilters();
   renderBoard();
@@ -599,30 +605,101 @@ $("auto-start").onclick = async () => {
 };
 
 function orbSize(nodes) {
-  return Math.max(52, Math.min(84, 52 + Math.round((nodes || 0) / 10)));
+  return Math.max(52, Math.min(88, 52 + Math.round((nodes || 0) / 10)));
+}
+
+function placeOnSky(i, n, inner) {
+  const a = (i / Math.max(n, 1)) * Math.PI * 2 - Math.PI / 2;
+  const r = inner ? 22 : (n <= 4 ? 26 : 32 + (i % 2) * 8);
+  return `left:${(50 + r * Math.cos(a)).toFixed(1)}%;top:${(50 + r * Math.sin(a)).toFixed(1)}%`;
+}
+
+function graphMatch(text) {
+  const q = graphQuery.trim().toLowerCase();
+  return !q || String(text || "").toLowerCase().includes(q);
+}
+
+function groupHasQuery(g) {
+  return graphMatch(g.name) || (g.nodes || []).some((n) => graphMatch(n));
+}
+
+function findGroup(name) {
+  const groups = (graphView && graphView.groups) || [];
+  return groups.find((g) => g.name === name)
+    || groups.find((g) => (g.nodes || []).includes(name));
 }
 
 function graphSky(groups) {
-  const n = Math.max(groups.length, 1);
-  return groups.map((g, i) => {
-    const a = (i / n) * Math.PI * 2 - Math.PI / 2;
-    const r = 34 + (i % 2) * 6;
-    const left = 50 + r * Math.cos(a);
-    const top = 50 + r * Math.sin(a);
-    const size = Math.max(44, Math.min(88, 36 + (g.size || 1) * 1.4));
-    return `<button type="button" class="g-star c${i % 5}" style="left:${left}%;top:${top}%;width:${size}px;height:${size}px" title="${escapeHtml(g.name)} · ${g.size}">
+  const vis = groups.length ? groups : [];
+  const n = Math.max(vis.length, 1);
+  return vis.map((g, i) => {
+    const on = graphPick === g.name ? " on" : "";
+    const off = groupHasQuery(g) ? "" : " off";
+    const size = Math.max(40, Math.min(76, 30 + (g.size || 1) * 1.05));
+    return `<button type="button" class="g-star c${i % 5}${on}${off}" data-group="${escapeHtml(g.name)}" style="${placeOnSky(i, n, false)};width:${size}px;height:${size}px" title="${escapeHtml(g.name)} · ${g.size}">
       <b>${escapeHtml(g.name)}</b><span>${g.size}</span></button>`;
   }).join("");
 }
 
+function graphPickHtml(g) {
+  if (!g) return '<p class="meta">Нажмите сообщество на небе</p>';
+  const nodes = (g.nodes || []).map((n) =>
+    `<span class="chip${graphMatch(n) ? "" : " off"}">${escapeHtml(n)}</span>`
+  ).join("");
+  return `<section class="g-pick">
+    <h3>${escapeHtml(g.name)}</h3>
+    <p class="meta">${g.size} узлов · связь ${g.cohesion ?? "—"}</p>
+    <div class="filters">${nodes || '<span class="meta">в отчёте только счётчик</span>'}</div>
+  </section>`;
+}
+
+function graphJumps(g) {
+  if (!g || !g.pinned) return "";
+  return `<button type="button" class="btn" id="g-board">Доска</button>
+    <button type="button" class="btn" id="g-project">Проект</button>`;
+}
+
+function bindGraphJumps(name) {
+  if ($("g-board")) $("g-board").onclick = () => { setFilter(name); setTab("board"); };
+  if ($("g-project")) $("g-project").onclick = () => { setFilter(name); setTab("project"); };
+}
+
+function bindGraphSearch() {
+  const q = $("g-q");
+  if (!q) return;
+  q.value = graphQuery;
+  q.oninput = () => {
+    graphQuery = q.value;
+    $("graphs").querySelectorAll("[data-graph], [data-group], [data-node]").forEach((el) => {
+      const hay = el.dataset.graph || el.dataset.group || el.dataset.node || "";
+      const group = el.dataset.group ? findGroup(el.dataset.group) : null;
+      const ok = graphMatch(hay) || (group && groupHasQuery(group));
+      el.classList.toggle("off", !ok);
+    });
+  };
+}
+
 function graphDetailHtml(g) {
+  const groups = g.groups || [];
+  if (graphPick && !groups.some((x) => x.name === graphPick)) graphPick = "";
+  if (!graphPick && groups.length) {
+    graphPick = groups.slice().sort((a, b) => (b.size || 0) - (a.size || 0))[0].name;
+  }
+  const picked = groups.find((x) => x.name === graphPick);
   const gods = (g.gods || []).map((x) =>
-    `<li><b>${escapeHtml(x.name)}</b><span>${x.edges}</span></li>`
+    `<li data-node="${escapeHtml(x.name)}"><button type="button" class="g-link" data-node="${escapeHtml(x.name)}"><b>${escapeHtml(x.name)}</b><span>${x.edges}</span></button></li>`
   ).join("") || "<li class=\"meta\">нет</li>";
-  const hubs = (g.hubs || []).map((h) => `<span class="chip">${escapeHtml(h)}</span>`).join("");
+  const hubs = (g.hubs || []).map((h) =>
+    `<button type="button" class="chip" data-node="${escapeHtml(h)}">${escapeHtml(h)}</button>`
+  ).join("");
+  const bridges = (g.bridges || []).map((b) =>
+    `<li><button type="button" class="g-link" data-node="${escapeHtml(b.a)}">${escapeHtml(b.a)}</button>
+      <span class="meta">${escapeHtml(b.rel)}</span>
+      <button type="button" class="g-link" data-node="${escapeHtml(b.b)}">${escapeHtml(b.b)}</button></li>`
+  ).join("");
   return `<article class="g-detail">
     <header class="g-hero">
-      <button type="button" class="btn" id="g-back">Все проекты</button>
+      <button type="button" class="btn link" id="g-back">Все проекты</button>
       <div>
         <p class="kicker">${g.pinned ? "пин" : "репо"} · ${escapeHtml(g.age || "")}</p>
         <h2>${escapeHtml(g.name)}</h2>
@@ -632,11 +709,15 @@ function graphDetailHtml(g) {
         <div><b>${g.edges || 0}</b><span>рёбра</span></div>
         <div><b>${g.communities || 0}</b><span>сообщества</span></div>
       </div>
+      ${graphJumps(g)}
     </header>
-    <div class="g-sky">${graphSky(g.groups || [])}</div>
+    <label class="field tight g-search"><span>Найти</span><input id="g-q" type="search" placeholder="сообщество или узел"></label>
+    <div class="g-sky">${graphSky(groups)}</div>
+    ${graphPickHtml(picked)}
     <div class="g-meta">
       <section><h3>Хабы</h3><div class="filters">${hubs || '<span class="meta">нет</span>'}</div></section>
       <section><h3>Ядра</h3><ol class="g-gods">${gods}</ol></section>
+      ${bridges ? `<section><h3>Мосты</h3><ol class="g-bridges">${bridges}</ol></section>` : ""}
     </div>
     <p class="meta">${escapeHtml(g.fresh ? `commit ${g.fresh}` : "")} · ${escapeHtml(g.repo || "")}</p>
   </article>`;
@@ -644,39 +725,81 @@ function graphDetailHtml(g) {
 
 function graphGalaxyHtml(list) {
   const withG = list.filter((p) => p.has_graph).length;
-  return `<div class="g-bar"><p class="meta">${withG} с графом · ${list.length - withG} без</p></div>
-    <div class="g-galaxy">${list.map((p) => {
+  return `<div class="g-bar">
+      <p class="meta">${withG} с графом · ${list.length - withG} без · орб = узлы</p>
+      <input id="g-q" type="search" placeholder="найти проект" value="${escapeHtml(graphQuery)}">
+    </div>
+    <div class="g-sky g-galaxy-sky">${list.map((p, i) => {
       const size = orbSize(p.nodes);
-      const cls = `g-orb${p.pinned ? " pin" : ""}${p.has_graph ? "" : " miss"}`;
-      return `<button type="button" class="${cls}" data-graph="${escapeHtml(p.name)}" style="--orb:${size}px">
+      const cls = `g-orb${p.pinned ? " pin" : ""}${p.has_graph ? "" : " miss"}${graphMatch(p.name) ? "" : " off"}`;
+      return `<button type="button" class="${cls}" data-graph="${escapeHtml(p.name)}" style="--orb:${size}px;${placeOnSky(i, list.length, p.pinned)}" title="${escapeHtml(p.name)} · ${p.has_graph ? (p.nodes || 0) : "нет"}">
         <i>${p.has_graph ? (p.nodes || 0) : "—"}</i>
         <b>${escapeHtml(p.name)}</b>
-        <span>${p.has_graph ? `${p.communities || 0} сообществ` : "графа нет"}</span>
+        <span>${p.has_graph ? `${p.communities || 0}` : "нет"}</span>
       </button>`;
     }).join("")}</div>`;
 }
 
-async function renderGraphs() {
+function selectGraphNode(name) {
+  const hit = findGroup(name);
+  if (!hit) {
+    flash(name);
+    return;
+  }
+  graphPick = hit.name;
+  graphsKey = "";
+  renderGraphs(true);
+}
+
+function bindGraphDetail(g) {
+  $("g-back").onclick = () => { graphFocus = "*"; graphPick = ""; graphsKey = ""; renderGraphs(true); };
+  bindGraphJumps(g.name);
+  bindGraphSearch();
+  $("graphs").querySelectorAll("[data-group]").forEach((el) => {
+    el.onclick = () => { graphPick = el.dataset.group; graphsKey = ""; renderGraphs(true); };
+  });
+  $("graphs").querySelectorAll("[data-node]").forEach((el) => {
+    el.onclick = () => selectGraphNode(el.dataset.node);
+  });
+}
+
+async function renderGraphs(force) {
   const box = $("graphs");
   if (!box) return;
+  const f = currentFilter();
+  const want = graphFocus === "*" ? "" : (graphFocus || (isPin(f) ? f : ""));
+  const key = `${f}|${graphFocus}|${want}|${graphPick}`;
+  if (!force && key === graphsKey && box.children.length) return;
   try {
-    const f = currentFilter();
-    const want = graphFocus === "*" ? "" : (graphFocus || (isPin(f) ? f : ""));
     if (want) {
-      const g = await api(`/api/graphs/view?name=${encodeURIComponent(want)}`);
+      const g = (graphView && graphView.name === want)
+        ? graphView
+        : await api(`/api/graphs/view?name=${encodeURIComponent(want)}`);
+      graphView = g;
+      $("page-kicker").textContent = g.name || titles.graphs[1];
       if (!g.has_graph) {
-        box.innerHTML = `<article class="g-detail"><button type="button" class="btn" id="g-back">Все проекты</button>
-          <h2>${escapeHtml(g.name)}</h2><p class="meta">Графа ещё нет. Появится после close и graphify.</p></article>`;
-        $("g-back").onclick = () => { graphFocus = "*"; renderGraphs(); };
+        box.innerHTML = `<article class="g-detail">
+          <header class="g-hero">
+            <button type="button" class="btn link" id="g-back">Все проекты</button>
+            <div><h2>${escapeHtml(g.name)}</h2><p class="meta">Графа ещё нет. Появится после close и graphify.</p></div>
+            ${graphJumps(g)}
+          </header></article>`;
+        $("g-back").onclick = () => { graphFocus = "*"; graphsKey = ""; renderGraphs(true); };
+        bindGraphJumps(g.name);
+        graphsKey = key;
         return;
       }
       box.innerHTML = graphDetailHtml(g);
-      $("g-back").onclick = () => { graphFocus = "*"; renderGraphs(); };
+      bindGraphDetail(g);
+      graphsKey = `${f}|${graphFocus}|${want}|${graphPick}`;
       return;
     }
     const data = await api("/api/graphs");
     graphsCache = data.projects || [];
+    graphView = null;
+    $("page-kicker").textContent = titles.graphs[1];
     box.innerHTML = graphGalaxyHtml(graphsCache);
+    bindGraphSearch();
     box.querySelectorAll("[data-graph]").forEach((btn) => {
       btn.onclick = () => {
         const row = graphsCache.find((p) => p.name === btn.dataset.graph);
@@ -685,11 +808,15 @@ async function renderGraphs() {
           return;
         }
         graphFocus = row.name;
-        renderGraphs();
+        graphPick = "";
+        graphsKey = "";
+        renderGraphs(true);
       };
     });
+    graphsKey = key;
   } catch (err) {
     box.innerHTML = `<p class="err">${escapeHtml(err.message)}</p>`;
+    graphsKey = "";
   }
 }
 

@@ -363,6 +363,7 @@ def parse_graph_report(text: str) -> dict:
         "hubs": [],
         "gods": [],
         "groups": [],
+        "bridges": [],
         "fresh": "",
     }
     stats = re.search(r"(\d+)\s+nodes\s+·\s+(\d+)\s+edges\s+·\s+(\d+)\s+communities", text)
@@ -381,16 +382,23 @@ def parse_graph_report(text: str) -> dict:
         if god:
             out["gods"].append({"name": god.group(1), "edges": int(god.group(2))})
     for block in re.finditer(
-        r'### Community \d+ - "([^"]+)"\s*\nCohesion:\s*([0-9.]+)\s*\nNodes \((\d+)\):',
+        r'### Community \d+ - "([^"]+)"\s*\nCohesion:\s*([0-9.]+)\s*\nNodes \((\d+)\):\s*(.*)',
         text,
     ):
+        raw = re.sub(r"\s*\(\+\d+ more\)\s*$", "", (block.group(4) or "").strip())
+        names = [part.strip() for part in raw.split(",") if part.strip()][:16]
         out["groups"].append(
             {
                 "name": block.group(1),
                 "cohesion": float(block.group(2)),
                 "size": int(block.group(3)),
+                "nodes": names,
             }
         )
+    out["bridges"] = [
+        {"a": a, "rel": rel, "b": b}
+        for a, rel, b in re.findall(r"- `([^`]+)` --(\w+)--> `([^`]+)`", text)
+    ][:6]
     out["gods"] = out["gods"][:10]
     return out
 
