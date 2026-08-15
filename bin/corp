@@ -633,11 +633,16 @@ def _looks_like_model(token: str) -> bool:
 def _parse_models(text: str) -> list[str]:
     found = []
     for raw in text.splitlines():
-        line = raw.strip().lstrip("*").strip()
-        if line.startswith(("- ", "• ", "+ ")):
-            line = line[2:].strip()
-        token = (line.split() or [""])[0].strip("`,\"'()[]")
-        if _looks_like_model(token) and token not in found:
+        stripped = raw.strip()
+        token = ""
+        if stripped.startswith(("*", "•", "+")) or (stripped.startswith("- ") and not stripped.startswith("--")):
+            line = stripped.lstrip("*•+").strip()
+            if line.startswith("- "):
+                line = line[2:].strip()
+            token = (line.split() or [""])[0].strip("`,\"'()[]")
+        elif stripped and " " not in stripped and not stripped.startswith("-"):
+            token = stripped.strip("`,\"'()[]")
+        if token and _looks_like_model(token) and token not in found:
             found.append(token)
     for token in re.findall(r"'([A-Za-z][A-Za-z0-9._+-]{1,60})'", text):
         if _looks_like_model(token) and token not in found:
@@ -647,11 +652,14 @@ def _parse_models(text: str) -> list[str]:
 
 def _parse_efforts(text: str) -> list[str]:
     order = ["low", "med", "medium", "high", "xhigh", "max"]
-    low = text.lower()
-    found = [name for name in order if re.search(rf"\b{name}\b", low)]
-    if "medium" in found and "med" in found:
-        found = [name for name in found if name != "med"]
-    return found
+    for match in re.finditer(r"\(([^)]{0,80})\)", text.lower()):
+        parts = [part.strip() for part in match.group(1).split(",")]
+        hit = [name for name in order if name in parts]
+        if len(hit) >= 2:
+            if "medium" in hit and "med" in hit:
+                hit = [name for name in hit if name != "med"]
+            return hit
+    return []
 
 
 def probe_kind(kind: str) -> dict:
