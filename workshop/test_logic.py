@@ -63,6 +63,31 @@ def main() -> None:
     models, efforts, fast = corp._models_from_json(blob)
     assert models == ["gpt-5.6-sol", "gpt-daybreak-blue-latest"]
     assert efforts == ["low", "high"] and fast
+    cards = [
+        {"project": "corp", "number": 1, "state": "OPEN", "column": "in-progress", "runner": "self"},
+        {"project": "corp", "number": 2, "state": "OPEN", "column": "ready", "runner": ""},
+        {"project": "clarity", "number": 3, "state": "OPEN", "column": "in-progress", "runner": "claude"},
+    ]
+    assert corp.write_block_reason(cards, "corp", 2) == "corp is claimed as self"
+    assert corp.write_block_reason(cards, "corp", 1) == ""
+    assert corp.write_block_reason(cards, "clarity", 9).startswith("VPS")
+    assert corp.write_block_reason(cards, "missing") == ""
+    kept = corp.merge_catalog_row({"models": ["grok-4.6"], "installed": True}, {"kind": "grok", "installed": True, "models": []})
+    assert kept["models"] == ["grok-4.6"] and kept["stale"]
+    fresh = corp.merge_catalog_row({}, {"kind": "grok", "installed": True, "models": []})
+    assert fresh["models"] == []
+    claude = corp.agent_argv("claude", "p", Path("/tmp"), readonly=True)
+    assert "--dangerously-skip-permissions" not in claude and "--allowedTools" in claude
+    codex = corp.agent_argv("codex", "p", Path("/tmp"), readonly=True)
+    assert "read-only" in codex and "--dangerously-bypass-approvals-and-sandbox" not in codex
+    try:
+        corp.agent_argv("grok", "p", Path("/tmp"), readonly=True)
+        raise AssertionError("grok readonly should die")
+    except corp.CorpError:
+        pass
+    assert corp.pulse_label("claude", "") == "auto · claude"
+    assert corp.pulse_label("claude", "sonnet") == "sonnet"
+    assert corp.parse_json_array('noise [{"title":"x"}] tail') == [{"title": "x"}]
     print("ok")
 
 

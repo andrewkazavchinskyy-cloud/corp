@@ -728,12 +728,22 @@ def probe_kind(kind: str) -> dict:
     return row
 
 
+def merge_catalog_row(prev: dict, row: dict) -> dict:
+    old = prev or {}
+    if row.get("installed") and not row.get("models") and old.get("models"):
+        out = dict(old)
+        out["stale"] = True
+        out["installed"] = True
+        return out
+    return row
+
+
 def probe_catalog() -> dict:
     prev = (load_workshop().get("catalog") or {}).get("kinds") or {}
     catalog = {}
     for kind in KIND_BIN:
         try:
-            row = probe_kind(kind)
+            row = merge_catalog_row(prev.get(kind) or {}, probe_kind(kind))
         except Exception:
             row = dict(prev.get(kind) or {"kind": kind, "installed": False, "models": [], "efforts": [], "fast": False})
             row["stale"] = True
@@ -752,10 +762,14 @@ def load_catalog() -> dict:
     return probe_catalog()
 
 
-def last_log_lines(n: int = 3) -> str:
+def last_log_lines(n: int = 3, prefix: str = "") -> str:
     if not RUN_LOG.is_file():
         return "тишина"
     lines = [line.rstrip() for line in RUN_LOG.read_text().splitlines() if line.strip()]
+    if prefix:
+        tagged = [line for line in lines if line.startswith(prefix)]
+        if tagged:
+            lines = tagged
     if not lines:
         return "тишина"
     clipped = []
@@ -764,10 +778,16 @@ def last_log_lines(n: int = 3) -> str:
     return "\n".join(clipped)
 
 
-def pulse_loop(repo: str, number: int, kind: str, started: float, stop: threading.Event) -> None:
+def pulse_label(kind: str, model: str = "") -> str:
+    return model or f"auto · {kind}"
+
+
+def pulse_loop(repo: str, number: int, kind: str, started: float, stop: threading.Event, model: str = "") -> None:
+    label = pulse_label(kind, model)
+    prefix = issue_ref(repo, number)
     while not stop.wait(PULSE_SEC):
         mins = int((time.time() - started) / 60)
-        notify_safe(f"{repo}#{number} · {mins} мин · {kind}\n{last_log_lines(3)}")
+        notify_safe(f"{repo}#{number} · {mins} мин · {label}\n{last_log_lines(3, prefix=prefix)}")
 
 
 def ensure_seed_labels(repo: str) -> None:
@@ -799,6 +819,47 @@ def archive_project(reg: dict, name: str) -> dict:
     project["status"] = "paused"
     save_registry(reg)
     return project
+
+
+def org_repos(reg: dict) -> list[dict]:
+    org = org_name(reg)
+    pinned = {p.get("repo") for p in pinned_projects(reg)}
+    found = {}
+    for extra in ([], ["--archived"]):
+        proc = run(
+            ["gh", "repo", "list", org, "--limit", "200", "--json", "name,nameWithOwner,isArchived", *extra],
+            check=False,
+        )
+        if proc.returncode != 0:
+            die((proc.stderr or proc.stdout or "repo list failed").strip())
+        for item in json.loads(proc.stdout or "[]"):
+            repo = item.get("nameWithOwner") or f"{org}/{item.get('name')}"
+            found[repo] = {
+                "name": item.get("name") or repo.split("/")[-1],
+                "repo": repo,
+                "archived": bool(item.get("isArchived")),
+                "pinned": repo in pinned,
+            }
+    rows = list(found.values())
+    rows.sort(key=lambda row: (not row["pinned"], row["archived"], row["name"] or ""))
+    return rows
+
+
+def unarchive_project(reg: dict, repo: str) -> dict:
+    org = org_name(reg)
+    if "/" not in repo:
+        repo = f"{org}/{repo}"
+    if not repo.startswith(org + "/"):
+        die(f"only {org} repos")
+    view = run(["gh", "repo", "view", repo, "--json", "isArchived,nameWithOwner"], check=False)
+    if view.returncode != 0:
+        die((view.stderr or view.stdout or f"missing {repo}").strip())
+    info = json.loads(view.stdout)
+    if info.get("isArchived"):
+        proc = run(["gh", "repo", "unarchive", repo, "--yes"], check=False)
+        if proc.returncode != 0:
+            die((proc.stderr or proc.stdout or "unarchive failed").strip())
+    return add_existing(reg, repo)
 
 
 def _clone_to_workspace(repo: str, name: str) -> Path:
@@ -996,10 +1057,20 @@ def orchestrate(reg: dict, repo: str) -> dict:
         f"Look at open issues, graphify-out/GRAPH_REPORT.md, and any SPEC/PRD/SHIP/roadmap. "
         f"Propose only gaps vs those docs. If no SPEC/PRD, output one draft titled "
         f"'написать SPEC'. No new product ideas. No code. No git writes. "
-        f"Write JSON array to {out} as "
+        f"Do not run git commit, git push, or edit files in {dest}. "
+        f"Print a JSON array to stdout. You may also write it to {out} "
+        f"(outside the repo) as "
         f'[{{"title":"...","body":"...","label":"ready|blocked","kind":"build|design|qa"}}].'
     )
-    cmd = agent_argv(kind, prompt, dest, model=slot.get("model") or "", effort=slot.get("effort") or "", fast=bool(slot.get("fast")))
+    cmd = agent_argv(
+        kind,
+        prompt,
+        dest,
+        model=slot.get("model") or "",
+        effort=slot.get("effort") or "",
+        fast=bool(slot.get("fast")),
+        readonly=True,
+    )
     session = orch_session(project["name"])
     if have("tmux"):
         if run(["tmux", "has-session", "-t", session], check=False).returncode == 0:
@@ -1011,16 +1082,15 @@ def orchestrate(reg: dict, repo: str) -> dict:
     else:
         subprocess.run(cmd, cwd=dest, check=False)
     drafts = []
+    payload = []
     if out.is_file():
-        try:
-            payload = json.loads(out.read_text())
-        except json.JSONDecodeError:
-            payload = []
-        if isinstance(payload, list):
-            for item in payload[:12]:
-                if not isinstance(item, dict) or not item.get("title"):
-                    continue
-                drafts.append(new_draft(repo, item.get("title") or "", item.get("body") or "", item.get("label") or "blocked", item.get("kind") or "build"))
+        payload = parse_json_array(out.read_text())
+    if not payload and RUN_LOG.is_file():
+        payload = parse_json_array(RUN_LOG.read_text()[-20000:])
+    for item in payload[:12]:
+        if not isinstance(item, dict) or not item.get("title"):
+            continue
+        drafts.append(new_draft(repo, item.get("title") or "", item.get("body") or "", item.get("label") or "blocked", item.get("kind") or "build"))
     if not drafts:
         stage = project_stage(reg, project["name"])
         if stage["stage"] == "нет спеки":
@@ -1042,22 +1112,48 @@ def maybe_orchestrate(reg: dict, name: str) -> None:
             append_log(f"orchestrate skip {name}: {exc}\n")
 
 
+def set_tg_offset(offset: int) -> None:
+    data = load_workshop()
+    data["tg_offset"] = int(offset)
+    save_workshop(data)
+
+
+def parse_json_array(text: str) -> list:
+    raw = (text or "").strip()
+    if not raw:
+        return []
+    try:
+        payload = json.loads(raw)
+        return payload if isinstance(payload, list) else []
+    except json.JSONDecodeError:
+        pass
+    start = raw.rfind("[")
+    end = raw.rfind("]")
+    if start < 0 or end <= start:
+        return []
+    try:
+        payload = json.loads(raw[start : end + 1])
+    except json.JSONDecodeError:
+        return []
+    return payload if isinstance(payload, list) else []
+
+
 def telegram_tick() -> None:
     token, chat = tg_creds()
     if not token or not chat:
         return
     import urllib.request
 
-    data = load_workshop()
-    offset = int(data.get("tg_offset") or 0)
+    offset = int(load_workshop().get("tg_offset") or 0)
     url = f"https://api.telegram.org/bot{token}/getUpdates?timeout=0&offset={offset}"
     try:
         raw = urllib.request.urlopen(url, timeout=15).read()
     except Exception:
         return
     payload = json.loads(raw.decode() or "{}")
+    new_offset = offset
     for upd in payload.get("result") or []:
-        data["tg_offset"] = int(upd.get("update_id") or 0) + 1
+        new_offset = int(upd.get("update_id") or 0) + 1
         cb = upd.get("callback_query") or {}
         msg_chat = str(((cb.get("message") or {}).get("chat") or {}).get("id") or "")
         if msg_chat != str(chat):
@@ -1078,7 +1174,8 @@ def telegram_tick() -> None:
                 tg_post("answerCallbackQuery", {"callback_query_id": cb["id"]})
             except CorpError:
                 pass
-    save_workshop(data)
+    if new_offset != offset:
+        set_tg_offset(new_offset)
 
 
 def parse_issue_ref(raw: str) -> tuple[str, int]:
@@ -1212,17 +1309,27 @@ def board_payload(reg: dict) -> dict:
     return payload
 
 
+def write_block_reason(cards: list, project_name: str, except_issue: int | None = None) -> str:
+    for card in cards:
+        if card.get("project") != project_name:
+            continue
+        if (card.get("state") or "OPEN").upper() == "CLOSED":
+            continue
+        if except_issue is not None and card.get("number") == except_issue:
+            continue
+        if card.get("runner") == "self":
+            return f"{project_name} is claimed as self"
+        if card.get("column") == "in-progress" and card.get("runner") not in {"", "self", "queued"}:
+            return f"VPS is writing {project_name}"
+    return ""
+
+
+def pin_write_block(reg: dict, project_name: str, except_issue: int | None = None) -> str:
+    return write_block_reason(board_payload(reg)["cards"], project_name, except_issue)
+
+
 def vps_owns_project(reg: dict, project_name: str, except_issue: int | None = None) -> bool:
-    for card in board_payload(reg)["cards"]:
-        if card["project"] != project_name:
-            continue
-        if card.get("state", "OPEN").upper() == "CLOSED":
-            continue
-        if except_issue is not None and card["number"] == except_issue:
-            continue
-        if card["column"] == "in-progress" and card["runner"] not in {"", "self", "queued"}:
-            return True
-    return False
+    return pin_write_block(reg, project_name, except_issue).startswith("VPS")
 
 
 def tmux_session(project: str) -> str:
@@ -1249,8 +1356,9 @@ def take_issue(reg: dict, repo: str, number: int) -> dict:
     issue = get_issue(repo, number)
     if (issue.get("state") or "").upper() == "CLOSED":
         die(f"{repo}#{number} is closed")
-    if vps_owns_project(reg, project["name"], except_issue=number):
-        die(f"VPS is writing {project['name']}. Wait or pause that run.")
+    blocked = pin_write_block(reg, project["name"], except_issue=number)
+    if blocked:
+        die(blocked)
     claim(repo, number, "self", "corp-claim: self")
     invalidate_board()
     return {"ok": True, "repo": repo, "issue": number, "runner": "self"}
@@ -1342,8 +1450,41 @@ def agent_prompt(repo: str, number: int, title: str, url: str, dest: Path) -> st
     )
 
 
-def agent_argv(kind: str, prompt: str, dest: Path, model: str = "", effort: str = "", fast: bool = False) -> list[str]:
+def agent_argv(kind: str, prompt: str, dest: Path, model: str = "", effort: str = "", fast: bool = False, readonly: bool = False) -> list[str]:
     workspace_root = workspace()
+    if readonly:
+        if kind == "claude":
+            cmd = [
+                "claude",
+                "-p",
+                prompt,
+                "--allowedTools",
+                "Read,Glob,Grep,WebFetch",
+                "--add-dir",
+                str(dest),
+                "--add-dir",
+                str(workspace_root),
+                "--add-dir",
+                str(ROOT),
+            ]
+            if model:
+                cmd += ["--model", model]
+            if effort:
+                cmd += ["--effort", "low" if fast and not effort else effort]
+            elif fast:
+                cmd += ["--effort", "low"]
+            return cmd
+        if kind == "codex":
+            cmd = ["codex", "exec", "--sandbox", "read-only", "--ask-for-approval", "never"]
+            if model:
+                cmd += ["--model", model]
+            if effort:
+                cmd += ["-c", f"model_reasoning_effort={effort}"]
+            if fast:
+                cmd += ["-c", "service_tier=fast"]
+            cmd.append(prompt)
+            return cmd
+        die(f"{kind} has no read-only sandbox for orchestrator")
     if kind == "claude":
         cmd = [
             "claude",
@@ -1406,16 +1547,22 @@ def wait_tmux(project: str) -> int:
     return 0
 
 
-def launch_agent(kind: str, cmd: list[str], dest: Path, project: str) -> int:
-    append_log(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} {project} via {kind} ===\n")
+def launch_agent(kind: str, cmd: list[str], dest: Path, project: str, prefix: str = "") -> int:
+    tag = prefix or project
+    append_log(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} {tag} via {kind} ===\n")
     if have("tmux"):
         session = tmux_session(project)
         if tmux_alive(project):
             die(f"already running: tmux {session}")
+        pipe = f"{shlex.join(cmd)} 2>&1"
+        if prefix:
+            pipe += (
+                f" | while IFS= read -r line || [ -n \"$line\" ]; do "
+                f"printf '%s %s\\n' {shlex.quote(prefix)} \"$line\"; done"
+            )
         script = (
-            f"cd {shlex.quote(str(dest))} && "
-            f"{shlex.join(cmd)} 2>&1 | tee -a {shlex.quote(str(RUN_LOG))}; "
-            f"echo EXIT:$? | tee -a {shlex.quote(str(RUN_LOG))}"
+            f"cd {shlex.quote(str(dest))} && {pipe} | tee -a {shlex.quote(str(RUN_LOG))}; "
+            f"echo {shlex.quote(prefix) if prefix else ''} EXIT:$? | tee -a {shlex.quote(str(RUN_LOG))}"
         )
         proc = subprocess.run(["tmux", "new-session", "-d", "-s", session, "bash", "-lc", script])
         if proc.returncode != 0:
@@ -1443,6 +1590,9 @@ def run_issue(
     names = label_names(issue)
     if "self" in names:
         die(f"{repo}#{number} is claimed as self")
+    blocked = pin_write_block(reg, project["name"], except_issue=number)
+    if blocked:
+        die(blocked)
     if tmux_alive(project["name"]):
         die(f"VPS already running {project['name']}")
     role, slot = slot_for_issue(project["name"], issue)
@@ -1469,17 +1619,22 @@ def run_issue(
     cmd = agent_argv(kind, prompt, dest, model=model, effort=effort, fast=fast)
     print(f"running: {cmd[0]} {repo}#{number}", file=sys.stderr)
     stop = threading.Event()
-    threading.Thread(target=pulse_loop, args=(repo, number, kind, time.time(), stop), daemon=True).start()
+    threading.Thread(target=pulse_loop, args=(repo, number, kind, time.time(), stop, model), daemon=True).start()
     try:
-        code = launch_agent(kind, cmd, dest, project["name"])
+        code = launch_agent(kind, cmd, dest, project["name"], prefix=issue_ref(repo, number))
     finally:
         stop.set()
     latest = get_issue(repo, number)
     closed = (latest.get("state") or "").upper() == "CLOSED"
     graph = ""
-    if role == "design" and not closed:
+    if role == "design":
+        if closed:
+            run(["gh", "issue", "reopen", str(number), "-R", repo], check=False)
+            closed = False
         remove_labels(repo, number, ["in-progress", *VIA.values()])
         add_labels(repo, number, ["ready"])
+        notify_safe(f"{repo}#{number} · {kind} · design · {latest.get('title')}\n{latest.get('url')}")
+        return {"ok": code == 0, "code": code, "repo": repo, "issue": number, "kind": kind, "graph": "", "closed": False}
     if role == "build" and "qa" in names:
         if closed:
             run(["gh", "issue", "reopen", str(number), "-R", repo], check=False)
@@ -1491,7 +1646,10 @@ def run_issue(
             model=qa_slot.get("model") or "", effort=qa_slot.get("effort") or "",
             fast=bool(qa_slot.get("fast")),
         )
-    if role == "qa" and not closed:
+    if role == "qa" and not (closed and code == 0):
+        if closed:
+            run(["gh", "issue", "reopen", str(number), "-R", repo], check=False)
+            closed = False
         remove_labels(repo, number, ["in-progress", *VIA.values()])
         add_labels(repo, number, ["ready", "qa-fail"])
         notify_safe(f"{repo}#{number} · {kind} · qa-fail · {latest.get('title')}\n{latest.get('url')}")
@@ -1550,6 +1708,9 @@ def queue_add(reg: dict, repo: str, number: int, profile_id: str) -> dict:
     if "self" in label_names(issue) or column_of(issue) == "in-progress" and runner_of(issue) not in {"", "queued"}:
         die(f"{repo}#{number} is already claimed")
     project = project_by_repo(reg, repo)
+    blocked = pin_write_block(reg, project["name"], except_issue=number)
+    if blocked:
+        die(blocked)
     profile_by_id(profile_id)
     data = load_workshop()
     key = issue_ref(repo, number)

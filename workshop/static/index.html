@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Schibsted+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=14">
+  <link rel="stylesheet" href="/static/app.css?v=15">
 </head>
 <body>
   <div id="gate" class="gate hidden">
@@ -44,16 +44,18 @@
 
     <section class="main">
       <header class="top">
-        <div>
-          <h1 id="page-title">Доска</h1>
-          <p id="page-kicker">GitHub Issues</p>
+        <div class="top-main">
+          <div>
+            <h1 id="page-title">Доска</h1>
+            <p id="page-kicker">GitHub Issues</p>
+          </div>
+          <p id="strip" class="live"><i class="pulse"></i><b>загрузка…</b></p>
         </div>
-        <p id="strip" class="live"><i class="pulse"></i><b>загрузка…</b></p>
+        <div class="filters" id="project-filters"></div>
       </header>
 
       <div class="body">
         <section id="tab-board" class="tab on">
-          <div class="filters" id="project-filters"></div>
           <div class="colnav" id="colnav"></div>
           <div class="board" id="board"></div>
         </section>
@@ -117,6 +119,7 @@
               <input id="new-repo" placeholder="новое имя">
               <button type="button" class="btn" id="btn-create-repo">Создать</button>
             </div>
+            <div id="repo-list" class="stack"></div>
           </div>
         </section>
       </div>
@@ -131,27 +134,20 @@
           <button type="button" class="x" id="sheet-cancel" aria-label="Закрыть">×</button>
         </div>
         <p id="sheet-note" class="note"></p>
-        <div class="acts">
-          <button type="button" class="btn" id="sheet-self">Я сам</button>
-          <label class="field">
-            <span>Профиль VPS</span>
-            <select id="sheet-profile"></select>
-          </label>
-          <button type="button" class="btn primary" id="sheet-run">Запустить на VPS</button>
-        </div>
+        <div class="acts" id="sheet-acts"></div>
       </aside>
 
       <nav class="dock">
         <button data-tab="board" class="on" type="button">Доска</button>
         <button data-tab="auto" type="button">Автоном</button>
         <button data-tab="project" type="button">Проект</button>
-        <button data-tab="map" type="button">Карта</button>
+        <button data-tab="console" type="button">Консоль</button>
         <button data-tab="settings" type="button">Настройки</button>
       </nav>
     </section>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js"></script>
-  <script src="/static/app.js?v=14"></script>
+  <script src="/static/app.js?v=15"></script>
 </body>
 </html>

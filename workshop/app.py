@@ -368,6 +368,17 @@ async def api_archive(request: Request) -> dict:
     return call(corp.archive_project, corp.load_registry(), body.get("project") or "")
 
 
+@app.get("/api/repos")
+def api_repos() -> dict:
+    return {"repos": call(corp.org_repos, corp.load_registry())}
+
+
+@app.post("/api/unarchive")
+async def api_unarchive(request: Request) -> dict:
+    body = await request.json()
+    return call(corp.unarchive_project, corp.load_registry(), body.get("repo") or body.get("project") or "")
+
+
 @app.post("/api/projects/add")
 async def api_projects_add(request: Request) -> dict:
     body = await request.json()
@@ -472,24 +483,28 @@ def _run_job(repo: str, number: int, kind: str, model: str, effort: str, fast: b
 async def api_queue_add(request: Request) -> dict:
     body = await request.json()
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
-    return call(corp.queue_add, corp.load_registry(), repo, number, body.get("profile") or "")
+    with LOCK:
+        return call(corp.queue_add, corp.load_registry(), repo, number, body.get("profile") or "")
 
 
 @app.post("/api/queue/rm")
 async def api_queue_rm(request: Request) -> dict:
     body = await request.json()
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
-    return call(corp.queue_rm, repo, number)
+    with LOCK:
+        return call(corp.queue_rm, repo, number)
 
 
 @app.post("/api/queue/start")
 def api_queue_start() -> dict:
-    return corp.queue_set_running(True)
+    with LOCK:
+        return corp.queue_set_running(True)
 
 
 @app.post("/api/queue/pause")
 def api_queue_pause() -> dict:
-    return corp.queue_set_running(False)
+    with LOCK:
+        return corp.queue_set_running(False)
 
 
 @app.get("/api/queue")
@@ -548,6 +563,9 @@ def queue_tick() -> None:
             if "self" in corp.label_names(issue):
                 item["status"] = "skipped"
                 corp.remove_labels(item["repo"], item["issue"], ["queued"])
+                continue
+            blocked = corp.pin_write_block(corp.load_registry(), project, except_issue=item["issue"])
+            if blocked:
                 continue
             profile = next((p for p in data["profiles"] if p["id"] == item["profile"]), None)
             if not profile:

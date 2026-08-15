@@ -31,7 +31,15 @@ function cookieSet(name, value) {
   document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=31536000; SameSite=Lax`;
 }
 function currentFilter() {
-  return cookieGet(FILTER_KEY) || localStorage.getItem(FILTER_KEY) || "all";
+  const value = cookieGet(FILTER_KEY) || localStorage.getItem(FILTER_KEY) || "all";
+  if (value === "p0" || value === "me") return "all";
+  return value;
+}
+function pinNames() {
+  return (state.pins || []).map((p) => p.name);
+}
+function isPin(name) {
+  return pinNames().includes(name);
 }
 function setFilter(value) {
   cookieSet(FILTER_KEY, value);
@@ -41,6 +49,7 @@ function setFilter(value) {
   renderBoard();
   renderAuto();
   if ($("tab-project").classList.contains("on")) renderProject();
+  if ($("tab-console").classList.contains("on")) pollConsole();
 }
 
 function b64urlToBuf(value) {
@@ -145,15 +154,16 @@ $("btn-login").onclick = async () => {
 function visibleCards() {
   const f = currentFilter();
   if (f === "all") return state.cards || [];
-  if (f === "p0") return (state.cards || []).filter((c) => (c.labels || []).some((l) => l.name === "P0"));
-  if (f === "me") return (state.cards || []).filter((c) => c.runner === "self");
   return (state.cards || []).filter((c) => c.project === f);
 }
 
 function renderFilters() {
+  const hide = $("tab-settings").classList.contains("on");
+  $("project-filters").classList.toggle("hidden", hide);
+  if (hide) return;
   const pins = state.pins || [];
   const cur = currentFilter();
-  const chips = [["all", "Все"], ...pins.map((p) => [p.name, p.name]), ["p0", "P0"], ["me", "Мои"]];
+  const chips = [["all", "Все"], ...pins.map((p) => [p.name, p.name])];
   $("project-filters").innerHTML = chips.map(([id, label]) =>
     `<button type="button" class="chip${id === cur ? " on" : ""}" data-filter="${id}">${escapeHtml(label)}</button>`
   ).join("");
@@ -167,8 +177,10 @@ function setTab(name) {
   document.querySelectorAll("[data-tab]").forEach((el) => el.classList.toggle("on", el.dataset.tab === name));
   $("page-title").textContent = titles[name][0];
   $("page-kicker").textContent = titles[name][1];
+  renderFilters();
   if (name === "console") pollConsole();
   if (name === "project") renderProject();
+  if (name === "settings") renderRepos();
   if (name === "settings" && !catalogProbed) {
     catalogProbed = true;
     $("catalog-note").textContent = "снимаю каталог с VPS…";
@@ -260,6 +272,7 @@ function renderBoard() {
   $("board").querySelectorAll(".card").forEach((el) => {
     el.onclick = () => openSheet(el.dataset.issue);
   });
+  if (window.matchMedia("(max-width: 899px)").matches) return;
   $("board").querySelectorAll(".lane").forEach((lane) => {
     Sortable.create(lane, {
       group: "board",
@@ -267,15 +280,23 @@ function renderBoard() {
       onEnd: async (evt) => {
         const issue = evt.item.dataset.issue;
         const column = evt.to.dataset.col;
+        const from = evt.from.dataset.col;
+        if (column === from) return;
         lastBoardKey = "";
         if (column === "in-progress") {
           openSheet(issue);
-          refresh();
           return;
         }
         try {
-          if (column === "done") await api("/api/close", { issue });
-          else await api("/api/move", { issue, column });
+          if (column === "done") {
+            if (!confirm("Закрыть ишью на GitHub?")) {
+              refresh();
+              return;
+            }
+            await api("/api/close", { issue });
+          } else {
+            await api("/api/move", { issue, column });
+          }
         } catch (err) {
           alert(err.message);
         }
@@ -296,13 +317,56 @@ function fillProfiles(select, selected) {
   }).join("");
 }
 
+function vpsRunner(card) {
+  return card.runner && card.runner !== "self" && card.runner !== "queued";
+}
+
 function openSheet(issue) {
   const card = state.cards.find((c) => issueRef(c) === issue);
   if (!card) return;
   sheetIssue = issue;
-  $("sheet-title").textContent = `${card.project} #${card.number}`;
-  $("sheet-note").textContent = card.title || "";
-  fillProfiles($("sheet-profile"));
+  $("sheet-title").textContent = card.title || `${card.project} #${card.number}`;
+  $("sheet-kicker").textContent = `${card.project} #${card.number}`;
+  const acts = $("sheet-acts");
+  if (card.column === "done") {
+    $("sheet-note").textContent = "Закрыто";
+    acts.innerHTML = card.url
+      ? `<a class="btn" href="${escapeHtml(card.url)}" target="_blank" rel="noreferrer">Открыть на GitHub</a>`
+      : "";
+  } else if (card.runner === "self") {
+    $("sheet-note").textContent = "Это ты. Карточка у тебя.";
+    acts.innerHTML = '<p class="meta">VPS не стартует, пока висит self.</p>';
+  } else if (card.column === "in-progress" && vpsRunner(card)) {
+    $("sheet-note").textContent = `Уже бежит на VPS · ${card.runner}`;
+    acts.innerHTML = '<button type="button" class="btn primary" id="sheet-console">Консоль</button>';
+    $("sheet-console").onclick = () => {
+      closeSheet();
+      setFilter(card.project);
+      setTab("console");
+    };
+  } else {
+    $("sheet-note").textContent = card.title || "";
+    acts.innerHTML = `<button type="button" class="btn" id="sheet-self">Я сам</button>
+      <label class="field"><span>Профиль VPS</span><select id="sheet-profile"></select></label>
+      <button type="button" class="btn primary" id="sheet-run">Запустить на VPS</button>`;
+    fillProfiles($("sheet-profile"));
+    $("sheet-self").onclick = async () => {
+      try {
+        await api("/api/take", { issue: sheetIssue });
+        closeSheet();
+        lastBoardKey = "";
+        refresh();
+      } catch (err) { alert(err.message); }
+    };
+    $("sheet-run").onclick = async () => {
+      try {
+        await api("/api/run", { issue: sheetIssue, profile: $("sheet-profile").value });
+        closeSheet();
+        lastBoardKey = "";
+        refresh();
+      } catch (err) { alert(err.message); }
+    };
+  }
   $("sheet").classList.remove("hidden");
   $("scrim").classList.remove("hidden");
 }
@@ -310,26 +374,12 @@ function openSheet(issue) {
 function closeSheet() {
   $("sheet").classList.add("hidden");
   $("scrim").classList.add("hidden");
+  lastBoardKey = "";
+  refresh();
 }
 
 $("sheet-cancel").onclick = closeSheet;
 $("scrim").onclick = closeSheet;
-$("sheet-self").onclick = async () => {
-  try {
-    await api("/api/take", { issue: sheetIssue });
-    closeSheet();
-    lastBoardKey = "";
-    refresh();
-  } catch (err) { alert(err.message); }
-};
-$("sheet-run").onclick = async () => {
-  try {
-    await api("/api/run", { issue: sheetIssue, profile: $("sheet-profile").value });
-    closeSheet();
-    lastBoardKey = "";
-    refresh();
-  } catch (err) { alert(err.message); }
-};
 
 function renderAuto() {
   fillProfiles($("bulk-profile"));
@@ -380,8 +430,8 @@ function renderMap(data) {
 
 async function renderProject() {
   const name = currentFilter();
-  if (name === "all" || name === "p0" || name === "me") {
-    $("project-box").innerHTML = '<p class="meta">Выберите проект в шапке</p>';
+  if (!isPin(name)) {
+    $("project-box").innerHTML = '<p class="meta">Выберите corp или clarity в шапке</p>';
     return;
   }
   try {
@@ -392,8 +442,6 @@ async function renderProject() {
       <article class="card"><h3>${escapeHtml(s.stage || "")}</h3>
         <p class="meta">open ${s.open || 0} · ready ${s.ready || 0} · P0 ${s.p0 || 0} · ход ${s.in_progress || 0}</p>
         <p class="meta">граф ${escapeHtml(s.graph_age || "нет")} · ${(s.docs || []).join(", ") || "нет спеки"}</p>
-        <button class="btn" data-hide="${name}">Скрыть</button>
-        <button class="btn" data-archive="${name}">Архивировать продукт</button>
       </article>
       ${drafts.map((d) => `<article class="card"><h3>${escapeHtml(d.title)}</h3>
         <p class="meta">${escapeHtml(d.label)} · ${escapeHtml(d.kind)}</p>
@@ -405,16 +453,6 @@ async function renderProject() {
     $("project-box").querySelectorAll("[data-skip]").forEach((b) => {
       b.onclick = async () => { await api("/api/draft", { id: b.dataset.skip, action: "skip" }); renderProject(); };
     });
-    $("project-box").querySelectorAll("[data-hide]").forEach((b) => {
-      b.onclick = async () => { await api("/api/hide", { project: b.dataset.hide }); refresh(); };
-    });
-    $("project-box").querySelectorAll("[data-archive]").forEach((b) => {
-      b.onclick = async () => {
-        if (!confirm("Архивировать репо на GitHub?")) return;
-        await api("/api/archive", { project: b.dataset.archive });
-        refresh();
-      };
-    });
   } catch (err) {
     $("project-box").innerHTML = `<p class="err">${escapeHtml(err.message)}</p>`;
   }
@@ -422,7 +460,7 @@ async function renderProject() {
 
 $("orch-run").onclick = async () => {
   const name = currentFilter();
-  if (name === "all" || name === "p0" || name === "me") return alert("Сначала выберите проект");
+  if (!isPin(name)) return alert("Сначала выберите corp или clarity");
   await api("/api/orchestrate", { project: name });
   alert("Оркестратор запущен");
 };
@@ -442,13 +480,14 @@ function kindStatus(kind) {
 }
 
 function modelField(kind, selected, slot, role) {
-  const models = catalogKind(kind).models || [];
+  const row = catalogKind(kind);
+  const models = row.models || [];
   const attrs = slot ? `data-slot="${slot}" data-role="${role}"` : "";
   const select = `<select ${attrs} data-k="model">
             <option value="">auto</option>
             ${optionList(models, selected, selected)}
           </select>`;
-  if (models.length) return select;
+  if (models.length && !row.stale) return select;
   return `${select}<input ${attrs} data-k="model-custom" placeholder="свой id с CLI" value="${escapeHtml(selected || "")}">`;
 }
 
@@ -561,11 +600,68 @@ $("refresh-catalog").onclick = async () => {
 $("btn-add-repo").onclick = async () => {
   await api("/api/projects/add", { repo: $("add-repo").value.trim() });
   refresh();
+  renderRepos();
 };
 $("btn-create-repo").onclick = async () => {
   await api("/api/projects/create", { name: $("new-repo").value.trim() });
   refresh();
+  renderRepos();
 };
+
+async function renderRepos() {
+  const box = $("repo-list");
+  if (!box) return;
+  try {
+    const data = await api("/api/repos");
+    box.innerHTML = (data.repos || []).map((r) => {
+      const bits = [];
+      if (r.pinned) {
+        bits.push(`<button type="button" class="btn" data-hide="${escapeHtml(r.name)}">Скрыть</button>`);
+        bits.push(`<button type="button" class="btn" data-archive="${escapeHtml(r.name)}">Архивировать</button>`);
+      } else if (r.archived) {
+        bits.push(`<button type="button" class="btn primary" data-unarchive="${escapeHtml(r.repo)}">Разархивировать</button>`);
+      } else {
+        bits.push(`<button type="button" class="btn primary" data-add="${escapeHtml(r.repo)}">Вернуть на доску</button>`);
+      }
+      const mark = r.pinned ? "на доске" : r.archived ? "архив" : "скрыт";
+      return `<article class="card"><header><span>${escapeHtml(r.name)}</span><span>${mark}</span></header>
+        <p class="meta">${escapeHtml(r.repo)}</p><div class="row">${bits.join("")}</div></article>`;
+    }).join("") || '<p class="meta">Репозиториев нет</p>';
+    box.querySelectorAll("[data-hide]").forEach((b) => {
+      b.onclick = async () => {
+        if (!confirm(`Скрыть ${b.dataset.hide} с доски?`)) return;
+        await api("/api/hide", { project: b.dataset.hide });
+        refresh();
+        renderRepos();
+      };
+    });
+    box.querySelectorAll("[data-archive]").forEach((b) => {
+      b.onclick = async () => {
+        if (!confirm(`Архивировать ${b.dataset.archive} на GitHub? Репо не удаляется.`)) return;
+        await api("/api/archive", { project: b.dataset.archive });
+        refresh();
+        renderRepos();
+      };
+    });
+    box.querySelectorAll("[data-add]").forEach((b) => {
+      b.onclick = async () => {
+        await api("/api/projects/add", { repo: b.dataset.add });
+        refresh();
+        renderRepos();
+      };
+    });
+    box.querySelectorAll("[data-unarchive]").forEach((b) => {
+      b.onclick = async () => {
+        if (!confirm(`Разархивировать ${b.dataset.unarchive} и вернуть на доску?`)) return;
+        await api("/api/unarchive", { repo: b.dataset.unarchive });
+        refresh();
+        renderRepos();
+      };
+    });
+  } catch (err) {
+    box.innerHTML = `<p class="err">${escapeHtml(err.message)}</p>`;
+  }
+}
 
 $("save-settings").onclick = async () => {
   const profiles = [...$("profiles").querySelectorAll("[data-i]")].map((card, i) => {
@@ -595,14 +691,21 @@ $("save-settings").onclick = async () => {
   refresh();
 };
 
+$("console-project").onchange = () => {
+  if (!isPin(currentFilter())) pollConsole();
+};
+
 async function pollConsole() {
-  const project = $("console-project").value;
-  const data = await api(`/api/console?project=${encodeURIComponent(project)}`);
+  const f = currentFilter();
+  const pick = isPin(f) ? f : $("console-project").value;
+  const data = await api(`/api/console?project=${encodeURIComponent(pick)}`);
   $("console").textContent = data.pane || data.log || "пусто";
   const live = data.live || [];
-  if ($("console-project").options.length !== live.length + 1) {
-    $("console-project").innerHTML = `<option value="">лог</option>` + live.map((p) => `<option>${escapeHtml(p)}</option>`).join("");
-  }
+  const names = [...new Set([...pinNames(), ...live])];
+  $("console-project").innerHTML = `<option value="">лог</option>` + names.map((p) =>
+    `<option ${p === pick ? "selected" : ""}>${escapeHtml(p)}</option>`
+  ).join("");
+  if (isPin(f) && $("console-project").value !== f) $("console-project").value = f;
 }
 
 async function refresh() {
