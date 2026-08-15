@@ -1,0 +1,345 @@
+#!/usr/bin/env python3
+"""Corporation harness. Needs git, gh, and Python 3. No extra packages."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+REGISTRY_PATH = ROOT / "registry.json"
+PRIORITY = ("P0", "P1", "P2")
+
+
+def die(msg: str, code: int = 1) -> None:
+    print(msg, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def load_registry() -> dict:
+    return json.loads(REGISTRY_PATH.read_text())
+
+
+def workspace() -> Path:
+    env = os.environ.get("CORP_WORKSPACE")
+    if env:
+        return Path(env).expanduser()
+    parent = ROOT.parent
+    if parent.name in {"Github", "Developer", "repos", "src", "code"}:
+        return parent
+    return ROOT / "projects"
+
+
+def expand(raw: str) -> Path:
+    return Path(os.path.expanduser(raw))
+
+
+def project_dir(project: dict) -> Path | None:
+    for raw in project.get("roots") or []:
+        path = expand(raw)
+        if path.is_dir() and (path / ".git").exists():
+            return path
+    candidate = workspace() / project["name"]
+    if candidate.is_dir() and (candidate / ".git").exists():
+        return candidate
+    return None
+
+
+def run(cmd: list[str], cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, cwd=cwd, check=check, text=True, capture_output=True)
+
+
+def have(cmd: str) -> bool:
+    return shutil.which(cmd) is not None
+
+
+def gh_ready() -> bool:
+    if not have("gh"):
+        return False
+    return run(["gh", "auth", "status"], check=False).returncode == 0
+
+
+def active_projects(reg: dict, include_paused: bool = False) -> list[dict]:
+    out = []
+    for project in reg.get("projects", []):
+        if project.get("status") == "active" or include_paused:
+            out.append(project)
+    return out
+
+
+def bootstrap(reg: dict, include_paused: bool = False) -> None:
+    if not have("git"):
+        die("missing git")
+    if not gh_ready():
+        die("gh is missing or not logged in. Run: gh auth login")
+
+    ws = workspace()
+    ws.mkdir(parents=True, exist_ok=True)
+    print(f"workspace: {ws}")
+
+    if not have("graphify"):
+        if have("uv"):
+            print("installing graphify via uv")
+            proc = run(["uv", "tool", "install", "graphifyy"], check=False)
+            if proc.returncode != 0:
+                print((proc.stderr or proc.stdout).strip())
+        else:
+            print("graphify not installed. Later: uv tool install graphifyy && graphify install")
+
+    for project in active_projects(reg, include_paused=include_paused):
+        dest = project_dir(project)
+        if dest is None:
+            dest = ws / project["name"]
+            if dest.exists():
+                print(f"skip clone {project['name']}: {dest} exists without .git")
+                continue
+            print(f"clone {project['repo']} -> {dest}")
+            proc = run(["gh", "repo", "clone", project["repo"], str(dest)], check=False)
+            if proc.returncode != 0:
+                print((proc.stderr or proc.stdout).strip())
+                continue
+        else:
+            print(f"pull {project['name']} ({dest})")
+            proc = run(["git", "pull", "--ff-only"], cwd=dest, check=False)
+            if proc.returncode != 0:
+                print((proc.stderr or "git pull failed").strip())
+
+        graph = dest / "graphify-out" / "GRAPH_REPORT.md"
+        if not graph.exists():
+            print(f"  no graphify-out yet. Later: cd {dest} && graphify .")
+
+    print("bootstrap done. Next: ./bin/corp cycle")
+
+
+def pull_projects(reg: dict) -> None:
+    for project in active_projects(reg):
+        dest = project_dir(project)
+        if dest is None:
+            print(f"missing {project['name']}")
+            continue
+        proc = run(["git", "pull", "--ff-only"], cwd=dest, check=False)
+        status = "ok" if proc.returncode == 0 else (proc.stderr or "fail").strip()
+        print(f"{project['name']}: {status}")
+
+
+def issues_for(repo: str, label: str | None) -> list[dict]:
+    cmd = [
+        "gh",
+        "issue",
+        "list",
+        "-R",
+        repo,
+        "--state",
+        "open",
+        "--limit",
+        "50",
+        "--json",
+        "number,title,url,labels,updatedAt",
+    ]
+    if label:
+        cmd.extend(["--label", label])
+    proc = run(cmd, check=False)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout).strip()
+        if "label" in err.lower() and label:
+            return []
+        print(f"{repo}: {err}", file=sys.stderr)
+        return []
+    return json.loads(proc.stdout or "[]")
+
+
+def label_names(issue: dict) -> set[str]:
+    return {item.get("name", "") for item in issue.get("labels") or []}
+
+
+def rank(issue: dict) -> tuple:
+    names = label_names(issue)
+    pri = 9
+    for i, name in enumerate(PRIORITY):
+        if name in names:
+            pri = i
+            break
+    return (pri, issue.get("updatedAt") or "")
+
+
+def collect_ready(reg: dict) -> list[dict]:
+    ready_label = reg.get("labels", {}).get("ready", "ready")
+    blocked_label = reg.get("labels", {}).get("blocked", "blocked")
+    found = []
+    for project in active_projects(reg):
+        for issue in issues_for(project["repo"], ready_label):
+            names = label_names(issue)
+            if blocked_label in names:
+                continue
+            found.append({**issue, "project": project["name"], "repo": project["repo"]})
+    found.sort(key=rank)
+    return found
+
+
+def project_by_name(reg: dict, name: str) -> dict:
+    for project in reg.get("projects", []):
+        if project["name"] == name:
+            return project
+    return {"name": name, "roots": []}
+
+
+def collect_open(reg: dict) -> list[dict]:
+    blocked_label = reg.get("labels", {}).get("blocked", "blocked")
+    found = []
+    for project in active_projects(reg):
+        for issue in issues_for(project["repo"], None):
+            names = label_names(issue)
+            if blocked_label in names:
+                continue
+            found.append({**issue, "project": project["name"], "repo": project["repo"]})
+    found.sort(key=rank)
+    return found
+
+
+def research_report(reg: dict) -> list[dict]:
+    files = reg.get("research_files") or []
+    rows = []
+    for project in active_projects(reg):
+        dest = project_dir(project)
+        present = []
+        if dest is not None:
+            for rel in files:
+                if (dest / rel).is_file():
+                    present.append(rel)
+        graph = bool(dest and (dest / "graphify-out" / "GRAPH_REPORT.md").is_file())
+        rows.append(
+            {
+                "name": project["name"],
+                "repo": project["repo"],
+                "cwd": str(dest) if dest else None,
+                "docs": present,
+                "graphify": graph,
+            }
+        )
+    return rows
+
+
+def cycle_payload(reg: dict) -> dict:
+    if not gh_ready():
+        die("gh is missing or not logged in. Run: gh auth login")
+
+    ready = collect_ready(reg)
+    if ready:
+        nxt = ready[0]
+        dest = project_dir(project_by_name(reg, nxt["project"]))
+        return {
+            "mode": "execute",
+            "next": {
+                "repo": nxt["repo"],
+                "issue": nxt["number"],
+                "title": nxt["title"],
+                "url": nxt["url"],
+                "project": nxt["project"],
+                "cwd": str(dest) if dest else None,
+            },
+            "ready": ready,
+        }
+
+    return {
+        "mode": "research",
+        "next": None,
+        "open_unblocked": collect_open(reg)[:20],
+        "research": research_report(reg),
+        "instruction": (
+            "No ready Issues. Follow HARNESS.md research loop. "
+            "File concrete ready Issues. Do not start greenfield work."
+        ),
+    }
+
+
+def render(payload: dict) -> str:
+    lines = ["=== CORP CYCLE ===", f"mode: {payload['mode']}"]
+    nxt = payload.get("next")
+    if nxt:
+        lines += [
+            "",
+            "NEXT",
+            f"repo: {nxt['repo']}",
+            f"issue: #{nxt['issue']}",
+            f"title: {nxt['title']}",
+            f"url: {nxt['url']}",
+            f"cwd: {nxt.get('cwd') or '(clone via ./bin/corp bootstrap)'}",
+            "",
+            "Take this Issue. Do not invent other work.",
+        ]
+        extras = payload.get("ready") or []
+        if len(extras) > 1:
+            lines += ["", "QUEUE"]
+            for item in extras[1:6]:
+                lines.append(f"- {item['repo']}#{item['number']} {item['title']}")
+        return "\n".join(lines) + "\n"
+
+    lines += ["", "NEXT: research", "", payload.get("instruction", "")]
+    open_items = payload.get("open_unblocked") or []
+    if open_items:
+        lines += ["", "OPEN (not labeled ready)"]
+        for item in open_items[:10]:
+            lines.append(f"- {item['repo']}#{item['number']} {item['title']}")
+    lines += ["", "PROJECTS"]
+    for row in payload.get("research") or []:
+        docs = ", ".join(row["docs"]) if row["docs"] else "no planning docs"
+        graph = "graphify yes" if row["graphify"] else "graphify no"
+        cwd = row["cwd"] or "not cloned"
+        lines.append(f"- {row['name']}: {cwd} | {graph} | {docs}")
+    return "\n".join(lines) + "\n"
+
+
+def write_next(text: str) -> Path:
+    path = ROOT / "memory" / "next.local.md"
+    path.write_text(text)
+    return path
+
+
+def status(reg: dict) -> None:
+    print(f"workspace: {workspace()}")
+    print(f"planner: {reg.get('planner')}")
+    for project in reg.get("projects", []):
+        dest = project_dir(project)
+        mark = dest or "missing"
+        print(f"{project['status']:7} {project['name']:28} {mark}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(prog="corp", description="Corporation harness")
+    parser.add_argument(
+        "command",
+        nargs="?",
+        default="cycle",
+        choices=["bootstrap", "cycle", "pull", "status"],
+    )
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--write", action="store_true", help="write memory/next.local.md")
+    parser.add_argument("--all", action="store_true", help="bootstrap paused projects too")
+    args = parser.parse_args()
+    reg = load_registry()
+
+    if args.command == "bootstrap":
+        bootstrap(reg, include_paused=args.all)
+        return
+    if args.command == "pull":
+        pull_projects(reg)
+        return
+    if args.command == "status":
+        status(reg)
+        return
+
+    payload = cycle_payload(reg)
+    text = json.dumps(payload, indent=2) if args.json else render(payload)
+    print(text, end="" if text.endswith("\n") else "\n")
+    if args.write:
+        path = write_next(text if not args.json else render(payload))
+        print(f"wrote {path}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

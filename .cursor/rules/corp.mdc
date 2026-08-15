@@ -1,0 +1,10 @@
+---
+description: Corporation harness loop
+alwaysApply: true
+---
+
+This repo is the corporation control plane. Follow `AGENTS.md` and `HARNESS.md`.
+
+At session start run `./bin/corp cycle`. Take a `ready` GitHub Issue before
+inventing work. If none, follow the research loop. Query `graphify-out/` when
+it exists. Never delete repos or rewrite Git history.

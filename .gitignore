@@ -1,0 +1,8 @@
+.DS_Store
+.venv/
+__pycache__/
+*.pyc
+graphify-out/cache/
+*.local.md
+*.local.json
+.corp-write/

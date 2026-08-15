@@ -1,0 +1,26 @@
+name: Ready work
+description: Concrete unblocked work an agent may take
+labels: ["ready"]
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Done when
+      description: Observable outcome, not a hope.
+    validations:
+      required: true
+  - type: input
+    id: repo
+    attributes:
+      label: Project repo
+      placeholder: andrewkazavchinskyy-cloud/clarity
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options: ["P1", "P0", "P2"]
+  - type: textarea
+    id: notes
+    attributes:
+      label: Context
+      description: Links to PRD, SPEC, graphify nodes, or failing checks.

@@ -1,0 +1,115 @@
+{
+  "org": "andrewkazavchinskyy-cloud",
+  "planner": "github-issues",
+  "labels": {
+    "ready": "ready",
+    "blocked": "blocked"
+  },
+  "research_files": [
+    "docs/PRD.md",
+    "docs/SPEC.md",
+    "docs/SHIP.md",
+    "docs/roadmap.md",
+    "docs/DECISIONS.md",
+    "STATE.md",
+    "README.md"
+  ],
+  "projects": [
+    {
+      "name": "corp",
+      "repo": "andrewkazavchinskyy-cloud/corp",
+      "status": "active",
+      "roots": [
+        "~/Library/Mobile Documents/com~apple~CloudDocs/Github/corp"
+      ]
+    },
+    {
+      "name": "clarity",
+      "repo": "andrewkazavchinskyy-cloud/clarity",
+      "status": "active",
+      "roots": ["~/Developer/clarity"]
+    },
+    {
+      "name": "LifeBalance",
+      "repo": "andrewkazavchinskyy-cloud/LifeBalance",
+      "status": "active",
+      "roots": [
+        "~/Library/Mobile Documents/com~apple~CloudDocs/Github/LifeBalance"
+      ]
+    },
+    {
+      "name": "personal-memory-os",
+      "repo": "andrewkazavchinskyy-cloud/personal-memory-os",
+      "status": "active",
+      "roots": [
+        "~/Library/Mobile Documents/com~apple~CloudDocs/Github/personal-memory-os"
+      ]
+    },
+    {
+      "name": "project-radar",
+      "repo": "andrewkazavchinskyy-cloud/project-radar",
+      "status": "active",
+      "roots": [
+        "~/Library/Mobile Documents/com~apple~CloudDocs/Github/project-radar"
+      ]
+    },
+    {
+      "name": "OpenJarvis",
+      "repo": "andrewkazavchinskyy-cloud/OpenJarvis",
+      "status": "active",
+      "roots": ["~/Developer/OpenJarvis"]
+    },
+    {
+      "name": "pixel-live-transcriber",
+      "repo": "andrewkazavchinskyy-cloud/pixel-live-transcriber",
+      "status": "active",
+      "roots": [
+        "~/Library/Mobile Documents/com~apple~CloudDocs/Github/pixel-live-transcriber"
+      ]
+    },
+    {
+      "name": "fluentpm-ai-english-tutor",
+      "repo": "andrewkazavchinskyy-cloud/fluentpm-ai-english-tutor",
+      "status": "active",
+      "roots": []
+    },
+    {
+      "name": "poker-live-assist",
+      "repo": "andrewkazavchinskyy-cloud/poker-live-assist",
+      "status": "active",
+      "roots": []
+    },
+    {
+      "name": "mobile-app-expo",
+      "repo": "andrewkazavchinskyy-cloud/mobile-app-expo",
+      "status": "active",
+      "roots": [
+        "~/Library/Mobile Documents/com~apple~CloudDocs/Github/velora-expo-webview"
+      ]
+    },
+    {
+      "name": "over-under-dice",
+      "repo": "andrewkazavchinskyy-cloud/dice-game",
+      "status": "paused",
+      "roots": [
+        "~/Library/Mobile Documents/com~apple~CloudDocs/Github/over-under-dice"
+      ]
+    },
+    {
+      "name": "create-google-ads-audit-decks",
+      "repo": "andrewkazavchinskyy-cloud/create-google-ads-audit-decks",
+      "status": "active",
+      "roots": [
+        "~/Library/Mobile Documents/com~apple~CloudDocs/Github/create-google-ads-audit-decks"
+      ]
+    },
+    {
+      "name": "merezha-prava-handover",
+      "repo": "andrewkazavchinskyy-cloud/merezha-prava-handover",
+      "status": "paused",
+      "roots": [
+        "~/Library/Mobile Documents/com~apple~CloudDocs/Github/merezha-prava-handover"
+      ]
+    }
+  ]
+}
