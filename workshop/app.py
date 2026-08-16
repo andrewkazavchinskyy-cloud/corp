@@ -350,15 +350,17 @@ def api_settings(probe: bool = False) -> dict:
 @app.post("/api/settings")
 async def api_settings_save(request: Request) -> dict:
     body = await request.json()
-    with LOCK:
-        data = corp.load_workshop()
+
+    def mutate(data: dict) -> None:
         if "profiles" in body:
             data["profiles"] = body["profiles"]
         if "max_parallel" in body:
             data["max_parallel"] = max(1, min(3, int(body["max_parallel"])))
         if "slots" in body and isinstance(body["slots"], dict):
             data["slots"] = body["slots"]
-        corp.save_workshop(data)
+
+    with LOCK:
+        corp.update_workshop(mutate)
     return api_settings()
 
 
@@ -609,9 +611,13 @@ def queue_tick() -> None:
                 continue
             if len(running_projects) >= cap:
                 break
+            # get_issue/remove_labels are network calls -- never hold the
+            # workshop.json lock across them. Each transition below re-reads
+            # the row fresh and only applies if it is still "waiting", so a
+            # CLI or Telegram writer racing us here is never clobbered.
             issue = corp.get_issue(item["repo"], item["issue"])
             if "self" in corp.label_names(issue):
-                item["status"] = "skipped"
+                corp.set_queue_status(item["repo"], item["issue"], "skipped", expect="waiting")
                 corp.remove_labels(item["repo"], item["issue"], ["queued"])
                 continue
             blocked = corp.pin_write_block(corp.load_registry(), project, except_issue=item["issue"])
@@ -619,11 +625,12 @@ def queue_tick() -> None:
                 continue
             profile = next((p for p in data["profiles"] if p["id"] == item["profile"]), None)
             if not profile:
-                item["status"] = "failed"
+                corp.set_queue_status(item["repo"], item["issue"], "failed", expect="waiting")
                 continue
-            item["status"] = "running"
+            row = corp.set_queue_status(item["repo"], item["issue"], "running", expect="waiting")
+            if row is None:
+                continue
             running_projects.add(project)
-            corp.save_workshop(data)
             threading.Thread(target=_queue_job, args=(item["repo"], item["issue"], profile, project), daemon=True).start()
             return
 
@@ -650,15 +657,10 @@ def _queue_job(repo: str, number: int, profile: dict, project: str) -> None:
     finally:
         with ACTIVE_LOCK:
             ACTIVE_PROJECTS.discard(project)
-    with LOCK:
-        data = corp.load_workshop()
-        for item in data["queue"]:
-            if item["repo"] == repo and item["issue"] == number and item.get("status") == "running":
-                item["status"] = status
-                item["run_id"] = run_id
-                item["exit_code"] = code
-                item["finished"] = time.time()
-        corp.save_workshop(data)
+    corp.set_queue_status(
+        repo, number, status, expect="running",
+        run_id=run_id, exit_code=code, finished=time.time(),
+    )
 
 
 def queue_loop() -> None:

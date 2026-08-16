@@ -2,6 +2,7 @@
 import importlib.machinery
 import importlib.util
 import json
+import multiprocessing
 import os
 import tempfile
 from pathlib import Path
@@ -17,6 +18,17 @@ _loader.exec_module(corp)
 
 def issue(labels, state="OPEN"):
     return {"state": state, "labels": [{"name": name} for name in labels], "updatedAt": "1"}
+
+
+def _mp_worker(worker_id: int, iters: int) -> None:
+    """Child process body for the corp#39 concurrency regression below."""
+
+    def bump(data: dict) -> None:
+        data["test_counter"] = int(data.get("test_counter") or 0) + 1
+
+    for _ in range(iters):
+        corp.update_workshop(bump)
+    corp.set_queue_status("o/r", worker_id, "done", expect="waiting", touched_by=worker_id)
 
 
 def main() -> None:
@@ -192,6 +204,49 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     corp.save_workshop(data)
     assert corp.reconcile_running(active_projects={"corp-test-orphan-watched"}) == []
     assert corp.load_workshop()["queue"][0]["status"] == "running"
+
+    # Regression corp#39: workshop.json is written by the CLI, the web
+    # workshop, Telegram, and the orchestrator, each in its own process.
+    # update_workshop()/set_queue_status() must serialize real concurrent
+    # OS processes (not just threads in one process) so nobody's update is
+    # lost and the file is never left half-written.
+    workers, iters = 6, 40
+    seed = corp.default_workshop()
+    seed["test_counter"] = 0
+    seed["queue"] = [
+        {"repo": "o/r", "issue": w, "project": f"mp-{w}", "status": "waiting"} for w in range(workers)
+    ]
+    corp.save_workshop(seed)
+    ctx = multiprocessing.get_context("fork")
+    procs = [ctx.Process(target=_mp_worker, args=(w, iters)) for w in range(workers)]
+    for p in procs:
+        p.start()
+    for p in procs:
+        p.join(30)
+        assert p.exitcode == 0, f"worker {p.pid} exited {p.exitcode}"
+    final = corp.load_workshop()
+    assert final["test_counter"] == workers * iters, final["test_counter"]
+    rows = {r["issue"]: r for r in final["queue"]}
+    for w in range(workers):
+        assert rows[w]["status"] == "done" and rows[w]["touched_by"] == w, rows[w]
+    assert corp.WORKSHOP_JSON.stat().st_mode & 0o777 == 0o600
+
+    # Regression corp#39: a corrupt workshop.json must fail loudly and must
+    # never be silently replaced by defaults, from either the plain reader
+    # or the locked update path.
+    corp.WORKSHOP_JSON.write_text("{not valid json")
+    try:
+        corp.load_workshop()
+        raise AssertionError("load_workshop should reject corrupt JSON")
+    except corp.CorpError:
+        pass
+    assert corp.WORKSHOP_JSON.read_text() == "{not valid json"
+    try:
+        corp.update_workshop(lambda data: None)
+        raise AssertionError("update_workshop should reject corrupt JSON")
+    except corp.CorpError:
+        pass
+    assert corp.WORKSHOP_JSON.read_text() == "{not valid json"
 
     print("ok")
 

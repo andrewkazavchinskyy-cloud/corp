@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import json
 import os
 import re
@@ -12,6 +14,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -32,6 +35,7 @@ SLOT_ROLES = ("orchestrator", "build", "design", "qa")
 PULSE_SEC = 15 * 60
 CONFIG_DIR = Path.home() / ".config" / "corp"
 WORKSHOP_JSON = Path(os.environ["CORP_WORKSHOP_JSON"]) if os.environ.get("CORP_WORKSHOP_JSON") else CONFIG_DIR / "workshop.json"
+WORKSHOP_LOCK = WORKSHOP_JSON.parent / (WORKSHOP_JSON.name + ".lock")
 TOKEN_PATH = CONFIG_DIR / "workshop-setup-token"
 RUN_LOG = CONFIG_DIR / "run.log"
 RUNS_JSON = CONFIG_DIR / "runs.json"
@@ -179,12 +183,14 @@ def save_registry(reg: dict) -> None:
         return
     except OSError:
         pass
-    data = load_workshop()
-    data["registry"] = {
-        "pins": {p.get("name"): bool(p.get("workshop")) for p in reg.get("projects") or [] if p.get("name")},
-        "projects": [dict(p) for p in reg.get("projects") or [] if p.get("name")],
-    }
-    save_workshop(data)
+
+    def mutate(data: dict) -> None:
+        data["registry"] = {
+            "pins": {p.get("name"): bool(p.get("workshop")) for p in reg.get("projects") or [] if p.get("name")},
+            "projects": [dict(p) for p in reg.get("projects") or [] if p.get("name")],
+        }
+
+    update_workshop(mutate)
 
 
 def org_name(reg: dict) -> str:
@@ -639,13 +645,13 @@ def default_workshop() -> dict:
     }
 
 
-def load_workshop() -> dict:
-    path = WORKSHOP_JSON
-    if not path.is_file():
-        data = default_workshop()
-        save_workshop(data)
-        return data
-    data = json.loads(path.read_text())
+def _parse_workshop(text: str) -> dict:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        die(f"{WORKSHOP_JSON} is corrupt ({exc}); refusing to overwrite it with defaults")
+    if not isinstance(data, dict):
+        die(f"{WORKSHOP_JSON} is corrupt (expected a JSON object); refusing to overwrite it with defaults")
     data.setdefault("profiles", [dict(item) for item in DEFAULT_PROFILES])
     data.setdefault("queue", [])
     data.setdefault("queue_running", False)
@@ -659,10 +665,90 @@ def load_workshop() -> dict:
     return data
 
 
+def _read_workshop_raw() -> dict:
+    if not WORKSHOP_JSON.is_file():
+        return default_workshop()
+    return _parse_workshop(WORKSHOP_JSON.read_text())
+
+
+def _write_workshop(data: dict) -> None:
+    WORKSHOP_JSON.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=".workshop-", suffix=".tmp", dir=str(WORKSHOP_JSON.parent))
+    try:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(json.dumps(data, indent=2) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(tmp_name, 0o600)
+        os.replace(tmp_name, WORKSHOP_JSON)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
+        raise
+
+
+@contextlib.contextmanager
+def _workshop_file_lock():
+    WORKSHOP_LOCK.parent.mkdir(parents=True, exist_ok=True)
+    with open(WORKSHOP_LOCK, "a+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def load_workshop() -> dict:
+    if not WORKSHOP_JSON.is_file():
+        return update_workshop(lambda data: data)
+    return _parse_workshop(WORKSHOP_JSON.read_text())
+
+
 def save_workshop(data: dict) -> None:
-    config_dir()
-    WORKSHOP_JSON.write_text(json.dumps(data, indent=2) + "\n")
-    os.chmod(WORKSHOP_JSON, 0o600)
+    _write_workshop(data)
+
+
+def update_workshop(mutate):
+    """Atomic, interprocess-safe read-modify-write of workshop.json.
+
+    Holds a lock file (separate from workshop.json itself) for the
+    duration of the read + mutate + write. Never call this around network
+    requests, agent launches, or tmux waits -- gather everything the
+    mutation needs first, then call this with a fast, local mutate().
+
+    `mutate(data)` changes `data` in place. Whatever it returns (including
+    None) is returned as-is -- `mutate` must `return data` itself if the
+    caller wants the full post-mutate dict back.
+    """
+    with _workshop_file_lock():
+        data = _read_workshop_raw()
+        result = mutate(data)
+        _write_workshop(data)
+        return result
+
+
+def set_queue_status(repo: str, number: int, to: str, expect=None, **extra) -> dict | None:
+    """Atomically move one queue row to a new status.
+
+    Re-reads the row fresh under the lock, so a status already set by
+    another process or an earlier step in the same tick is never clobbered
+    by a stale in-memory snapshot. `expect` is a status or set of statuses
+    the row must currently have; if it doesn't match (already claimed,
+    already removed, row gone), this is a no-op and returns None.
+    """
+    expected = {expect} if isinstance(expect, str) else (set(expect) if expect else None)
+
+    def mutate(data: dict) -> dict | None:
+        for row in data["queue"]:
+            if row.get("repo") == repo and row.get("issue") == number:
+                if expected is not None and row.get("status") not in expected:
+                    return None
+                row["status"] = to
+                row.update(extra)
+                return row
+        return None
+
+    return update_workshop(mutate)
 
 
 def profile_by_id(profile_id: str) -> dict:
@@ -686,9 +772,10 @@ def slots_for(name: str) -> dict:
 
 
 def save_slots(name: str, slots: dict) -> dict:
-    data = load_workshop()
-    data.setdefault("slots", {})[name] = slots
-    save_workshop(data)
+    def mutate(data: dict) -> None:
+        data.setdefault("slots", {})[name] = slots
+
+    update_workshop(mutate)
     return slots
 
 
@@ -852,10 +939,13 @@ def probe_catalog() -> dict:
             row = dict(prev.get(kind) or {"kind": kind, "installed": False, "models": [], "efforts": [], "fast": False})
             row["stale"] = True
         catalog[kind] = row
-    data = load_workshop()
-    data["catalog"] = {"probed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "kinds": catalog}
-    save_workshop(data)
-    return data["catalog"]
+    result = {"probed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "kinds": catalog}
+
+    def mutate(data: dict) -> None:
+        data["catalog"] = result
+
+    update_workshop(mutate)
+    return result
 
 
 def load_catalog() -> dict:
@@ -1097,9 +1187,7 @@ def new_draft(
         "kind": kind if kind in {"build", "design", "qa"} else "build",
         "created": time.time(),
     }
-    data = load_workshop()
-    data["drafts"].append(draft)
-    save_workshop(data)
+    update_workshop(lambda data: data["drafts"].append(draft))
     invalidate_board()
     return draft
 
@@ -1116,10 +1204,12 @@ def draft_issue_body(draft: dict) -> str:
 
 
 def prune_drafts() -> None:
-    data = load_workshop()
     now = time.time()
-    data["drafts"] = [d for d in data["drafts"] if now - float(d.get("created") or 0) < 7 * 86400]
-    save_workshop(data)
+
+    def mutate(data: dict) -> None:
+        data["drafts"] = [d for d in data["drafts"] if now - float(d.get("created") or 0) < 7 * 86400]
+
+    update_workshop(mutate)
 
 
 def draft_by_id(draft_id: str) -> dict:
@@ -1131,9 +1221,10 @@ def draft_by_id(draft_id: str) -> dict:
 
 
 def drop_draft(draft_id: str) -> None:
-    data = load_workshop()
-    data["drafts"] = [d for d in data["drafts"] if d.get("id") != draft_id]
-    save_workshop(data)
+    def mutate(data: dict) -> None:
+        data["drafts"] = [d for d in data["drafts"] if d.get("id") != draft_id]
+
+    update_workshop(mutate)
 
 
 def approve_draft(draft_id: str) -> dict:
@@ -1323,9 +1414,10 @@ def maybe_orchestrate(reg: dict, name: str) -> None:
 
 
 def set_tg_offset(offset: int) -> None:
-    data = load_workshop()
-    data["tg_offset"] = int(offset)
-    save_workshop(data)
+    def mutate(data: dict) -> None:
+        data["tg_offset"] = int(offset)
+
+    update_workshop(mutate)
 
 
 def parse_json_array(text: str) -> list:
@@ -1607,14 +1699,15 @@ def capture_pane(session: str, lines: int = 80) -> str:
 
 
 def set_orch_state(name: str, status: str, **extra) -> dict:
-    data = load_workshop()
-    row = dict((data.get("orch") or {}).get(name) or {})
-    row.update(extra)
-    row["status"] = status
-    row["updated"] = time.time()
-    data.setdefault("orch", {})[name] = row
-    save_workshop(data)
-    return row
+    def mutate(data: dict) -> dict:
+        row = dict((data.get("orch") or {}).get(name) or {})
+        row.update(extra)
+        row["status"] = status
+        row["updated"] = time.time()
+        data.setdefault("orch", {})[name] = row
+        return row
+
+    return update_workshop(mutate)
 
 
 def orch_status(name: str) -> dict:
@@ -2089,49 +2182,59 @@ def queue_add(reg: dict, repo: str, number: int, profile_id: str) -> dict:
     if blocked:
         die(blocked)
     profile_by_id(profile_id)
-    data = load_workshop()
     key = issue_ref(repo, number)
-    for item in data["queue"]:
-        if issue_ref(item["repo"], item["issue"]) == key and item.get("status") in {"waiting", "running"}:
-            die(f"{key} is already queued")
+
+    def mutate(data: dict) -> list:
+        for item in data["queue"]:
+            if issue_ref(item["repo"], item["issue"]) == key and item.get("status") in {"waiting", "running"}:
+                die(f"{key} is already queued")
+        data["queue"].append(
+            {
+                "repo": repo,
+                "issue": number,
+                "project": project["name"],
+                "title": issue.get("title") or "",
+                "url": issue.get("url") or "",
+                "profile": profile_id,
+                "status": "waiting",
+            }
+        )
+        return data["queue"]
+
+    # The dup check + append happens atomically above, under the lock, on a
+    # freshly re-read queue -- two concurrent callers can no longer both pass
+    # the dup check and each append a row, clobbering one another on save.
+    queue = update_workshop(mutate)
     add_labels(repo, number, ["ready", "queued"])
     comment(repo, number, "corp-claim: queue")
-    data["queue"].append(
-        {
-            "repo": repo,
-            "issue": number,
-            "project": project["name"],
-            "title": issue.get("title") or "",
-            "url": issue.get("url") or "",
-            "profile": profile_id,
-            "status": "waiting",
-        }
-    )
-    save_workshop(data)
-    return {"ok": True, "queue": data["queue"]}
+    return {"ok": True, "queue": queue}
 
 
 def queue_rm(repo: str, number: int) -> dict:
-    data = load_workshop()
-    kept = []
-    removed = False
-    for item in data["queue"]:
-        if item["repo"] == repo and item["issue"] == number and item.get("status") != "running":
-            removed = True
-            continue
-        kept.append(item)
-    if not removed:
-        die(f"not in queue: {repo}#{number}")
-    data["queue"] = kept
-    save_workshop(data)
+    def mutate(data: dict) -> list:
+        kept = []
+        removed = False
+        for item in data["queue"]:
+            if item["repo"] == repo and item["issue"] == number and item.get("status") != "running":
+                removed = True
+                continue
+            kept.append(item)
+        if not removed:
+            die(f"not in queue: {repo}#{number}")
+        data["queue"] = kept
+        return kept
+
+    kept = update_workshop(mutate)
     remove_labels(repo, number, ["queued"])
     return {"ok": True, "queue": kept}
 
 
 def queue_set_running(running: bool) -> dict:
-    data = load_workshop()
-    data["queue_running"] = running
-    save_workshop(data)
+    def mutate(data: dict) -> dict:
+        data["queue_running"] = running
+        return data
+
+    data = update_workshop(mutate)
     return {"ok": True, "queue_running": running, "queue": data["queue"]}
 
 
@@ -2151,19 +2254,20 @@ def reconcile_running(active_projects: set[str] | None = None) -> list[dict]:
     reported as done/failed by guesswork. Never relaunches the issue.
     """
     active = active_projects or set()
-    data = load_workshop()
     changed = []
-    for item in data["queue"]:
-        if item.get("status") != "running":
-            continue
-        project = item.get("project") or ""
-        if project in active or tmux_alive(project):
-            continue
-        item["status"] = "interrupted"
-        item["finished"] = time.time()
-        changed.append(item)
-    if changed:
-        save_workshop(data)
+    with _workshop_file_lock():
+        data = _read_workshop_raw()
+        for item in data["queue"]:
+            if item.get("status") != "running":
+                continue
+            project = item.get("project") or ""
+            if project in active or tmux_alive(project):
+                continue
+            item["status"] = "interrupted"
+            item["finished"] = time.time()
+            changed.append(item)
+        if changed:
+            _write_workshop(data)
     return changed
 
 
