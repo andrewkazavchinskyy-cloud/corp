@@ -114,6 +114,12 @@ requeue themselves with the error on the card and in Telegram. After the
 retry cap, a 10-minute pause, then another try. Need-human only for
 GitHub/auth/self/CLI.
 
+Local E2E (no paid agent, no live P0): `corp queue e2e` writes a throwaway
+`workshop.json`, proposes a draft, approves it locally, reaps a hung
+runner, then rollbacks. It must not set `queue_running` or call `gh`.
+Manual VPS checklist, only on a sandbox card: propose → Approve → queue →
+kill that pin's tmux → see retry → Rollback. Never point this at a live P0.
+
 ## Locks
 
 One writing runner per repo. Orchestrator may run in parallel.

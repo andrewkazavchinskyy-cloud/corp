@@ -286,6 +286,18 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     conn.execute("INSERT INTO sessions(token, created) VALUES('other', ?)", (now,))
     assert auth.delete_all_sessions(conn) >= 1
     assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+    live = corp.WORKSHOP_JSON
+    before = live.read_text() if live.is_file() else None
+    report = corp.run_autopilot_e2e()
+    after = live.read_text() if live.is_file() else None
+    assert before == after
+    assert report["ok"] and report["queue_running"] is False
+    assert report["drafts_after_approve"] == 0
+    assert report["reap_events"] and report["reap_events"][0]["kind"] == "retry"
+    assert report["queue_after_reap"][0]["status"] == "waiting"
+    assert report["queue_after_rollback"] == []
+    assert report["killed"] == ["corp"]
+    assert ("andrewkazavchinskyy-cloud/corp", 0) in report["released"]
     print("ok")
 
 

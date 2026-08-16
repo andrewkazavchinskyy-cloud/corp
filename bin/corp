@@ -13,6 +13,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from contextlib import contextmanager
@@ -2604,10 +2605,12 @@ def reap_queue(
     now: float | None = None,
     tmux=None,
     fetch_issue=None,
+    release=None,
 ) -> list[dict]:
     now = time.time() if now is None else now
     tmux = tmux or tmux_alive
     fetch_issue = fetch_issue or (lambda repo, number: get_issue(repo, number))
+    release = release or release_runner
     max_attempts = int(data.get("queue_retries") or QUEUE_MAX_ATTEMPTS)
     events = []
     for item in data.get("queue") or []:
@@ -2633,7 +2636,7 @@ def reap_queue(
             events.append({"kind": "closed", "item": item})
             continue
         try:
-            release_runner(item["repo"], item["issue"])
+            release(item["repo"], item["issue"])
         except Exception:
             pass
         item["last_error"] = "раннер умер, ишью не закрыта" if status == "done" else "завис без сессии"
@@ -2742,7 +2745,10 @@ def queue_rm(repo: str, number: int) -> dict:
     return {"ok": True, "queue": kept}
 
 
-def queue_abort(repo: str, number: int) -> dict:
+def queue_abort(repo: str, number: int, kill=None, release=None, notify=None) -> dict:
+    kill = kill or tmux_kill
+    release = release or release_runner
+    notify = notify or notify_safe
     with workshop_lock():
         data = load_workshop()
         found = None
@@ -2751,14 +2757,111 @@ def queue_abort(repo: str, number: int) -> dict:
                 found = item
                 break
         if found is None:
-            release_runner(repo, number)
+            release(repo, number)
             return {"ok": True, "queue": data["queue"], "aborted": True}
-        tmux_kill(found.get("project") or "")
+        kill(found.get("project") or "")
         data["queue"] = [item for item in data["queue"] if item is not found]
         save_workshop(data)
-    release_runner(repo, number)
-    notify_safe(f"{repo}#{number} · откатил на ready")
+    release(repo, number)
+    notify(f"{repo}#{number} · откатил на ready")
     return {"ok": True, "queue": data["queue"], "aborted": True}
+
+
+@contextmanager
+def workshop_json_override(path: Path):
+    global WORKSHOP_JSON
+    old = WORKSHOP_JSON
+    WORKSHOP_JSON = path
+    try:
+        yield path
+    finally:
+        WORKSHOP_JSON = old
+
+
+def run_autopilot_e2e() -> dict:
+    """propose → approve → queue → reap → rollback. No gh, tmux, or paid agent."""
+    tmp = Path(tempfile.mkdtemp(prefix="corp-e2e-")) / "workshop.json"
+    released: list[tuple[str, int]] = []
+    killed: list[str] = []
+    reg = {
+        "org": "andrewkazavchinskyy-cloud",
+        "projects": [
+            {
+                "name": "corp",
+                "repo": "andrewkazavchinskyy-cloud/corp",
+                "workshop": True,
+                "status": "active",
+            }
+        ],
+    }
+    fake_issue = {
+        "state": "OPEN",
+        "labels": [{"name": "in-progress"}, {"name": "via:claude"}],
+        "title": "e2e sandbox",
+        "url": "",
+    }
+    now = time.time()
+    with workshop_json_override(tmp):
+        save_workshop(default_workshop())
+        draft = propose_draft(reg, "corp", "e2e sandbox card", "fixture only, do not file")
+        drop_draft(draft["id"])
+        data = load_workshop()
+        data["queue_running"] = False
+        data["queue"].append(
+            {
+                "repo": "andrewkazavchinskyy-cloud/corp",
+                "issue": 0,
+                "project": "corp",
+                "title": draft["title"],
+                "url": "",
+                "profile": "claude",
+                "kind": "claude",
+                "model": "",
+                "status": "running",
+                "attempts": 1,
+                "last_error": "",
+                "retry_after": 0,
+                "started_at": now - 120,
+            }
+        )
+        save_workshop(data)
+        events = reap_queue(
+            data,
+            now=now,
+            tmux=lambda _name: False,
+            fetch_issue=lambda _repo, _number: fake_issue,
+            release=lambda repo, number: released.append((repo, number)),
+        )
+        save_workshop(data)
+        after_reap = [dict(item) for item in data.get("queue") or []]
+        queue_abort(
+            "andrewkazavchinskyy-cloud/corp",
+            0,
+            kill=lambda name: killed.append(name),
+            release=lambda repo, number: released.append((repo, number)),
+            notify=lambda *_args, **_kwargs: None,
+        )
+        leftover = load_workshop().get("queue") or []
+        drafts_left = load_workshop().get("drafts") or []
+    return {
+        "ok": True,
+        "workshop": str(tmp),
+        "draft_id": draft["id"],
+        "drafts_after_approve": len(drafts_left),
+        "reap_events": [
+            {
+                "kind": event["kind"],
+                "status": event["item"].get("status"),
+                "error": event["item"].get("last_error"),
+            }
+            for event in events
+        ],
+        "queue_after_reap": after_reap,
+        "released": released,
+        "killed": killed,
+        "queue_after_rollback": leftover,
+        "queue_running": False,
+    }
 
 
 def queue_retry(repo: str, number: int) -> dict:
@@ -2860,7 +2963,10 @@ def cmd_queue(reg: dict, args: argparse.Namespace) -> None:
             return
         print(json.dumps(queue_rm(repo, number), indent=2))
         return
-    die("usage: corp queue add|rm|retry|abort|restart|rollback|start|pause|status")
+    if action == "e2e":
+        print(json.dumps(run_autopilot_e2e(), indent=2, ensure_ascii=False))
+        return
+    die("usage: corp queue add|rm|retry|abort|restart|rollback|start|pause|status|e2e")
 
 
 def main() -> None:
