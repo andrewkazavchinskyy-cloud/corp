@@ -197,6 +197,81 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert corp.tg_parse_command("черновики") == ("drafts", "")
     assert corp.tg_parse_command("retry 41") == ("retry", "41")
     assert corp.tg_parse_command("непонятно") == ("", "")
+    assert corp.tg_parse_command("Сейчас") == ("status", "")
+    assert corp.tg_parse_command("Бежит") == ("running", "")
+    assert corp.tg_parse_command("Агенты") == ("running", "")
+    assert corp.tg_parse_command("Старт") == ("go", "")
+    assert corp.tg_parse_command("Автоном ▶") == ("go", "")
+    assert corp.tg_parse_command("/agents") == ("agents", "")
+    keys = [btn["text"] for row in corp.tg_reply_keyboard() for btn in row]
+    assert keys == ["Статус", "Очередь", "Агенты", "Сервер", "Доска", "Черновики", "Старт", "Пауза"]
+    assert "Автоном ▶" not in keys
+    assert corp.tg_menu_buttons() == []
+    assert corp.tg_short_ref("andrewkazavchinskyy-cloud/corp", 56) == "corp#56"
+    assert corp.tg_card("corp#56", "старт", "claude") == "corp#56 · старт · claude"
+    assert "\n" not in corp.tg_card("corp#56", "упал", "Очередь+")
+    assert "http" not in corp.tg_card("corp#56", "старт", "claude")
+    status = corp.tg_status_text(queue_on=False, writer="тихо", server_ok=True, drafts=2)
+    assert status == "Очередь: пауза\nПишет: тихо\nСервер: ок\nЧерновики: 2"
+    queue_text = corp.tg_queue_text(
+        [
+            {"status": "running", "repo": "andrewkazavchinskyy-cloud/corp", "issue": 56, "title": "Telegram rewrite"},
+            {"status": "waiting", "repo": "andrewkazavchinskyy-cloud/corp", "issue": 57, "title": "next one"},
+            {"status": "waiting", "repo": "andrewkazavchinskyy-cloud/clarity", "issue": 2, "title": "x"},
+            {"status": "waiting", "repo": "andrewkazavchinskyy-cloud/clarity", "issue": 3, "title": "y"},
+            {"status": "waiting", "repo": "andrewkazavchinskyy-cloud/clarity", "issue": 4, "title": "hidden"},
+            {"status": "done", "repo": "andrewkazavchinskyy-cloud/corp", "issue": 1, "title": "old history"},
+            {"status": "failed", "repo": "andrewkazavchinskyy-cloud/corp", "issue": 9, "title": "boom"},
+        ],
+        paused=True,
+    )
+    assert queue_text.startswith("Очередь · пауза")
+    assert "Бежит" in queue_text and "corp#56" in queue_text
+    assert "Дальше" in queue_text
+    assert "corp#57" in queue_text and "clarity#2" in queue_text and "clarity#3" in queue_text
+    assert "clarity#4" not in queue_text
+    assert "old history" not in queue_text
+    assert "Упали: 1" in queue_text
+    assert corp.tg_agents_text([{"name": "corp", "kind": "tmux", "issue": "#56"}, {"name": "clarity", "kind": "orch"}]) == (
+        "Агенты\ncorp · tmux · #56\nclarity · orch"
+    )
+    assert corp.tg_agents_text([]) == "Агенты\nтихо"
+    server = corp.tg_server_text(load=0.21, disk_free_gb=42.2, workshop_up=True, queue_on=False)
+    assert server == "нагрузка 0.21\nдиск 42 ГБ\nworkshop: ок\nочередь: пауза"
+    board_cards = [
+        {"column": "backlog", "repo": "o/corp", "number": 1, "title": "a", "labels": ["P2"]},
+        {"column": "ready", "repo": "o/corp", "number": 2, "title": "b", "labels": [{"name": "P0"}]},
+        {"column": "in-progress", "repo": "o/clarity", "number": 3, "title": "c", "labels": []},
+        {"column": "qa", "repo": "o/corp", "number": 4, "title": "d", "labels": ["P0"]},
+        {"column": "done", "repo": "o/corp", "number": 5, "title": "e", "labels": ["P0"], "state": "CLOSED"},
+        {"column": "ready", "repo": "o/corp", "number": 6, "title": "wall of text " * 20, "labels": []},
+    ]
+    board = corp.tg_board_text(board_cards)
+    assert board.startswith("Бэклог 1 · Готово 2 · Ход 1 · QA 1 · Закрыто 1")
+    assert "P0" in board and "corp#2" in board and "corp#4" in board
+    assert "corp#5" not in board and "wall of text" not in board
+    assert board.count("\n") <= 7
+    drafts_text = corp.tg_drafts_text(
+        [{"id": "d1", "project": "corp", "title": "First"}, {"id": "d2", "project": "clarity", "title": "Second"}]
+    )
+    assert drafts_text == "Черновики: 2\ncorp · First"
+    assert corp.tg_draft_buttons([{"id": "d1"}, {"id": "d2"}]) == [
+        [{"text": "Approve", "callback_data": "a:d1"}, {"text": "Skip", "callback_data": "s:d1"}]
+    ]
+    assert corp.tg_pulse_text("o/corp", 56, 15, "same", "same") is None
+    assert corp.tg_pulse_text("o/corp", 56, 15, "new", "") is None
+    assert corp.tg_pulse_text("o/corp", 56, 45, "new", "old") == "corp#56 · 45 мин · пишет"
+    ev = corp.tg_event_buttons("start", url="https://github.com/o/corp/issues/56", ref="o/corp#56")
+    assert [btn["text"] for btn in ev[0]] == ["Открыть", "Пауза"]
+    fail_btns = corp.tg_event_buttons("fail", url="https://example", ref="o/corp#56")
+    assert [btn["text"] for btn in fail_btns[0]] == ["Открыть", "Очередь+"]
+    corp.tg_reset_dedup()
+    assert corp.tg_should_send("start:corp#56", now=100)
+    assert not corp.tg_should_send("start:corp#56", now=110)
+    assert corp.tg_should_send("start:corp#56", now=200)
+    assert corp.tg_ru_count(1, "черновик", "черновика", "черновиков") == "1 черновик"
+    assert corp.tg_ru_count(3, "черновик", "черновика", "черновиков") == "3 черновика"
+    assert corp.tg_ru_count(5, "черновик", "черновика", "черновиков") == "5 черновиков"
     repo, number = corp.tg_parse_issue_arg("#41")
     assert number == 41 and repo.endswith("/corp")
     repo = "andrewkazavchinskyy-cloud/corp"

@@ -721,13 +721,12 @@ def _notify_queue_event(event: dict) -> None:
     item = event.get("item") or {}
     repo = item.get("repo") or ""
     number = item.get("issue")
-    title = item.get("title") or ""
-    if event.get("kind") == "retry":
-        corp.notify_safe(f"{repo}#{number} · завис · перезапуск\n{title}")
-    elif event.get("kind") == "closed":
-        corp.notify_safe(f"{repo}#{number} · закрыл, пока workshop перезапускался\n{title}")
+    ref = corp.tg_short_ref(repo, number)
+    key = corp.issue_ref(repo, number) if repo and number not in (None, "") else ref
+    if event.get("kind") == "closed":
+        corp.tg_notify_event("closed", ref, "закрыл", action_ref=key)
     else:
-        corp.notify_safe(f"{repo}#{number} · завис · сам перезапускаю\n{title}")
+        corp.tg_notify_event("hung", ref, "завис", "перезапуск", action_ref=key)
 
 
 def queue_tick() -> None:
@@ -767,7 +766,7 @@ def queue_tick() -> None:
                 item["last_error"] = str(exc)
                 if not item.get("alerted"):
                     item["alerted"] = True
-                    corp.need_human(f"{item['repo']}#{item['issue']} · нет доступа к GitHub\n{exc}")
+                    corp.need_human(f"{corp.tg_short_ref(item['repo'], item['issue'])} · нет GitHub")
                     corp.save_workshop(data)
                 continue
             names = corp.label_names(issue)
@@ -781,7 +780,7 @@ def queue_tick() -> None:
                 item["last_error"] = blocked
                 if "self" in blocked and not item.get("alerted"):
                     item["alerted"] = True
-                    corp.need_human(f"{item['repo']}#{item['issue']} · пин у тебя (self)\n{blocked}")
+                    corp.need_human(f"{corp.tg_short_ref(item['repo'], item['issue'])} · пин self")
                     corp.save_workshop(data)
                 continue
             profile = next((p for p in data["profiles"] if p["id"] == item.get("profile")), None)
@@ -791,7 +790,7 @@ def queue_tick() -> None:
                 else:
                     item["status"] = "failed"
                     item["last_error"] = "нет модели"
-                    corp.need_human(f"{item['repo']}#{item['issue']} · нет модели")
+                    corp.need_human(f"{corp.tg_short_ref(item['repo'], item['issue'])} · нет модели")
                     continue
             item["status"] = "running"
             item["started_at"] = time.time()
@@ -842,16 +841,32 @@ def _queue_job(item: dict, profile: dict) -> None:
                     elif data.get("queue_running"):
                         row["status"] = "waiting"
                         if attempts < retries:
-                            corp.notify_safe(f"{repo}#{number} · {error} · сам перезапускаю")
+                            corp.tg_notify_event(
+                                "fail",
+                                corp.tg_short_ref(repo, number),
+                                corp.tg_clip(error, 40),
+                                "сам перезапускаю",
+                                action_ref=corp.issue_ref(repo, number),
+                            )
                         else:
                             row["attempts"] = 0
                             row["retry_after"] = time.time() + corp.RETRY_COOLDOWN_SEC
-                            corp.notify_safe(
-                                f"{repo}#{number} · {error} · {attempts} раз, пауза 10 мин и снова"
+                            corp.tg_notify_event(
+                                "fail",
+                                corp.tg_short_ref(repo, number),
+                                corp.tg_clip(error, 40),
+                                "пауза 10 мин",
+                                action_ref=corp.issue_ref(repo, number),
                             )
                     else:
                         row["status"] = "failed"
-                        corp.notify_safe(f"{repo}#{number} · {error or 'упал'} · автоном на паузе")
+                        corp.tg_notify_event(
+                            "fail",
+                            corp.tg_short_ref(repo, number),
+                            corp.tg_clip(error or "упал", 40),
+                            "очередь на паузе",
+                            action_ref=corp.issue_ref(repo, number),
+                        )
             corp.save_workshop(data)
 
 

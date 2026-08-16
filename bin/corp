@@ -33,6 +33,9 @@ STATE_LABELS = ("ready", "blocked", "in-progress", "self", "queued", *VIA.values
 SEED_LABELS = (*STATE_LABELS, "P0", "P1", "P2", "design", "qa", "qa-fail", "in-qa")
 SLOT_ROLES = ("orchestrator", "build", "design", "qa")
 PULSE_SEC = 15 * 60
+TG_DEDUP_TTL = 90
+TG_QUEUE_NEXT = 3
+TG_P0_MAX = 5
 QUEUE_STALE_SEC = 90
 QUEUE_MAX_ATTEMPTS = 4
 QA_ROUNDS = 3
@@ -49,6 +52,8 @@ DEFAULT_PROFILES = [
     {"id": "grok", "kind": "grok", "label": "Grok", "model": "", "effort": "high", "fast": False},
     {"id": "cursor", "kind": "cursor", "label": "Cursor", "model": "", "effort": "", "fast": False},
 ]
+_tg_sent: list[tuple[str, float]] = []
+_tg_pulse: dict[str, str] = {}
 
 
 class CorpError(Exception):
@@ -632,7 +637,8 @@ def notify_safe(text: str, buttons: list | None = None, keyboard: list | None = 
 
 
 def need_human(text: str, buttons: list | None = None) -> None:
-    notify_safe("Нужно твоё действие\n" + text, buttons=buttons)
+    first = (text or "").strip().split("\n", 1)[0]
+    tg_notify_event("need_human", "Нужно тебя", tg_clip(first, 60), buttons=buttons)
 
 
 def config_dir() -> Path:
@@ -927,11 +933,17 @@ def pulse_label(kind: str, model: str = "") -> str:
 
 
 def pulse_loop(repo: str, number: int, kind: str, started: float, stop: threading.Event, model: str = "") -> None:
-    label = pulse_label(kind, model)
     prefix = issue_ref(repo, number)
+    prev = last_log_lines(1, prefix=prefix)
+    _tg_pulse[prefix] = prev
     while not stop.wait(PULSE_SEC):
         mins = int((time.time() - started) / 60)
-        notify_safe(f"{repo}#{number} · {mins} мин · {label}\n{last_log_lines(3, prefix=prefix)}")
+        log = last_log_lines(1, prefix=prefix)
+        text = tg_pulse_text(repo, number, mins, log, prev)
+        _tg_pulse[prefix] = log
+        prev = log
+        if text:
+            notify_safe(text)
 
 
 def ensure_seed_labels(repo: str) -> None:
@@ -1213,8 +1225,14 @@ def approve_draft(draft_id: str) -> dict:
             queue_add(load_registry(), draft["repo"], number, profile)
             queued = True
         except CorpError as exc:
-            notify_safe(f"{draft['repo']} · ишью есть, в очередь не легла: {exc}\n{url}")
-    notify_safe(f"{draft['repo']} · завёл · {draft['title']}\n{url}" + (" · в очередь" if queued else ""))
+            tg_notify_event("filed", tg_short_ref(draft["repo"], number), "есть, не в очереди", tg_clip(str(exc), 40), url=url)
+    tg_notify_event(
+        "filed",
+        tg_short_ref(draft["repo"], number) if number else tg_short_ref(draft["repo"]),
+        "завёл",
+        "в очередь" if queued else "",
+        url=url,
+    )
     return {"ok": True, "url": url, "draft": draft, "queued": queued, "issue": number}
 
 
@@ -1366,8 +1384,13 @@ def orchestrate(reg: dict, repo: str) -> dict:
     except Exception:
         set_orch_state(project["name"], "failed", drafts=len(drafts), kind=kind)
         raise
-    buttons = [[{"text": f"Approve {d['title'][:24]}", "callback_data": f"a:{d['id']}"}, {"text": "Skip", "callback_data": f"s:{d['id']}"}] for d in drafts]
-    notify_safe(f"{project['name']} · {len(drafts)} черновиков оркестратора", buttons=buttons or None)
+    tg_notify_event(
+        "drafts",
+        project["name"],
+        tg_ru_count(len(drafts), "черновик", "черновика", "черновиков"),
+        "Черновики" if drafts else "",
+        buttons=tg_draft_buttons(drafts) or None,
+    )
     return {"ok": True, "drafts": drafts, "stage": project_stage(reg, project["name"])}
 
 
@@ -1410,6 +1433,233 @@ def parse_json_array(text: str) -> list:
     return payload if isinstance(payload, list) else []
 
 
+def tg_reset_dedup() -> None:
+    _tg_sent.clear()
+    _tg_pulse.clear()
+
+
+def tg_clip(text: str, n: int = 48) -> str:
+    clean = " ".join((text or "").split())
+    return clean if len(clean) <= n else clean[: n - 1] + "…"
+
+
+def tg_ru_count(n: int, one: str, few: str, many: str) -> str:
+    n = abs(int(n))
+    if n % 10 == 1 and n % 100 != 11:
+        word = one
+    elif n % 10 in {2, 3, 4} and n % 100 not in {12, 13, 14}:
+        word = few
+    else:
+        word = many
+    return f"{n} {word}"
+
+
+def tg_short_ref(repo: str, number: int | str | None = None) -> str:
+    name = (repo or "").rsplit("/", 1)[-1] or repo or "?"
+    if number in (None, ""):
+        return name
+    return f"{name}#{number}"
+
+
+def tg_card(ref: str, happened: str, nxt: str = "") -> str:
+    return " · ".join(part for part in (ref, happened, nxt) if part)
+
+
+def tg_should_send(key: str, now: float | None = None, ttl: int = TG_DEDUP_TTL) -> bool:
+    stamp = time.time() if now is None else now
+    keep = [(k, t) for k, t in _tg_sent if stamp - t < ttl]
+    _tg_sent[:] = keep
+    if any(k == key for k, _t in _tg_sent):
+        return False
+    _tg_sent.append((key, stamp))
+    return True
+
+
+def tg_notify_event(
+    kind: str,
+    ref: str,
+    happened: str,
+    nxt: str = "",
+    url: str = "",
+    buttons: list | None = None,
+    action_ref: str = "",
+    extra_key: str = "",
+) -> None:
+    key = ":".join(part for part in (kind, ref, happened, extra_key) if part)
+    if not tg_should_send(key):
+        return
+    markup = buttons if buttons is not None else tg_event_buttons(kind, url=url, ref=action_ref or ref)
+    notify_safe(tg_card(ref, happened, nxt), buttons=markup or None)
+
+
+def tg_event_buttons(kind: str, url: str = "", ref: str = "") -> list:
+    row = []
+    if url:
+        row.append({"text": "Открыть", "url": url})
+    if kind in {"fail", "incomplete", "hung"} and ref:
+        row.append({"text": "Очередь+", "callback_data": f"q:{ref}"})
+    if kind in {"start", "hung"}:
+        row.append({"text": "Пауза", "callback_data": "c:pause"})
+    if kind in {"to_qa", "ready_qa"} and ref:
+        row.append({"text": "QA", "callback_data": f"qa:{ref}"})
+    return [row] if row else []
+
+
+def tg_draft_buttons(drafts: list) -> list:
+    if not drafts:
+        return []
+    did = drafts[0].get("id") or ""
+    return [[{"text": "Approve", "callback_data": f"a:{did}"}, {"text": "Skip", "callback_data": f"s:{did}"}]]
+
+
+def tg_status_text(*, queue_on: bool, writer: str, server_ok: bool, drafts: int) -> str:
+    return "\n".join(
+        [
+            f"Очередь: {'вкл' if queue_on else 'пауза'}",
+            f"Пишет: {writer or 'тихо'}",
+            f"Сервер: {'ок' if server_ok else 'нет'}",
+            f"Черновики: {int(drafts)}",
+        ]
+    )
+
+
+def tg_queue_text(queue: list, *, paused: bool) -> str:
+    running = [item for item in queue if item.get("status") == "running"]
+    waiting = [item for item in queue if item.get("status") == "waiting"]
+    failed = [item for item in queue if item.get("status") == "failed"]
+    if not running and not waiting and not failed:
+        return "Очередь пуста"
+    lines = [f"Очередь · {'пауза' if paused else 'вкл'}"]
+    if running:
+        lines.append("Бежит")
+        for item in running[:3]:
+            ref = tg_short_ref(item.get("repo") or "", item.get("issue"))
+            title = tg_clip(item.get("title") or "", 40)
+            lines.append(f"{ref} {title}".strip() if title else ref)
+    nxt = waiting[:TG_QUEUE_NEXT]
+    if nxt:
+        lines.append("Дальше")
+        for item in nxt:
+            lines.append(tg_short_ref(item.get("repo") or "", item.get("issue")))
+    if failed:
+        lines.append(f"Упали: {len(failed)}")
+    return "\n".join(lines)
+
+
+def tg_agents_text(rows: list) -> str:
+    if not rows:
+        return "Агенты\nтихо"
+    lines = ["Агенты"]
+    for row in rows:
+        parts = [row.get("name") or "?", row.get("kind") or ""]
+        issue = row.get("issue") or ""
+        if issue:
+            parts.append(issue if str(issue).startswith("#") else f"#{issue}")
+        lines.append(" · ".join(part for part in parts if part))
+    return "\n".join(lines)
+
+
+def tg_server_text(*, load: float, disk_free_gb: float, workshop_up: bool, queue_on: bool) -> str:
+    return "\n".join(
+        [
+            f"нагрузка {load:.2f}",
+            f"диск {disk_free_gb:.0f} ГБ",
+            f"workshop: {'ок' if workshop_up else 'нет'}",
+            f"очередь: {'вкл' if queue_on else 'пауза'}",
+        ]
+    )
+
+
+def tg_card_labels(card: dict) -> set[str]:
+    out = set()
+    for item in card.get("labels") or []:
+        if isinstance(item, dict):
+            out.add(item.get("name") or "")
+        elif item:
+            out.add(str(item))
+    return out
+
+
+def tg_board_text(cards: list) -> str:
+    counts = {"backlog": 0, "ready": 0, "in-progress": 0, "qa": 0, "done": 0}
+    p0 = []
+    for card in cards:
+        col = card.get("column") or "backlog"
+        if col in counts:
+            counts[col] += 1
+        closed = (card.get("state") or "OPEN").upper() == "CLOSED" or col == "done"
+        if "P0" in tg_card_labels(card) and not closed:
+            p0.append(card)
+    lines = [
+        f"Бэклог {counts['backlog']} · Готово {counts['ready']} · "
+        f"Ход {counts['in-progress']} · QA {counts['qa']} · Закрыто {counts['done']}"
+    ]
+    if p0:
+        lines.append("P0")
+        for card in p0[:TG_P0_MAX]:
+            ref = tg_short_ref(card.get("repo") or card.get("project") or "", card.get("number"))
+            title = tg_clip(card.get("title") or "", 40)
+            lines.append(f"{ref} {title}".strip() if title else ref)
+    return "\n".join(lines)
+
+
+def tg_drafts_text(drafts: list) -> str:
+    if not drafts:
+        return "Черновиков нет"
+    cur = drafts[0]
+    project = cur.get("project") or cur.get("label") or (cur.get("repo") or "").rsplit("/", 1)[-1] or "черновик"
+    return f"Черновики: {len(drafts)}\n{project} · {tg_clip(cur.get('title') or '', 60)}"
+
+
+def tg_pulse_text(repo: str, number: int, mins: int, log_line: str, prev_log: str) -> str | None:
+    if not prev_log or log_line == prev_log:
+        return None
+    return tg_card(tg_short_ref(repo, number), f"{mins} мин", "пишет")
+
+
+def tg_workshop_up() -> bool:
+    import socket
+
+    port = int(os.environ.get("CORP_WORKSHOP_PORT", "8787"))
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.4):
+            return True
+    except OSError:
+        return False
+
+
+def tg_server_ok() -> bool:
+    try:
+        return shutil.disk_usage("/").free >= 1024**3
+    except OSError:
+        return False
+
+
+def tg_writer_line(reg: dict, data: dict) -> str:
+    running = [item for item in (data.get("queue") or []) if item.get("status") == "running"]
+    if running:
+        return ", ".join(tg_short_ref(item.get("repo") or "", item.get("issue")) for item in running[:3])
+    live = tg_live_names(reg)
+    return ", ".join(live[:4]) if live else "тихо"
+
+
+def tg_agent_rows(reg: dict, queue: list | None = None) -> list[dict]:
+    rows = []
+    for project in pinned_projects(reg):
+        name = project["name"]
+        issue = ""
+        for item in queue or []:
+            if item.get("project") == name and item.get("status") == "running":
+                num = item.get("issue")
+                issue = f"#{num}" if num not in (None, "") else ""
+                break
+        if tmux_alive(name):
+            rows.append({"name": name, "kind": "tmux", "issue": issue})
+        if orch_alive(name):
+            rows.append({"name": name, "kind": "orch", "issue": ""})
+    return rows
+
+
 def telegram_tick() -> None:
     token, chat = tg_creds()
     if not token or not chat:
@@ -1434,7 +1684,7 @@ def telegram_tick() -> None:
                 try:
                     handle_tg_callback(cb.get("data") or "")
                 except CorpError as exc:
-                    notify_safe(str(exc), buttons=tg_menu_buttons())
+                    notify_safe(tg_clip(str(exc), 80))
             if cb.get("id"):
                 try:
                     tg_post("answerCallbackQuery", {"callback_query_id": cb["id"]})
@@ -1449,43 +1699,39 @@ def telegram_tick() -> None:
             try:
                 handle_tg_text(text)
             except CorpError as exc:
-                notify_safe(str(exc), buttons=tg_menu_buttons())
+                notify_safe(tg_clip(str(exc), 80))
     if new_offset != offset:
         set_tg_offset(new_offset)
 
 
 def tg_menu_buttons() -> list:
-    return [
-        [{"text": "Сейчас", "callback_data": "c:status"}, {"text": "Очередь", "callback_data": "c:queue"}],
-        [{"text": "Бежит", "callback_data": "c:running"}, {"text": "Сервер", "callback_data": "c:doctor"}],
-        [{"text": "Доска", "callback_data": "c:board"}, {"text": "Черновики", "callback_data": "c:drafts"}],
-        [{"text": "Автоном ▶", "callback_data": "c:go"}, {"text": "Пауза", "callback_data": "c:pause"}],
-    ]
+    return []
 
 
 def tg_reply_keyboard() -> list:
     return [
-        [{"text": "Сейчас"}, {"text": "Очередь"}],
-        [{"text": "Бежит"}, {"text": "Сервер"}],
+        [{"text": "Статус"}, {"text": "Очередь"}],
+        [{"text": "Агенты"}, {"text": "Сервер"}],
         [{"text": "Доска"}, {"text": "Черновики"}],
-        [{"text": "Автоном ▶"}, {"text": "Пауза"}],
+        [{"text": "Старт"}, {"text": "Пауза"}],
     ]
 
 
 def tg_install_commands() -> None:
     cmds = [
-        {"command": "start", "description": "Меню"},
-        {"command": "status", "description": "Что сейчас"},
+        {"command": "start", "description": "Клавиатура"},
+        {"command": "status", "description": "Статус"},
         {"command": "queue", "description": "Очередь"},
-        {"command": "running", "description": "Кто бежит"},
+        {"command": "running", "description": "Агенты"},
+        {"command": "agents", "description": "Агенты"},
         {"command": "doctor", "description": "Сервер"},
         {"command": "board", "description": "Доска"},
-        {"command": "go", "description": "Запустить автоном"},
-        {"command": "pause", "description": "Пауза автонома"},
-        {"command": "retry", "description": "Перезапуск #n"},
+        {"command": "go", "description": "Старт очереди"},
+        {"command": "pause", "description": "Пауза"},
+        {"command": "retry", "description": "Очередь+ #n"},
         {"command": "abort", "description": "Откатить #n"},
         {"command": "drafts", "description": "Черновики"},
-        {"command": "help", "description": "Команды"},
+        {"command": "help", "description": "Клавиатура"},
     ]
     try:
         tg_post("setMyCommands", {"commands": json.dumps(cmds)})
@@ -1507,6 +1753,7 @@ def tg_parse_command(text: str) -> tuple[str, str]:
         "статус": "status",
         "очередь": "queue",
         "бежит": "running",
+        "агенты": "running",
         "сервер": "doctor",
         "доктор": "doctor",
         "доска": "board",
@@ -1560,13 +1807,8 @@ def tg_live_names(reg: dict) -> list[str]:
 
 
 def tg_cmd_start(_arg: str = "") -> None:
-    notify_safe(
-        "Мастерская\n"
-        "Кнопки внизу или команда.\n"
-        "/status — что сейчас · /queue — очередь · /running — кто бежит\n"
-        "/doctor — сервер · /retry #n — снова · /abort #n — откатить",
-        keyboard=tg_reply_keyboard(),
-    )
+    tg_install_commands()
+    notify_safe("Мастерская", keyboard=tg_reply_keyboard())
 
 
 def tg_cmd_help(arg: str = "") -> None:
@@ -1575,110 +1817,62 @@ def tg_cmd_help(arg: str = "") -> None:
 
 def tg_cmd_status(_arg: str = "") -> None:
     data = load_workshop()
-    reg = load_registry()
-    queue = data.get("queue") or []
-    waiting = sum(1 for item in queue if item.get("status") == "waiting")
-    failed = sum(1 for item in queue if item.get("status") == "failed")
-    running = [item for item in queue if item.get("status") == "running"]
-    live = tg_live_names(reg)
-    lines = [
-        "Сейчас",
-        f"автоном: {'идёт' if data.get('queue_running') else 'пауза'}",
-        f"бежит: {', '.join(live) or 'тихо'}",
-        f"очередь: ждут {waiting} · упали {failed}",
-    ]
-    for item in running:
-        lines.append(f"· {item.get('repo')}#{item.get('issue')} {item.get('title') or ''}")
-    notify_safe("\n".join(lines), buttons=tg_menu_buttons())
+    notify_safe(
+        tg_status_text(
+            queue_on=bool(data.get("queue_running")),
+            writer=tg_writer_line(load_registry(), data),
+            server_ok=tg_server_ok(),
+            drafts=len(data.get("drafts") or []),
+        )
+    )
 
 
 def tg_cmd_queue(_arg: str = "") -> None:
-    queue = load_workshop().get("queue") or []
-    if not queue:
-        notify_safe("Очередь пуста", buttons=tg_menu_buttons())
-        return
-    lines = ["Очередь"]
+    data = load_workshop()
+    queue = data.get("queue") or []
+    text = tg_queue_text(queue, paused=not data.get("queue_running"))
     buttons = []
-    for item in queue[:8]:
-        err = f" · {item.get('last_error')}" if item.get("last_error") else ""
-        lines.append(f"{item.get('status')} {item.get('repo')}#{item.get('issue')} {item.get('title') or ''}{err}")
-        if item.get("status") in {"failed", "done"}:
-            key = issue_ref(item["repo"], item["issue"])
-            buttons.append([
-                {"text": f"↻ #{item['issue']}", "callback_data": f"q:{key}"},
-                {"text": f"↩ #{item['issue']}", "callback_data": f"k:{key}"},
-            ])
-    notify_safe("\n".join(lines), buttons=buttons or tg_menu_buttons())
+    failed = [item for item in queue if item.get("status") == "failed"]
+    if failed:
+        item = failed[0]
+        key = issue_ref(item["repo"], item["issue"])
+        buttons = [[{"text": "Очередь+", "callback_data": f"q:{key}"}, {"text": "Пауза", "callback_data": "c:pause"}]]
+    notify_safe(text, buttons=buttons or None)
 
 
 def tg_cmd_running(_arg: str = "") -> None:
-    reg = load_registry()
-    live = tg_live_names(reg)
-    running = [item for item in load_workshop().get("queue") or [] if item.get("status") == "running"]
-    lines = ["Бежит", ", ".join(live) or "тихо"]
-    for item in running:
-        lines.append(f"{item.get('repo')}#{item.get('issue')} {item.get('title') or ''}")
-    notify_safe("\n".join(lines), buttons=tg_menu_buttons())
+    data = load_workshop()
+    notify_safe(tg_agents_text(tg_agent_rows(load_registry(), data.get("queue") or [])))
 
 
 def tg_host_lines() -> list[str]:
-    load = os.getloadavg()
-    disk = shutil.disk_usage("/")
     data = load_workshop()
-    live = tg_live_names(load_registry())
-    return [
-        f"автоном: {'идёт' if data.get('queue_running') else 'пауза'}",
-        f"бежит: {', '.join(live) or 'тихо'}",
-        f"нагрузка {load[0]:.2f} {load[1]:.2f} {load[2]:.2f}",
-        f"диск {disk.free / 1024**3:.0f} ГБ свободно из {disk.total / 1024**3:.0f}",
-    ]
+    return tg_server_text(
+        load=os.getloadavg()[0],
+        disk_free_gb=shutil.disk_usage("/").free / 1024**3,
+        workshop_up=tg_workshop_up(),
+        queue_on=bool(data.get("queue_running")),
+    ).splitlines()
 
 
 def tg_cmd_doctor(_arg: str = "") -> None:
-    rows = tg_host_lines()
-    for item in doctor_payload().get("checks") or []:
-        rows.append(f"{'ok' if item.get('ok') else 'нет'}  {item.get('name')}")
-    notify_safe("Сервер\n" + "\n".join(rows), buttons=tg_menu_buttons())
+    notify_safe("\n".join(tg_host_lines()))
 
 
 def tg_cmd_board(_arg: str = "") -> None:
     cards = board_payload(load_registry()).get("cards") or []
-    open_cards = [c for c in cards if (c.get("state") or "OPEN").upper() != "CLOSED"]
-    counts = {name: 0 for name in ("backlog", "ready", "in-progress", "qa")}
-    for card in open_cards:
-        col = card.get("column") or "backlog"
-        if col in counts:
-            counts[col] += 1
-    doing = [c for c in open_cards if c.get("column") in {"in-progress", "qa"}]
-    lines = [
-        "Доска",
-        f"ready {counts['ready']} · ход {counts['in-progress']} · QA {counts['qa']} · backlog {counts['backlog']}",
-    ]
-    for card in doing[:5]:
-        lines.append(f"· {card.get('project')}#{card.get('number')} {card.get('runner') or ''} {card.get('title') or ''}")
-    notify_safe("\n".join(lines), buttons=tg_menu_buttons())
+    notify_safe(tg_board_text(cards))
 
 
 def tg_cmd_drafts(_arg: str = "") -> None:
     prune_drafts()
     drafts = load_workshop().get("drafts") or []
-    if not drafts:
-        notify_safe("Черновиков нет", buttons=tg_menu_buttons())
-        return
-    lines = ["Черновики"]
-    buttons = []
-    for item in drafts[:6]:
-        lines.append(f"{item.get('label')} {item.get('title')}")
-        buttons.append([
-            {"text": f"Approve {item.get('id')}", "callback_data": f"a:{item.get('id')}"},
-            {"text": "Skip", "callback_data": f"s:{item.get('id')}"},
-        ])
-    notify_safe("\n".join(lines), buttons=buttons)
+    notify_safe(tg_drafts_text(drafts), buttons=tg_draft_buttons(drafts) or None)
 
 
 def tg_cmd_go(_arg: str = "") -> None:
     queue_set_running(True)
-    notify_safe("Автоном запущен", buttons=tg_menu_buttons())
+    notify_safe("Очередь: вкл")
 
 
 def tg_cmd_pause(_arg: str = "") -> None:
@@ -1688,13 +1882,12 @@ def tg_cmd_pause(_arg: str = "") -> None:
 def tg_cmd_retry(arg: str) -> None:
     repo, number = tg_parse_issue_arg(arg)
     queue_retry(repo, number)
-    notify_safe(f"{repo}#{number} · снова в очереди", buttons=tg_menu_buttons())
+    tg_notify_event("retry", tg_short_ref(repo, number), "снова в очереди", action_ref=issue_ref(repo, number))
 
 
 def tg_cmd_abort(arg: str) -> None:
     repo, number = tg_parse_issue_arg(arg)
     queue_abort(repo, number)
-    notify_safe(f"{repo}#{number} · откатил на ready", buttons=tg_menu_buttons())
 
 
 TG_HANDLERS = {
@@ -1704,6 +1897,7 @@ TG_HANDLERS = {
     "status": tg_cmd_status,
     "queue": tg_cmd_queue,
     "running": tg_cmd_running,
+    "agents": tg_cmd_running,
     "doctor": tg_cmd_doctor,
     "board": tg_cmd_board,
     "drafts": tg_cmd_drafts,
@@ -1718,7 +1912,7 @@ def handle_tg_text(text: str) -> None:
     name, arg = tg_parse_command(text)
     handler = TG_HANDLERS.get(name)
     if handler is None:
-        notify_safe("Не понял. /start — меню.", buttons=tg_menu_buttons())
+        notify_safe("Не понял")
         return
     handler(arg)
 
@@ -1732,21 +1926,26 @@ def handle_tg_callback(code: str) -> None:
         return
     if code.startswith("s:"):
         skip_draft(code[2:])
+        drafts = load_workshop().get("drafts") or []
+        notify_safe(tg_drafts_text(drafts), buttons=tg_draft_buttons(drafts) or None)
+        return
+    if code.startswith("qa:"):
+        repo, number = parse_issue_ref(code.split(":", 1)[1])
+        send_to_qa(load_registry(), repo, number)
         return
     if code.startswith("q:") or code.startswith("qx:"):
         repo, number = parse_issue_ref(code.split(":", 1)[1])
         queue_retry(repo, number)
-        notify_safe(f"{repo}#{number} · снова в очереди")
+        tg_notify_event("retry", tg_short_ref(repo, number), "снова в очереди", action_ref=issue_ref(repo, number))
         return
     if code.startswith("x:"):
         repo, number = parse_issue_ref(code[2:])
         queue_rm(repo, number)
-        notify_safe(f"{repo}#{number} · снял с очереди")
+        tg_notify_event("drop", tg_short_ref(repo, number), "снял")
         return
     if code.startswith("k:") or code.startswith("qb:"):
         repo, number = parse_issue_ref(code.split(":", 1)[1])
         queue_abort(repo, number)
-        notify_safe(f"{repo}#{number} · откатил на ready")
 
 
 def parse_issue_ref(raw: str) -> tuple[str, int]:
@@ -2131,7 +2330,7 @@ def send_to_qa(reg: dict, repo: str, number: int, enqueue: bool = True) -> dict:
                 queued = True
             except CorpError:
                 pass
-    notify_safe(f"{repo}#{number} · на QA · {issue.get('title') or ''}\n{issue.get('url') or ''}")
+    tg_notify_event("to_qa", tg_short_ref(repo, number), "на QA", url=issue.get("url") or "", action_ref=issue_ref(repo, number))
     return {"ok": True, "repo": repo, "issue": number, "column": "qa", "queued": queued}
 
 
@@ -2411,7 +2610,7 @@ def run_issue(
     extra = _role_prompt(role, project["name"], names)
     claim(repo, number, kind, f"corp-claim: vps {kind} · {role}")
     prompt = agent_prompt(repo, number, issue.get("title") or "", issue.get("url") or "", dest, project["name"]) + extra
-    notify_safe(f"{repo}#{number} · {kind} · {role} · старт · {issue.get('title')}\n{issue.get('url')}")
+    tg_notify_event("start", tg_short_ref(repo, number), "старт", kind, url=issue.get("url") or "", action_ref=issue_ref(repo, number))
     cmd = agent_argv(kind, prompt, dest, model=model, effort=effort, fast=fast)
     print(f"running: {cmd[0]} {repo}#{number} {role}", file=sys.stderr)
     stop = threading.Event()
@@ -2429,7 +2628,7 @@ def run_issue(
         if code != 0:
             reason = f"{role} упал · exit {code}"
             release_runner(repo, number)
-            notify_safe(f"{repo}#{number} · {kind} · {reason}\n{latest.get('url')}")
+            tg_notify_event("fail", tg_short_ref(repo, number), tg_clip(reason, 40), "Очередь+", url=latest.get("url") or "", action_ref=issue_ref(repo, number))
             return {
                 "ok": False,
                 "code": code,
@@ -2443,7 +2642,7 @@ def run_issue(
         remove_labels(repo, number, ["ready", "qa-fail", "in-progress", "self", *VIA.values()])
         add_labels(repo, number, ["in-qa"])
         invalidate_board()
-        notify_safe(f"{repo}#{number} · {kind} · {role} готов · на QA\n{latest.get('url')}")
+        tg_notify_event("to_qa", tg_short_ref(repo, number), "на QA", url=latest.get("url") or "", action_ref=issue_ref(repo, number))
         qa_slot = slots_for(project["name"])["qa"]
         return run_issue(
             reg,
@@ -2458,7 +2657,7 @@ def run_issue(
     if role == "qa":
         if closed and code == 0:
             graph = refresh_graph(dest, repo, number)
-            notify_safe(f"{repo}#{number} · {kind} · QA ок · закрыл · {latest.get('title')}\n{latest.get('url')}\n{graph}")
+            tg_notify_event("closed", tg_short_ref(repo, number), "закрыл", url=latest.get("url") or "", action_ref=issue_ref(repo, number))
             maybe_orchestrate(reg, project["name"])
             return {
                 "ok": True,
@@ -2481,7 +2680,7 @@ def run_issue(
             f"{notes}\n\n"
             "Исправь по комментариям и не закрывай — карточка снова пойдёт на QA.",
         )
-        notify_safe(f"{repo}#{number} · {kind} · QA не принял · ещё круг\n{latest.get('url')}\n{notes}")
+        tg_notify_event("qa_fail", tg_short_ref(repo, number), "QA не принял", "ещё круг", url=latest.get("url") or "", action_ref=issue_ref(repo, number))
         if _qa_round + 1 < QA_ROUNDS:
             latest = get_issue(repo, number)
             rework_role, rework = slot_for_issue(project["name"], latest)
@@ -2509,7 +2708,14 @@ def run_issue(
         }
     release_runner(repo, number)
     reason = f"упал · exit {code}" if code != 0 else "не закрыл ишью"
-    notify_safe(f"{repo}#{number} · {kind} · {reason}\n{latest.get('url')}")
+    tg_notify_event(
+        "incomplete" if code == 0 else "fail",
+        tg_short_ref(repo, number),
+        tg_clip(reason, 40),
+        "Очередь+",
+        url=latest.get("url") or "",
+        action_ref=issue_ref(repo, number),
+    )
     return {
         "ok": False,
         "code": code,
@@ -2546,7 +2752,7 @@ def run_next(reg: dict, args: argparse.Namespace) -> None:
     print(render(payload), end="")
     if payload["mode"] != "execute":
         try:
-            notify("corp: no ready Issue. Research loop. Do not start greenfield work.")
+            notify_safe("Готовых нет")
         except (SystemExit, CorpError):
             pass
         return
@@ -2558,9 +2764,8 @@ def run_next(reg: dict, args: argparse.Namespace) -> None:
 def queue_action_buttons(repo: str, number: int) -> list:
     key = issue_ref(repo, number)
     return [[
-        {"text": "Перезапустить", "callback_data": f"q:{key}"},
-        {"text": "Откатить", "callback_data": f"k:{key}"},
-        {"text": "Снять", "callback_data": f"x:{key}"},
+        {"text": "Очередь+", "callback_data": f"q:{key}"},
+        {"text": "Пауза", "callback_data": "c:pause"},
     ]]
 
 
@@ -2763,7 +2968,7 @@ def queue_abort(repo: str, number: int, kill=None, release=None, notify=None) ->
         data["queue"] = [item for item in data["queue"] if item is not found]
         save_workshop(data)
     release(repo, number)
-    notify(f"{repo}#{number} · откатил на ready")
+    notify(tg_card(tg_short_ref(repo, number), "откатил"))
     return {"ok": True, "queue": data["queue"], "aborted": True}
 
 
@@ -2896,7 +3101,7 @@ def queue_set_running(running: bool) -> dict:
     if not running:
         waiting = sum(1 for item in data.get("queue") or [] if item.get("status") == "waiting")
         extra = f" · ждут {waiting}" if waiting else ""
-        notify_safe(f"Автоном на паузе{extra}", buttons=tg_menu_buttons())
+        notify_safe(f"Очередь: пауза{extra}")
     return {"ok": True, "queue_running": running, "queue": data["queue"]}
 
 
