@@ -565,7 +565,7 @@ def doctor_payload() -> dict:
         ("claude", have("claude")),
         ("codex", have("codex")),
         ("grok", have("grok")),
-        ("cursor", have("agent")),
+        ("cursor", kind_cli_ok("cursor")),
         ("tmux", have("tmux")),
         ("telegram token", bool(os.environ.get("TELEGRAM_BOT_TOKEN"))),
         ("telegram chat", bool(os.environ.get("TELEGRAM_CHAT_ID"))),
@@ -751,6 +751,66 @@ def _help_text(binary: str) -> str:
     return "\n".join(chunks)
 
 
+def _resolved_binary(binary: str) -> str:
+    ensure_path()
+    path = shutil.which(binary)
+    if not path:
+        return ""
+    try:
+        return str(Path(path).resolve())
+    except OSError:
+        return path
+
+
+def _same_resolved(left: str, right: str) -> bool:
+    a, b = _resolved_binary(left), _resolved_binary(right)
+    return bool(a and b and a == b)
+
+
+def _cli_identity(help_text: str = "", version_text: str = "", resolved: str = "") -> str:
+    path = (resolved or "").replace("\\", "/").lower()
+    if "/.grok/" in path or "grok-linux" in path or "/grok/bin/" in path:
+        return "grok"
+    head = "\n".join((help_text or "").splitlines()[:16]).lower()
+    ver = (version_text or "").strip().lower()
+    help_l = (help_text or "").lower()
+    if ver.startswith("grok ") or "grok build tui" in head or "usage: grok " in head or "logged in with grok.com" in help_l:
+        return "grok"
+    blob = f"{head}\n{ver}"
+    if "cursor agent" in blob or "cursor.com" in blob or "anysphere" in blob:
+        return "cursor"
+    return ""
+
+
+def _probe_cli_identity(binary: str) -> str:
+    if not have(binary):
+        return ""
+    if binary != "grok" and _same_resolved(binary, "grok"):
+        return "grok"
+    resolved = _resolved_binary(binary)
+    help_text = _help_text(binary)
+    ver = run([binary, "--version"], check=False, timeout=8)
+    version_text = (ver.stdout or "") + "\n" + (ver.stderr or "")
+    return _cli_identity(help_text, version_text, resolved)
+
+
+def _cursor_mismatch_note(identity: str) -> str:
+    if identity == "grok":
+        return "agent — это Grok, не Cursor Agent"
+    return "нет Cursor Agent"
+
+
+def kind_cli_ok(kind: str) -> bool:
+    binary = KIND_BIN.get(kind, "")
+    if not binary or not have(binary):
+        return False
+    if kind != "cursor":
+        return True
+    if _same_resolved(binary, "grok"):
+        return False
+    return _probe_cli_identity(binary) == "cursor"
+
+
 _MODEL_TOKEN = re.compile(r"^[A-Za-z][A-Za-z0-9._+-]{1,80}$")
 _MODEL_SKIP = {
     "available", "default", "model", "models", "name", "id", "you", "the",
@@ -843,10 +903,33 @@ def _parse_efforts(text: str) -> list[str]:
 
 def probe_kind(kind: str) -> dict:
     binary = KIND_BIN[kind]
-    row = {"kind": kind, "installed": have(binary), "models": [], "efforts": [], "fast": False, "stale": False}
+    row = {
+        "kind": kind,
+        "installed": have(binary),
+        "models": [],
+        "efforts": [],
+        "fast": False,
+        "stale": False,
+        "identity": "",
+        "note": "",
+    }
     if not row["installed"]:
+        if kind == "cursor":
+            row["note"] = _cursor_mismatch_note("")
         return row
     help_text = _help_text(binary)
+    ver = run([binary, "--version"], check=False, timeout=8)
+    version_text = (ver.stdout or "") + "\n" + (ver.stderr or "")
+    resolved = _resolved_binary(binary)
+    identity = _cli_identity(help_text, version_text, resolved)
+    if kind == "cursor" and identity != "cursor":
+        if identity != "grok" and _same_resolved(binary, "grok"):
+            identity = "grok"
+        row["installed"] = False
+        row["identity"] = identity or "unknown"
+        row["note"] = _cursor_mismatch_note(identity)
+        return row
+    row["identity"] = identity or kind
     help_l = help_text.lower()
     if "--effort" in help_l or "reasoning effort" in help_l:
         row["efforts"] = _parse_efforts(help_text) or ["low", "high"]
@@ -874,10 +957,20 @@ def probe_kind(kind: str) -> dict:
 
 def merge_catalog_row(prev: dict, row: dict) -> dict:
     old = prev or {}
+    if not row.get("installed"):
+        return row
+    if old.get("identity") and row.get("identity") and old.get("identity") != row.get("identity"):
+        return row
+    if row.get("kind") == "cursor" and not row.get("models"):
+        old_models = [str(m) for m in old.get("models") or []]
+        if any(name.lower().startswith("grok-") for name in old_models):
+            return row
     if row.get("installed") and not row.get("models") and old.get("models"):
         out = dict(old)
         out["stale"] = True
         out["installed"] = True
+        if row.get("identity"):
+            out["identity"] = row["identity"]
         return out
     return row
 
@@ -898,11 +991,43 @@ def probe_catalog() -> dict:
     return data["catalog"]
 
 
+def sanitize_catalog(cached: dict, cursor_ok: bool | None = None) -> dict:
+    kinds = cached.get("kinds")
+    if not kinds:
+        return cached
+    cursor = kinds.get("cursor") or {}
+    if not cursor.get("installed"):
+        return cached
+    if cursor_ok is None:
+        cursor_ok = kind_cli_ok("cursor")
+    if cursor_ok:
+        return cached
+    cleaned = dict(cached)
+    cleaned_kinds = dict(kinds)
+    identity = cursor.get("identity") or "grok"
+    cleaned_kinds["cursor"] = {
+        "kind": "cursor",
+        "installed": False,
+        "models": [],
+        "efforts": [],
+        "fast": False,
+        "stale": False,
+        "identity": identity,
+        "note": _cursor_mismatch_note(identity),
+    }
+    cleaned["kinds"] = cleaned_kinds
+    return cleaned
+
+
 def load_catalog() -> dict:
     data = load_workshop()
     cached = data.get("catalog") or {}
     if cached.get("kinds"):
-        return cached
+        cleaned = sanitize_catalog(cached)
+        if cleaned != cached:
+            data["catalog"] = cleaned
+            save_workshop(data)
+        return cleaned
     return probe_catalog()
 
 
@@ -1294,7 +1419,7 @@ def orchestrate(reg: dict, repo: str) -> dict:
         die(f"project not cloned: {project['name']}")
     slot = slots_for(project["name"])["orchestrator"]
     kind = slot.get("kind") or "claude"
-    if not have(KIND_BIN[kind]):
+    if not kind_cli_ok(kind):
         die(f"{kind} CLI is not installed")
     session = orch_session(project["name"])
     prefix = f"orch {project['name']}"
@@ -2162,11 +2287,14 @@ def pick_agent() -> str:
     if preferred:
         kind = preferred if preferred in KIND_BIN else next((k for k, b in KIND_BIN.items() if b == preferred), "")
         binary = KIND_BIN.get(kind, preferred)
-        if not have(binary):
+        if kind:
+            if not kind_cli_ok(kind):
+                die(f"CORP_AGENT={preferred} is not installed")
+        elif not have(binary):
             die(f"CORP_AGENT={preferred} is not installed")
         return kind or preferred
     for kind, binary in KIND_BIN.items():
-        if have(binary):
+        if kind_cli_ok(kind):
             return kind
     die("no agent CLI found. Install claude, codex, grok, or cursor agent")
 
@@ -2270,6 +2398,8 @@ def agent_argv(kind: str, prompt: str, dest: Path, model: str = "", effort: str 
             cmd += ["--effort", "low"]
         return cmd
     if kind == "cursor":
+        if not kind_cli_ok("cursor"):
+            die("cursor CLI is not installed (agent is Grok or missing)")
         cmd = ["agent", "-p", prompt, "--force", "--trust", "--workspace", str(dest)]
         if model:
             cmd += ["--model", model]
@@ -2406,7 +2536,7 @@ def run_issue(
     fast = fast or bool(slot.get("fast"))
     if kind not in KIND_BIN:
         die(f"unknown agent {kind}")
-    if not have(KIND_BIN[kind]):
+    if not kind_cli_ok(kind):
         die(f"{kind} CLI is not installed ({KIND_BIN[kind]})")
     extra = _role_prompt(role, project["name"], names)
     claim(repo, number, kind, f"corp-claim: vps {kind} · {role}")

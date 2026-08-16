@@ -106,6 +106,33 @@ def main() -> None:
     assert kept["models"] == ["grok-4.6"] and kept["stale"]
     fresh = corp.merge_catalog_row({}, {"kind": "grok", "installed": True, "models": []})
     assert fresh["models"] == []
+    grok_help = "Grok Build TUI\n\nUsage: agent [OPTIONS] [PROMPT] [COMMAND]\n"
+    assert corp._cli_identity(grok_help, "grok 1.0.4 (d846eb93d9) [stable]", "/root/.grok/downloads/grok-linux-x86_64") == "grok"
+    cursor_help = "Cursor Agent\n\nUsage: agent [options] [command]\nhttps://cursor.com\n"
+    assert corp._cli_identity(cursor_help, "2026.1.0", "/usr/local/bin/agent") == "cursor"
+    assert corp._cli_identity("", "", "/home/corp/.local/bin/agent") == ""
+    assert corp._cursor_mismatch_note("grok") == "agent — это Grok, не Cursor Agent"
+    dropped = corp.merge_catalog_row(
+        {"kind": "cursor", "installed": True, "models": ["grok-4.6", "grok-4.5"], "identity": "grok"},
+        {"kind": "cursor", "installed": False, "models": [], "identity": "grok", "note": "agent — это Grok, не Cursor Agent"},
+    )
+    assert dropped["installed"] is False and dropped["models"] == []
+    no_stale_grok = corp.merge_catalog_row(
+        {"kind": "cursor", "installed": True, "models": ["grok-4.6"]},
+        {"kind": "cursor", "installed": True, "models": [], "identity": "cursor"},
+    )
+    assert no_stale_grok["models"] == []
+    cursor_keep = corp.merge_catalog_row(
+        {"kind": "cursor", "installed": True, "models": ["composer-2"], "identity": "cursor"},
+        {"kind": "cursor", "installed": True, "models": [], "identity": "cursor"},
+    )
+    assert cursor_keep["models"] == ["composer-2"] and cursor_keep["stale"]
+    wired = {"probed_at": "t", "kinds": {"cursor": {"kind": "cursor", "installed": True, "models": ["grok-4.6", "grok-4.5"]}}}
+    fixed = corp.sanitize_catalog(wired, cursor_ok=False)
+    assert fixed["kinds"]["cursor"]["installed"] is False and fixed["kinds"]["cursor"]["models"] == []
+    assert "Grok" in fixed["kinds"]["cursor"]["note"]
+    kept_real = corp.sanitize_catalog(wired, cursor_ok=True)
+    assert kept_real["kinds"]["cursor"]["models"] == ["grok-4.6", "grok-4.5"]
     claude = corp.agent_argv("claude", "p", Path("/tmp"), readonly=True)
     assert "--dangerously-skip-permissions" not in claude and "--allowedTools" in claude
     codex = corp.agent_argv("codex", "p", Path("/tmp"), readonly=True)
@@ -115,6 +142,11 @@ def main() -> None:
         raise AssertionError("grok readonly should die")
     except corp.CorpError:
         pass
+    try:
+        corp.agent_argv("cursor", "p", Path("/tmp"))
+        raise AssertionError("cursor should die without Cursor Agent")
+    except corp.CorpError as exc:
+        assert "cursor" in str(exc).lower()
     assert corp.pulse_label("claude", "") == "auto · claude"
     assert corp.pulse_label("claude", "sonnet") == "sonnet"
     assert corp.parse_json_array('noise [{"title":"x"}] tail') == [{"title": "x"}]

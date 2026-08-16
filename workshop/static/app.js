@@ -688,7 +688,7 @@ function modelChoices() {
     const row = catalog[kind] || {};
     const name = KIND_RU[kind] || kind;
     if (row.installed === false) {
-      out.push({ value: `${kind}:`, label: `${name} — нет на сервере`, disabled: true });
+      out.push({ value: `${kind}:`, label: `${name} — ${row.note || "нет на сервере"}`, disabled: true });
       return;
     }
     const models = row.models || [];
@@ -1326,7 +1326,8 @@ function optionList(values, selected, extra) {
 
 function kindStatus(kind) {
   const row = catalogKind(kind);
-  if (!row.installed) return ["nopill", "нет CLI"];
+  if (row.installed === false) return ["nopill", row.note || "нет CLI"];
+  if (!row.installed) return ["nopill", row.note || "нет CLI"];
   if (row.stale) return ["nopill", "кэш"];
   if (!(row.models || []).length) return ["nopill", "пусто"];
   return ["okpill", "готов"];
@@ -1334,6 +1335,9 @@ function kindStatus(kind) {
 
 function modelField(kind, selected, slot, role) {
   const row = catalogKind(kind);
+  if (row.installed === false) {
+    return `<span class="note">${escapeHtml(row.note || "нет CLI")}</span>`;
+  }
   const models = row.models || [];
   const attrs = slot ? `data-slot="${slot}" data-role="${role}"` : "";
   const select = `<select ${attrs} data-k="model">
@@ -1348,8 +1352,12 @@ function renderSettings() {
   $("max-parallel").value = state.max_parallel || 3;
   if ($("queue-retries")) $("queue-retries").value = state.queue_retries ?? 2;
   const catalog = (state.catalog && state.catalog.kinds) || {};
-  const probed = state.catalog && state.catalog.probed_at ? `каталог ${state.catalog.probed_at}` : "каталог ещё не снимали";
-  $("catalog-note").textContent = probed;
+  const notes = [];
+  if (state.catalog && state.catalog.probed_at) notes.push(`каталог ${state.catalog.probed_at}`);
+  Object.entries(catalog).forEach(([k, row]) => {
+    if (row && row.note) notes.push(`${k}: ${row.note}`);
+  });
+  $("catalog-note").textContent = notes.join(" · ") || "каталог ещё не снимали";
   $("profiles").innerHTML = (state.profiles || []).map((p, i) => {
     const kind = catalog[p.kind] || {};
     const efforts = kind.efforts || [];
