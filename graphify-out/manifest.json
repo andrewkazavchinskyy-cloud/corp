@@ -1,104 +1,134 @@
 {
   "bin/corp": {
-    "mtime": 1786838563.1136951,
-    "seen": 1786838802.415773,
-    "ast_hash": "0effcefda5f05c629a26ac1bd5d1b8cd",
+    "mtime": 1786915036.5752892,
+    "seen": 1786915148.680353,
+    "ast_hash": "7e31e3087376342cf2ab1ab55fa47d59",
     "semantic_hash": ""
   },
   "workshop/app.py": {
-    "mtime": 1786838334.8250518,
-    "seen": 1786838802.4157789,
-    "ast_hash": "931afb517ab93042ddc78e7400baef6e",
+    "mtime": 1786915036.5952892,
+    "seen": 1786915148.680364,
+    "ast_hash": "1690c1325feda0f6e6f5a6fe127c0666",
     "semantic_hash": ""
   },
   "workshop/static/app.js": {
-    "mtime": 1786837769.027457,
-    "seen": 1786838802.4157813,
-    "ast_hash": "b092ac3ace5f2ab83650e0bdd036022a",
+    "mtime": 1786915036.5992894,
+    "seen": 1786915148.6803658,
+    "ast_hash": "fd2f70ccb61d97169373f22ae763e396",
     "semantic_hash": ""
   },
   "workshop/test_logic.py": {
-    "mtime": 1786838431.2093236,
-    "seen": 1786838802.4157832,
-    "ast_hash": "a1b9d5ce7922eee70bbb3006f08eea11",
+    "mtime": 1786915036.5962894,
+    "seen": 1786915148.680367,
+    "ast_hash": "bbf67d1cda7ecf559f61d4ae05511d2b",
     "semantic_hash": ""
   },
   ".github/ISSUE_TEMPLATE/ready.yml": {
     "mtime": 1786797663.209478,
-    "seen": 1786838802.415785,
+    "seen": 1786915148.6803687,
     "ast_hash": "ff3497a48b53d7b906a3fc24121a09b9",
     "semantic_hash": ""
   },
   "AGENTS.md": {
     "mtime": 1786837223.7019186,
-    "seen": 1786838802.4157863,
+    "seen": 1786915148.68037,
     "ast_hash": "050815a3e7c465f94c92346c0f945df8",
     "semantic_hash": ""
   },
   "CLAUDE.md": {
     "mtime": 1786797663.2104778,
-    "seen": 1786838802.4157877,
+    "seen": 1786915148.680372,
     "ast_hash": "d0480993e76a1f68e4e513e6e40d845b",
     "semantic_hash": ""
   },
   "HARNESS.md": {
-    "mtime": 1786837223.7019186,
-    "seen": 1786838802.4157891,
-    "ast_hash": "45721721489273f4c4e16fe71f5c3315",
+    "mtime": 1786915036.5782893,
+    "seen": 1786915148.6803734,
+    "ast_hash": "80fda373c4f44098bbe3ef59acb70f2b",
     "semantic_hash": ""
   },
   "README.md": {
-    "mtime": 1786837223.7019186,
-    "seen": 1786838802.4157906,
-    "ast_hash": "f3cd80b31497cdfb8e0f2ec31cb39d7f",
+    "mtime": 1786839376.0983963,
+    "seen": 1786915148.6803749,
+    "ast_hash": "6667a15e7459a2fbea708b104490d9e0",
     "semantic_hash": ""
   },
   "SERVER.md": {
-    "mtime": 1786837223.7019186,
-    "seen": 1786838802.4157915,
-    "ast_hash": "992f56e9fbb3d8b804a39bdc3b990e5a",
+    "mtime": 1786839371.285377,
+    "seen": 1786915148.6803763,
+    "ast_hash": "e660ea37c8c64aba9f9a288569b2c332",
     "semantic_hash": ""
   },
   "docs/WORKSHOP.md": {
-    "mtime": 1786837825.5416164,
-    "seen": 1786838802.415793,
-    "ast_hash": "4d060745181b26a6c9f3df3abf732bcc",
+    "mtime": 1786915036.5812893,
+    "seen": 1786915148.680379,
+    "ast_hash": "50b4b9d23ddd4b296f35ba2fd4cd9d50",
     "semantic_hash": ""
   },
   "memory/README.md": {
     "mtime": 1786797663.2104778,
-    "seen": 1786838802.4157946,
+    "seen": 1786915148.68038,
     "ast_hash": "0c7765852b265037eb2489ad1c454686",
     "semantic_hash": ""
   },
   "memory/sessions/2026-08-15.md": {
     "mtime": 1786837223.7099185,
-    "seen": 1786838802.415796,
+    "seen": 1786915148.680382,
     "ast_hash": "244415859eb5692785f53e8c4bc9454b",
     "semantic_hash": ""
   },
   "memory/sessions/2026-08-16.md": {
-    "mtime": 1786838697.5590742,
-    "seen": 1786838802.4157975,
-    "ast_hash": "06ac083e94398d0564d5b91bea57b899",
+    "mtime": 1786915036.5912893,
+    "seen": 1786915148.6803832,
+    "ast_hash": "eed35576ed0ab7eac4a7fee706a3b234",
     "semantic_hash": ""
   },
   "workshop/preview.html": {
-    "mtime": 1786837223.7109184,
-    "seen": 1786838802.415799,
-    "ast_hash": "98d26cc56f4ca7976ea6d0903ac51c87",
+    "mtime": 1786915036.5962894,
+    "seen": 1786915148.6803865,
+    "ast_hash": "df406acc4a017d785db47966f97fb2e8",
     "semantic_hash": ""
   },
   "workshop/requirements.txt": {
     "mtime": 1786837223.7109184,
-    "seen": 1786838802.4158,
+    "seen": 1786915148.6803875,
     "ast_hash": "254a1e080e8325f061042162ae9f2ec9",
     "semantic_hash": ""
   },
   "workshop/static/index.html": {
-    "mtime": 1786837759.2944295,
-    "seen": 1786838802.4158015,
-    "ast_hash": "75bce728f0c51d57dfbe2e0fb0c435e4",
+    "mtime": 1786915036.5992894,
+    "seen": 1786915148.6803887,
+    "ast_hash": "34f05f9dc3ce59cd626d419f07b1e54b",
+    "semantic_hash": ""
+  },
+  "deploy/agent-isolation-smoke.sh": {
+    "mtime": 1786915036.5882893,
+    "seen": 1786915148.6803586,
+    "ast_hash": "aa90b800af2a474841302113ea0d15f6",
+    "semantic_hash": ""
+  },
+  "deploy/corp-agent-exec": {
+    "mtime": 1786915036.5882893,
+    "seen": 1786915148.680361,
+    "ast_hash": "506523be8b87a0485b46bd51591018a3",
+    "semantic_hash": ""
+  },
+  "deploy/provision-agent-identity.sh": {
+    "mtime": 1786915036.5882893,
+    "seen": 1786915148.6803625,
+    "ast_hash": "6ba50453edff4b17578504fac2ebf27d",
+    "semantic_hash": ""
+  },
+  "docs/AGENT_ISOLATION.md": {
+    "mtime": 1786915036.5842893,
+    "seen": 1786915148.6803772,
+    "ast_hash": "e00f54489f9f86fb4fb9183c55b5a68b",
+    "semantic_hash": ""
+  },
+  "memory/sessions/2026-08-17.md": {
+    "mtime": 1786915036.5912893,
+    "seen": 1786915148.6803844,
+    "ast_hash": "08b23587112a48c49ad02aa2afa01f4f",
     "semantic_hash": ""
   }
 }
