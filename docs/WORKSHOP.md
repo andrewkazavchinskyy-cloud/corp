@@ -79,30 +79,37 @@ Drafts include body, why, vs PRD, and vs open issues for Approve/Skip.
 
 ## Design / QA
 
-`design`: preview/docs only, does not close. On corp, design may change
-`workshop/static`.
-`qa`: opt-in. qa-ok → `corp close` + graphify. qa-fail → ready+qa-fail.
-No `qa` label: Build closes as today.
+Every card, VPS or local, goes **build or design → QA → Done**.
+Build and design must not close. After they push, the card moves to the
+QA column (`in-qa` label). QA pass closes the issue (Done + graphify).
+QA fail: `ready` + `qa-fail`, comment with fixes, automatic rework, then
+QA again. Design is the same gate. Board columns:
+backlog · ready · ход · QA · done.
+Drag to Done from ready/ход sends the card to QA, not close.
 
 ## Telegram
 
-Automatic runs only. One chat_id. Immediate: start, closed, failed, N drafts.
+Automatic runs only. One chat_id. Immediate: start, closed, failed, incomplete,
+hung, retry, N drafts, and «нужно твоё действие» (GitHub/auth/pin/CLI).
 Pulse every 15 minutes: `repo#n · minutes · model` + 3 log lines ≤200 chars.
-Approve/Skip one issue per tap. Workshop duplicates Approve.
+Buttons: Approve/Skip drafts; Перезапустить / Откатить / Снять a queue card.
+Commands: /start /status /queue /running /doctor /board /drafts /go /pause
+/retry #n /abort #n. Persistent reply keyboard: Сейчас, Очередь, Бежит,
+Сервер, Доска, Черновики, Автоном, Пауза. Aliases work as typed text.
+Workshop duplicates those actions.
+
+## Autopilot
+
+Three steps on the Автоном tab: propose a draft (not GitHub), Approve, then
+queue + start. Per-card profile when enqueueing many. Failed/hung cards show
+the error, Restart, Rollback (kill tmux, labels back to ready), Console.
+`wait_tmux` ending is not success unless QA closed the Issue. Reap recovers
+`running` without tmux and `done` that left the card open. Agent crashes
+requeue themselves with the error on the card and in Telegram. After the
+retry cap, a 10-minute pause, then another try. Need-human only for
+GitHub/auth/self/CLI.
 
 ## Locks
 
 One writing runner per repo. Orchestrator may run in parallel.
 `self` blocks VPS writers and orchestrator. Different pins may run in parallel.
-
-## Runner
-
-Each run gets a `run_id`, its own log under `~/.config/corp/runs/`, and a
-result row in `~/.config/corp/runs.json` (repo, issue, kind, started,
-finished, exit code, status). Queue/label/Telegram success requires a
-confirmed `exit code == 0` and the expected GitHub state — a crash never
-reports as success. Queue status: `waiting`, `running`, `done`, `failed`,
-`skipped`, `interrupted`. On workshop startup, and before every queue tick,
-rows stuck on `running` with no live in-process watcher and no matching
-tmux session are closed out as `interrupted` — never silently left stuck,
-never auto-relaunched. Console tab shows recent runs from `runs.json`.

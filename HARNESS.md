@@ -115,8 +115,10 @@ agent subscription.
 | `in-progress` + `via:claude` / `via:codex` / `via:grok` / `via:cursor` | VPS runner |
 | `blocked` | Skip until the blocker is named |
 | `P0` `P1` `P2` | Priority |
-| `design` | Design artifacts only |
-| `qa` / `qa-fail` | Opt-in QA gate |
+| `design` | Design artifacts; still must pass QA |
+| `qa` | Issue kind: the work itself is QA |
+| `in-qa` | In the QA column. Gate after build/design. QA closes on pass. |
+| `qa-fail` | QA returned the card to ready with fixes |
 | `bug` `prd` `research` | Optional type |
 
 Claim before the first edit: `corp take --issue owner/repo#n` (you) or a

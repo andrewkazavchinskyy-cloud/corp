@@ -98,14 +98,14 @@
     }
     .chip.on { background: var(--lift2); color: var(--text); }
     .colnav { display: none; margin-bottom: 10px; }
-    .frame.phone .colnav { display: grid; grid-template-columns: repeat(4,1fr); gap: 4px; }
+    .frame.phone .colnav { display: grid; grid-template-columns: repeat(5,1fr); gap: 4px; }
     .colnav button {
       border: 1px solid var(--line); background: var(--lift); color: var(--dim);
       border-radius: 10px; min-height: 40px; font-size: 11px; font-weight: 600;
     }
     .colnav button.on { background: var(--lift2); color: var(--text); }
 
-    .board { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+    .board { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
     .frame.phone .board { display: block; }
     .col { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 8px; min-height: 240px; }
     .frame.phone .col { display: none; }
@@ -299,6 +299,7 @@
                   <button type="button" data-col="Backlog">Backlog</button>
                   <button type="button" data-col="Ready" class="on">Ready</button>
                   <button type="button" data-col="In Progress">Ход</button>
+                  <button type="button" data-col="QA">QA</button>
                   <button type="button" data-col="Done">Done</button>
                 </div>
                 <div class="work">
@@ -474,6 +475,7 @@
       { col: "Ready", project: "corp", n: 1, title: "Graphify active projects", tags: ["P0", "ready"], p0: true, open: true },
       { col: "Ready", project: "clarity", n: 16, title: "Auth session restore", tags: ["ready", "очередь"] },
       { col: "Ready", project: "clarity", n: 22, title: "Billing webhook idempotency", tags: ["ready"] },
+      { col: "QA", project: "corp", n: 46, title: "Автоном: исходы запуска", tags: ["qa"], vps: true },
       { col: "In Progress", project: "clarity", n: 20, title: "Workspace switcher", tags: ["VPS · Claude"], vps: true },
       { col: "In Progress", project: "project-radar", n: 7, title: "Digest layout", tags: ["я · Mac mini"], me: true },
       { col: "Done", project: "corp", n: 2, title: "Bootstrap labels and doctor", tags: ["граф"] },
@@ -506,7 +508,7 @@
       return c.project === filter;
     }
     function renderBoard() {
-      const cols = ["Backlog", "Ready", "In Progress", "Done"];
+      const cols = ["Backlog", "Ready", "In Progress", "QA", "Done"];
       boardEl.innerHTML = cols.map((name) => {
         const list = cards.filter((c) => c.col === name && visible(c));
         return `<div class="col${name === phoneCol ? " show" : ""}" data-col="${name}"><div class="col-h">${name} <i>${list.length}</i></div>${

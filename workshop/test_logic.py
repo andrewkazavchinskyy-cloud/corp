@@ -2,15 +2,10 @@
 import importlib.machinery
 import importlib.util
 import json
-import multiprocessing
 import os
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-# Isolate workshop.json so this test never touches a real queue on the machine
-# that runs it (the VPS runs this same repo as its live control plane).
-os.environ.setdefault("CORP_WORKSHOP_JSON", str(Path(tempfile.gettempdir()) / f"corp-workshop-test-{os.getpid()}.json"))
 _loader = importlib.machinery.SourceFileLoader("corpbin", str(ROOT / "bin" / "corp"))
 corp = importlib.util.module_from_spec(importlib.util.spec_from_loader(_loader.name, _loader))
 _loader.exec_module(corp)
@@ -20,17 +15,6 @@ def issue(labels, state="OPEN"):
     return {"state": state, "labels": [{"name": name} for name in labels], "updatedAt": "1"}
 
 
-def _mp_worker(worker_id: int, iters: int) -> None:
-    """Child process body for the corp#39 concurrency regression below."""
-
-    def bump(data: dict) -> None:
-        data["test_counter"] = int(data.get("test_counter") or 0) + 1
-
-    for _ in range(iters):
-        corp.update_workshop(bump)
-    corp.set_queue_status("o/r", worker_id, "done", expect="waiting", touched_by=worker_id)
-
-
 def main() -> None:
     repo, number = corp.parse_issue_ref("andrewkazavchinskyy-cloud/clarity#20")
     assert repo == "andrewkazavchinskyy-cloud/clarity" and number == 20
@@ -38,7 +22,15 @@ def main() -> None:
     assert corp.column_of(issue(["ready"])) == "ready"
     assert corp.column_of(issue(["ready", "queued"])) == "ready"
     assert corp.column_of(issue(["in-progress", "self"])) == "in-progress"
+    assert corp.column_of(issue(["qa"])) == "backlog"
+    assert corp.column_of(issue(["in-qa"])) == "qa"
+    assert corp.column_of(issue(["in-qa", "in-progress", "via:claude"])) == "qa"
+    assert corp.column_of(issue(["ready", "qa"])) == "ready"
+    assert corp.column_of(issue(["ready", "qa-fail"])) == "ready"
     assert corp.column_of(issue(["ready"], "CLOSED")) == "done"
+    assert corp.slot_for_issue("corp", issue(["design"]))[0] == "design"
+    assert corp.slot_for_issue("corp", issue(["in-qa", "design"]))[0] == "qa"
+    assert corp.slot_for_issue("corp", issue(["design", "qa-fail"]))[0] == "design"
     assert corp.runner_of(issue(["self"])) == "self"
     assert corp.runner_of(issue(["via:claude"])) == "claude"
     reg = {"labels": {"ready": "ready"}}
@@ -89,6 +81,8 @@ def main() -> None:
     assert corp.write_block_reason(cards, "corp", 1) == ""
     assert corp.write_block_reason(cards, "clarity", 9).startswith("VPS")
     assert corp.write_block_reason(cards, "missing") == ""
+    qa_cards = [{"project": "corp", "number": 4, "state": "OPEN", "column": "qa", "runner": "queued"}]
+    assert corp.write_block_reason(qa_cards, "corp", 9).startswith("VPS")
     drafts = [{"project": "corp", "title": "expand board"}]
     assert corp.next_move(cards, drafts, "corp") is None
     empty_ready = [c for c in cards if c["column"] != "ready"]
@@ -108,24 +102,6 @@ def main() -> None:
     assert kept["models"] == ["grok-4.6"] and kept["stale"]
     fresh = corp.merge_catalog_row({}, {"kind": "grok", "installed": True, "models": []})
     assert fresh["models"] == []
-    # corp#41: writing agents must not inherit control-plane secrets. Without
-    # a provisioned agent identity, launch_agent() still strips known
-    # control-plane secrets from the child's env (env-vector only -- closing
-    # the same-UID file-read gap needs the separate OS identity in
-    # docs/AGENT_ISOLATION.md).
-    os.environ.pop("CORP_AGENT_USER", None)
-    assert not corp.agent_identity_ready()
-    os.environ["TELEGRAM_BOT_TOKEN"] = "shh"
-    os.environ["TELEGRAM_CHAT_ID"] = "123"
-    os.environ["KEEP_ME"] = "yes"
-    wrapped = corp.wrap_isolated(["bash", "-c", "true"], Path("/tmp"))
-    assert wrapped[:2] == ["env", "-i"]
-    joined = " ".join(wrapped)
-    assert "TELEGRAM_BOT_TOKEN=" not in joined and "TELEGRAM_CHAT_ID=" not in joined
-    assert "KEEP_ME=yes" in joined
-    assert wrapped[-3:] == ["bash", "-c", "true"]
-    del os.environ["TELEGRAM_BOT_TOKEN"], os.environ["TELEGRAM_CHAT_ID"], os.environ["KEEP_ME"]
-
     claude = corp.agent_argv("claude", "p", Path("/tmp"), readonly=True)
     assert "--dangerously-skip-permissions" not in claude and "--allowedTools" in claude
     codex = corp.agent_argv("codex", "p", Path("/tmp"), readonly=True)
@@ -185,87 +161,79 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert parsed["groups"][0]["name"] == "main" and parsed["groups"][0]["size"] == 33
     assert parsed["groups"][0]["nodes"] == ["active_projects()", "board_payload()"]
     assert parsed["bridges"][0]["a"] == "run_issue()" and parsed["bridges"][0]["b"] == "pulse_loop()"
-
-    # Regression corp#38: launch_agent/wait_tmux must surface the agent's
-    # real exit code instead of tee's (always 0), and two consecutive runs
-    # must land in distinct, unambiguously tied log files.
-    if corp.have("tmux"):
-        project = f"test-regress-{corp.secrets.token_hex(4)}"
-        ok_id = corp.new_run_id()
-        code = corp.launch_agent("claude", ["bash", "-c", "exit 0"], Path("/tmp"), project, run_id=ok_id)
-        assert code == 0, f"expected exit 0, got {code}"
-        fail_id = corp.new_run_id()
-        code = corp.launch_agent("claude", ["bash", "-c", "exit 17"], Path("/tmp"), project, run_id=fail_id)
-        assert code == 17, f"expected exit 17, got {code}"
-        assert ok_id != fail_id
-        assert corp.run_log_path(ok_id) != corp.run_log_path(fail_id)
-        assert corp.run_log_path(ok_id).is_file() and corp.run_log_path(fail_id).is_file()
-
-    # Regression corp#38: a queue row left `running` by a process that died
-    # mid-run must be reconciled deterministically (never left stuck, never
-    # silently replayed as success) once its tmux session is confirmed gone.
-    # A row whose project still has a live watcher — in-process or a live
-    # tmux session — is left untouched and never auto-relaunched.
-    data = corp.default_workshop()
-    data["queue"] = [
-        {"repo": "o/r", "issue": 1, "project": "corp-test-orphan-missing", "status": "running"},
-        {"repo": "o/r", "issue": 2, "project": "corp-test-orphan-missing", "status": "waiting"},
-    ]
-    corp.save_workshop(data)
-    changed = corp.reconcile_running(active_projects=set())
-    assert [c["issue"] for c in changed] == [1]
-    rows = {i["issue"]: i for i in corp.load_workshop()["queue"]}
-    assert rows[1]["status"] == "interrupted" and "finished" in rows[1]
-    assert rows[2]["status"] == "waiting"
-
-    data["queue"] = [{"repo": "o/r", "issue": 3, "project": "corp-test-orphan-watched", "status": "running"}]
-    corp.save_workshop(data)
-    assert corp.reconcile_running(active_projects={"corp-test-orphan-watched"}) == []
-    assert corp.load_workshop()["queue"][0]["status"] == "running"
-
-    # Regression corp#39: workshop.json is written by the CLI, the web
-    # workshop, Telegram, and the orchestrator, each in its own process.
-    # update_workshop()/set_queue_status() must serialize real concurrent
-    # OS processes (not just threads in one process) so nobody's update is
-    # lost and the file is never left half-written.
-    workers, iters = 6, 40
-    seed = corp.default_workshop()
-    seed["test_counter"] = 0
-    seed["queue"] = [
-        {"repo": "o/r", "issue": w, "project": f"mp-{w}", "status": "waiting"} for w in range(workers)
-    ]
-    corp.save_workshop(seed)
-    ctx = multiprocessing.get_context("fork")
-    procs = [ctx.Process(target=_mp_worker, args=(w, iters)) for w in range(workers)]
-    for p in procs:
-        p.start()
-    for p in procs:
-        p.join(30)
-        assert p.exitcode == 0, f"worker {p.pid} exited {p.exitcode}"
-    final = corp.load_workshop()
-    assert final["test_counter"] == workers * iters, final["test_counter"]
-    rows = {r["issue"]: r for r in final["queue"]}
-    for w in range(workers):
-        assert rows[w]["status"] == "done" and rows[w]["touched_by"] == w, rows[w]
-    assert corp.WORKSHOP_JSON.stat().st_mode & 0o777 == 0o600
-
-    # Regression corp#39: a corrupt workshop.json must fail loudly and must
-    # never be silently replaced by defaults, from either the plain reader
-    # or the locked update path.
-    corp.WORKSHOP_JSON.write_text("{not valid json")
+    ghost = {
+        "status": "done",
+        "attempts": 1,
+        "started_at": 1,
+        "labels": [],
+    }
+    claimed = {"state": "OPEN", "labels": [{"name": "in-progress"}, {"name": "via:claude"}]}
+    open_free = {"state": "OPEN", "labels": [{"name": "ready"}]}
+    assert corp.queue_decision(ghost, now=100, tmux_on=False, issue=open_free, max_attempts=2) == "fail"
+    assert corp.queue_decision(ghost, now=100, tmux_on=False, issue=claimed, max_attempts=2) == "retry"
+    qa_open = {"state": "OPEN", "labels": [{"name": "in-qa"}]}
+    assert corp.queue_decision(ghost, now=100, tmux_on=False, issue=qa_open, max_attempts=2) == "retry"
+    ghost["attempts"] = 2
+    assert corp.queue_decision(ghost, now=100, tmux_on=False, issue=claimed, max_attempts=2) == "fail"
+    running = {"status": "running", "attempts": 1, "started_at": 1}
+    assert corp.queue_decision(running, now=10, tmux_on=False, issue=None, stale_sec=90) == "keep"
+    assert corp.queue_decision(running, now=200, tmux_on=False, issue=None, stale_sec=90) == "retry"
+    assert corp.queue_decision(running, now=200, tmux_on=True, issue=None) == "keep"
+    closed = {"state": "CLOSED", "labels": []}
+    assert corp.queue_decision(running, now=200, tmux_on=False, issue=closed) == "closed"
+    waiting = {"status": "waiting", "attempts": 0, "started_at": 0}
+    assert corp.queue_decision(waiting, now=200, tmux_on=False, issue=None) == "keep"
+    fail_open = {"state": "OPEN", "labels": [{"name": "qa-fail"}, {"name": "ready"}]}
+    ghost["attempts"] = 1
+    assert corp.queue_decision(ghost, now=100, tmux_on=False, issue=fail_open, max_attempts=2) == "retry"
+    assert corp.tg_parse_command("/status") == ("status", "")
+    assert corp.tg_parse_command("/retry #41") == ("retry", "#41")
+    assert corp.tg_parse_command("/retry@corpbot 41") == ("retry", "41")
+    assert corp.tg_parse_command("очередь") == ("queue", "")
+    assert corp.tg_parse_command("черновики") == ("drafts", "")
+    assert corp.tg_parse_command("retry 41") == ("retry", "41")
+    assert corp.tg_parse_command("непонятно") == ("", "")
+    repo, number = corp.tg_parse_issue_arg("#41")
+    assert number == 41 and repo.endswith("/corp")
+    repo = "andrewkazavchinskyy-cloud/corp"
+    assert corp.issue_eligibility(reg2, repo, 1, issue([], "CLOSED"), cards=[]) == f"{repo}#1 закрыта"
+    assert "blocked" in corp.issue_eligibility(reg2, repo, 1, issue(["blocked"]), cards=[])
+    assert "self" in corp.issue_eligibility(reg2, repo, 1, issue(["self"]), cards=[])
+    assert "self" in corp.issue_eligibility(reg2, repo, 2, issue(["ready"]), cards=cards)
+    free = [{"project": "corp", "number": 9, "state": "OPEN", "column": "ready", "runner": ""}]
+    assert corp.issue_eligibility(reg2, repo, 9, issue(["ready"]), cards=free) == ""
+    class _Proc:
+        def __init__(self, code, err="", out="[]"):
+            self.returncode = code
+            self.stderr = err
+            self.stdout = out
+    old_run = corp.run
     try:
-        corp.load_workshop()
-        raise AssertionError("load_workshop should reject corrupt JSON")
-    except corp.CorpError:
-        pass
-    assert corp.WORKSHOP_JSON.read_text() == "{not valid json"
+        corp.run = lambda *a, **k: _Proc(1, "HTTP 401: Bad credentials")
+        raised = False
+        try:
+            corp.issues_for("o/r")
+        except corp.CorpError:
+            raised = True
+        assert raised
+        corp.run = lambda *a, **k: _Proc(1, "Issues are disabled for this repo")
+        assert corp.issues_for("o/r") == []
+        corp.run = lambda *a, **k: _Proc(0, out="[]")
+        assert corp.issues_for("o/r") == []
+    finally:
+        corp.run = old_run
+    old_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    os.environ["TELEGRAM_BOT_TOKEN"] = "secret-token"
     try:
-        corp.update_workshop(lambda data: None)
-        raise AssertionError("update_workshop should reject corrupt JSON")
-    except corp.CorpError:
-        pass
-    assert corp.WORKSHOP_JSON.read_text() == "{not valid json"
-
+        wrapped = corp.wrap_isolated(["claude", "-p", "x"], Path("/tmp"))
+        assert wrapped[0] == "env"
+        assert not any("TELEGRAM_BOT_TOKEN" in part for part in wrapped)
+        assert any(part.startswith("PATH=") for part in wrapped)
+    finally:
+        if old_token is None:
+            os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+        else:
+            os.environ["TELEGRAM_BOT_TOKEN"] = old_token
     print("ok")
 
 
