@@ -30,7 +30,12 @@ No first issue. Graphify after first close. Pin immediately.
 
 ## Access
 
-Settings: add another Passkey while logged in. Logout ends the session.
+Settings: add another Passkey while logged in. Logout ends this session.
+Выйти везде revokes every session. Recovery-token enroll does the same.
+Sessions last 7 days from create; WebAuthn challenges last 5 minutes.
+Expired rows are deleted server-side. Cookie max-age matches the session.
+Origin is an exact scheme+host+port match. `X-Forwarded-Proto` is trusted
+only from loopback (Tailscale Serve). Extra origins: `CORP_WORKSHOP_ORIGINS`.
 Lost phone or a new device without a session: `corp workshop-token` on the
 VPS, then register a new Passkey on the gate. Existing keys stay.
 Sheet: close, ready, backlog, and drop `self` on phone and desktop.

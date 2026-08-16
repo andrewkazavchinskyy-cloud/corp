@@ -3,12 +3,16 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import sqlite3
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 _loader = importlib.machinery.SourceFileLoader("corpbin", str(ROOT / "bin" / "corp"))
 corp = importlib.util.module_from_spec(importlib.util.spec_from_loader(_loader.name, _loader))
 _loader.exec_module(corp)
+_auth_loader = importlib.machinery.SourceFileLoader("auth_policy", str(ROOT / "workshop" / "auth_policy.py"))
+auth = importlib.util.module_from_spec(importlib.util.spec_from_loader(_auth_loader.name, _auth_loader))
+_auth_loader.exec_module(auth)
 
 
 def issue(labels, state="OPEN"):
@@ -234,6 +238,54 @@ Nodes (33): active_projects(), board_payload() (+31 more)
             os.environ.pop("TELEGRAM_BOT_TOKEN", None)
         else:
             os.environ["TELEGRAM_BOT_TOKEN"] = old_token
+    now = 1_000_000.0
+    assert auth.session_valid(now - 10, now)
+    assert not auth.session_valid(now - auth.SESSION_TTL_SEC - 1, now)
+    assert auth.challenge_valid(now - 60, now)
+    assert not auth.challenge_valid(now - auth.CHALLENGE_TTL_SEC - 1, now)
+    assert auth.trusted_scheme("http", "https", True) == "https"
+    assert auth.trusted_scheme("http", "https", False) == "http"
+    assert auth.origin_allowed("https://corp.example.ts.net", "corp.example.ts.net", "https")
+    assert not auth.origin_allowed("https://corp.example.ts.net.evil.com", "corp.example.ts.net", "https")
+    assert not auth.origin_allowed("https://evil.com", "corp.example.ts.net", "https")
+    assert not auth.origin_allowed("https://corp.example.ts.net.evil.com", "corp.example.ts.net.evil.com", "http")
+    assert auth.origin_allowed("http://127.0.0.1:8787", "127.0.0.1:8787", "http")
+    assert auth.origin_allowed("http://localhost:8787", "127.0.0.1:8787", "http")
+    assert not auth.origin_allowed("http://127.0.0.1:8787/extra", "127.0.0.1:8787", "http")
+    assert auth.origin_allowed(
+        "https://extra.example",
+        "127.0.0.1:8787",
+        "http",
+        ["https://extra.example"],
+    )
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE sessions (token TEXT PRIMARY KEY, created REAL);
+        CREATE TABLE challenges (token TEXT PRIMARY KEY, kind TEXT, challenge BLOB, created REAL);
+        """
+    )
+    conn.execute("INSERT INTO sessions(token, created) VALUES('old', ?)", (now - auth.SESSION_TTL_SEC - 5,))
+    conn.execute("INSERT INTO sessions(token, created) VALUES('live', ?)", (now - 10,))
+    conn.execute(
+        "INSERT INTO challenges(token, kind, challenge, created) VALUES('fresh', 'auth', ?, ?)",
+        (b"chal", now - 10),
+    )
+    conn.execute(
+        "INSERT INTO challenges(token, kind, challenge, created) VALUES('stale', 'auth', ?, ?)",
+        (b"old", now - auth.CHALLENGE_TTL_SEC - 5),
+    )
+    auth.prune_auth_tables(conn, now)
+    tokens = {row["token"] for row in conn.execute("SELECT token FROM sessions")}
+    assert tokens == {"live"}
+    first = auth.take_challenge(conn, "fresh", ("auth",), now)
+    assert first == (b"chal", "auth")
+    assert auth.take_challenge(conn, "fresh", ("auth",), now) is None
+    assert auth.take_challenge(conn, "stale", ("auth",), now) is None
+    conn.execute("INSERT INTO sessions(token, created) VALUES('other', ?)", (now,))
+    assert auth.delete_all_sessions(conn) >= 1
+    assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
     print("ok")
 
 

@@ -229,6 +229,18 @@ $("btn-logout").onclick = async () => {
   showGate(true);
 };
 
+$("btn-logout-all").onclick = async () => {
+  if (!window.confirm("Выйти на всех устройствах?")) return;
+  $("auth-note").textContent = "";
+  try {
+    await api("/api/auth/logout-all", {});
+  } catch (err) {
+    $("auth-note").textContent = err.message || "не вышло";
+    return;
+  }
+  showGate(true);
+};
+
 function visibleCards() {
   const f = currentFilter();
   const cards = (state.cards || []).filter((c) => f === "all" || c.project === f);

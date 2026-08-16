@@ -31,6 +31,18 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
+from auth_policy import (
+    SESSION_TTL_SEC,
+    delete_all_sessions,
+    extra_origins_from_env,
+    is_loopback_host,
+    origin_allowed,
+    prune_auth_tables,
+    session_valid,
+    take_challenge,
+    trusted_scheme,
+)
+
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = Path(__file__).resolve().parent / "static"
 CONFIG = Path.home() / ".config" / "corp"
@@ -81,13 +93,30 @@ def cred_count() -> int:
         return conn.execute("SELECT COUNT(*) FROM credentials").fetchone()[0]
 
 
+def client_host(request: Request) -> str:
+    if request.client and request.client.host:
+        return request.client.host
+    return ""
+
+
+def request_scheme(request: Request) -> str:
+    return trusted_scheme(
+        request.url.scheme,
+        request.headers.get("x-forwarded-proto"),
+        is_loopback_host(client_host(request)),
+    )
+
+
 def session_ok(request: Request) -> bool:
     token = request.cookies.get(COOKIE)
     if not token:
         return False
+    now = time.time()
     with db() as conn:
-        row = conn.execute("SELECT token FROM sessions WHERE token=?", (token,)).fetchone()
-    return bool(row)
+        prune_auth_tables(conn, now)
+        row = conn.execute("SELECT token, created FROM sessions WHERE token=?", (token,)).fetchone()
+        conn.commit()
+    return bool(row) and session_valid(row["created"], now)
 
 
 def set_session(response: JSONResponse) -> None:
@@ -95,13 +124,37 @@ def set_session(response: JSONResponse) -> None:
     with db() as conn:
         conn.execute("INSERT INTO sessions(token, created) VALUES(?, ?)", (token, time.time()))
         conn.commit()
-    response.set_cookie(COOKIE, token, httponly=True, samesite="lax", secure=True, path="/")
+    response.set_cookie(
+        COOKIE,
+        token,
+        max_age=SESSION_TTL_SEC,
+        httponly=True,
+        samesite="lax",
+        secure=True,
+        path="/",
+    )
+
+
+def revoke_sessions() -> None:
+    with db() as conn:
+        delete_all_sessions(conn)
+        conn.commit()
+
+
+def consume_challenge(token: str, kinds: tuple[str, ...]) -> tuple[bytes, str] | None:
+    now = time.time()
+    with db() as conn:
+        prune_auth_tables(conn, now)
+        taken = take_challenge(conn, token, kinds, now)
+        conn.commit()
+    return taken
 
 
 def host_parts(request: Request) -> tuple[str, str]:
-    host = (request.headers.get("host") or "localhost").split(":")[0]
-    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
-    origin = request.headers.get("origin") or f"{proto}://{request.headers.get('host')}"
+    host_header = request.headers.get("host") or "localhost"
+    host = host_header.split(":")[0]
+    proto = request_scheme(request)
+    origin = request.headers.get("origin") or f"{proto}://{host_header}"
     return host, origin
 
 
@@ -120,18 +173,29 @@ def call(fn, *args, **kwargs):
 def check_origin(request: Request) -> None:
     if request.method in {"GET", "HEAD", "OPTIONS"}:
         return
-    host, origin = host_parts(request)
-    if origin and host not in origin:
+    origin = (request.headers.get("origin") or "").strip()
+    host_header = request.headers.get("host") or "localhost"
+    if not origin_allowed(origin, host_header, request_scheme(request), extra_origins_from_env()):
         raise HTTPException(403, "bad origin")
 
 
 @app.middleware("http")
 async def gate(request: Request, call_next):
     path = request.url.path
-    if path.startswith("/api/") and not path.startswith("/api/auth/"):
+    if path.startswith("/api/"):
+        if path.startswith("/api/auth/"):
+            if request.method not in {"GET", "HEAD", "OPTIONS"}:
+                try:
+                    check_origin(request)
+                except HTTPException as exc:
+                    return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
+            return await call_next(request)
         if not session_ok(request):
             return JSONResponse({"error": "passkey required"}, status_code=401)
-        check_origin(request)
+        try:
+            check_origin(request)
+        except HTTPException as exc:
+            return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
     return await call_next(request)
 
 
@@ -149,12 +213,14 @@ def auth_status(request: Request) -> dict:
 async def register_options(request: Request) -> JSONResponse:
     body = await request.json()
     token = (body.get("token") or "").strip()
+    recover = False
     if cred_count() == 0:
         if not corp.setup_token_ok(token):
             raise HTTPException(403, "setup token required")
     elif not session_ok(request):
         if not corp.setup_token_ok(token):
             raise HTTPException(401, "passkey or recover token required")
+        recover = True
     rp_id, _ = host_parts(request)
     options = generate_registration_options(
         rp_id=rp_id,
@@ -167,10 +233,13 @@ async def register_options(request: Request) -> JSONResponse:
         ),
     )
     chal = secrets.token_urlsafe(16)
+    kind = "reg-recover" if recover else "reg"
+    now = time.time()
     with db() as conn:
+        prune_auth_tables(conn, now)
         conn.execute(
             "INSERT OR REPLACE INTO challenges(token, kind, challenge, created) VALUES(?,?,?,?)",
-            (chal, "reg", options.challenge, time.time()),
+            (chal, kind, options.challenge, now),
         )
         conn.commit()
     payload = json.loads(options_to_json(options))
@@ -182,17 +251,14 @@ async def register_options(request: Request) -> JSONResponse:
 async def register_verify(request: Request) -> JSONResponse:
     body = await request.json()
     rp_id, origin = host_parts(request)
-    with db() as conn:
-        row = conn.execute(
-            "SELECT challenge FROM challenges WHERE token=? AND kind='reg'",
-            (body.get("challenge"),),
-        ).fetchone()
-    if not row:
+    taken = consume_challenge(body.get("challenge") or "", ("reg", "reg-recover"))
+    if not taken:
         raise HTTPException(400, "challenge expired")
+    challenge, kind = taken
     try:
         verification = verify_registration_response(
             credential=body.get("credential"),
-            expected_challenge=row["challenge"],
+            expected_challenge=challenge,
             expected_rp_id=rp_id,
             expected_origin=origin,
             require_user_verification=False,
@@ -208,10 +274,11 @@ async def register_verify(request: Request) -> JSONResponse:
                 verification.sign_count,
             ),
         )
-        conn.execute("DELETE FROM challenges WHERE token=?", (body.get("challenge"),))
         conn.commit()
     if TOKEN_PATH.is_file() and cred_count() > 0:
         TOKEN_PATH.unlink()
+    if kind == "reg-recover":
+        revoke_sessions()
     resp = JSONResponse({"ok": True})
     set_session(resp)
     return resp
@@ -232,10 +299,12 @@ def login_options(request: Request) -> JSONResponse:
         user_verification=UserVerificationRequirement.PREFERRED,
     )
     chal = secrets.token_urlsafe(16)
+    now = time.time()
     with db() as conn:
+        prune_auth_tables(conn, now)
         conn.execute(
             "INSERT OR REPLACE INTO challenges(token, kind, challenge, created) VALUES(?,?,?,?)",
-            (chal, "auth", options.challenge, time.time()),
+            (chal, "auth", options.challenge, now),
         )
         conn.commit()
     return JSONResponse({"options": json.loads(options_to_json(options)), "challenge": chal})
@@ -247,18 +316,18 @@ async def login_verify(request: Request) -> JSONResponse:
     rp_id, origin = host_parts(request)
     cred = body.get("credential") or {}
     cred_id = cred.get("id")
+    taken = consume_challenge(body.get("challenge") or "", ("auth",))
+    if not taken:
+        raise HTTPException(400, "challenge expired")
+    challenge, _kind = taken
     with db() as conn:
-        chal = conn.execute(
-            "SELECT challenge FROM challenges WHERE token=? AND kind='auth'",
-            (body.get("challenge"),),
-        ).fetchone()
         stored = conn.execute("SELECT * FROM credentials WHERE cred_id=?", (cred_id,)).fetchone()
-    if not chal or not stored:
+    if not stored:
         raise HTTPException(400, "unknown passkey")
     try:
         verification = verify_authentication_response(
             credential=cred,
-            expected_challenge=chal["challenge"],
+            expected_challenge=challenge,
             expected_rp_id=rp_id,
             expected_origin=origin,
             credential_public_key=stored["public_key"],
@@ -272,7 +341,6 @@ async def login_verify(request: Request) -> JSONResponse:
             "UPDATE credentials SET sign_count=? WHERE cred_id=?",
             (verification.new_sign_count, cred_id),
         )
-        conn.execute("DELETE FROM challenges WHERE token=?", (body.get("challenge"),))
         conn.commit()
     resp = JSONResponse({"ok": True})
     set_session(resp)
@@ -287,6 +355,15 @@ def logout(request: Request) -> JSONResponse:
             conn.execute("DELETE FROM sessions WHERE token=?", (token,))
             conn.commit()
     resp = JSONResponse({"ok": True})
+    resp.delete_cookie(COOKIE, path="/")
+    return resp
+
+
+@app.post("/api/auth/logout-all")
+def logout_all(request: Request) -> JSONResponse:
+    require_auth(request)
+    revoke_sessions()
+    resp = JSONResponse({"ok": True, "revoked": True})
     resp.delete_cookie(COOKIE, path="/")
     return resp
 
