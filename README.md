@@ -44,4 +44,5 @@ cd corp
 - [`AGENTS.md`](AGENTS.md) — контракт для любого агента
 - [`HARNESS.md`](HARNESS.md) — цикл, Graphify, планер, runner
 - [`docs/WORKSHOP.md`](docs/WORKSHOP.md) — pin, оркестратор, слоты, Telegram
+- [`docs/AGENT_ISOLATION.md`](docs/AGENT_ISOLATION.md) — writing agents vs secrets/control plane
 - [`registry.json`](registry.json) — проекты корпорации

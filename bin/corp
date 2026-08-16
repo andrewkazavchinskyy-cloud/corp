@@ -34,6 +34,13 @@ SEED_LABELS = (*STATE_LABELS, "P0", "P1", "P2", "design", "qa", "qa-fail")
 SLOT_ROLES = ("orchestrator", "build", "design", "qa")
 PULSE_SEC = 15 * 60
 CONFIG_DIR = Path.home() / ".config" / "corp"
+# corp#41: writing agents must not inherit control-plane secrets. These
+# names are the only control-plane env vars a spawned agent process ever
+# sees, stripped even before the separate OS identity below is provisioned.
+# Once provisioned, the child gets no control-plane env at all -- see
+# deploy/corp-agent-exec, which rebuilds the env from scratch.
+CONTROL_PLANE_SECRET_KEYS = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
+AGENT_WRAPPER_DEFAULT = "/usr/local/sbin/corp-agent-exec"
 WORKSHOP_JSON = Path(os.environ["CORP_WORKSHOP_JSON"]) if os.environ.get("CORP_WORKSHOP_JSON") else CONFIG_DIR / "workshop.json"
 WORKSHOP_LOCK = WORKSHOP_JSON.parent / (WORKSHOP_JSON.name + ".lock")
 TOKEN_PATH = CONFIG_DIR / "workshop-setup-token"
@@ -566,6 +573,7 @@ def doctor_payload() -> dict:
         ("tmux", have("tmux")),
         ("telegram token", bool(os.environ.get("TELEGRAM_BOT_TOKEN"))),
         ("telegram chat", bool(os.environ.get("TELEGRAM_CHAT_ID"))),
+        ("agent identity isolated", agent_identity_ready()),
     ]
     return {
         "corp": str(ROOT),
@@ -580,6 +588,9 @@ def doctor() -> None:
     print(f"workspace: {payload['workspace']}")
     for row in payload["checks"]:
         print(f"{'ok' if row['ok'] else 'NO':2}  {row['name']}")
+    if not agent_identity_ready():
+        print("    writing agents still run as this OS user (control-plane secrets stripped from env only).")
+        print("    see docs/AGENT_ISOLATION.md to provision a separate agent identity.")
 
 
 def tg_creds() -> tuple[str, str]:
@@ -1819,6 +1830,51 @@ def pick_agent() -> str:
     die("no agent CLI found. Install claude, codex, grok, or cursor agent")
 
 
+def agent_user_name() -> str:
+    return os.environ.get("CORP_AGENT_USER", "").strip()
+
+
+def agent_home_dir() -> Path:
+    custom = os.environ.get("CORP_AGENT_HOME", "").strip()
+    if custom:
+        return Path(custom)
+    return Path(f"/home/{agent_user_name()}")
+
+
+def agent_wrapper_path() -> Path:
+    return Path(os.environ.get("CORP_AGENT_WRAPPER", "").strip() or AGENT_WRAPPER_DEFAULT)
+
+
+def agent_identity_ready() -> bool:
+    """True once a separate OS identity for writing agents is provisioned
+    (see docs/AGENT_ISOLATION.md). Until then, launch_agent() falls back to
+    a same-user, secret-stripped-env mode that does not stop a same-UID
+    read of control-plane files by absolute path."""
+    user = agent_user_name()
+    if not user or not agent_wrapper_path().is_file():
+        return False
+    return run(["sudo", "-n", "-u", user, "true"], check=False).returncode == 0
+
+
+def transitional_env() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if k not in CONTROL_PLANE_SECRET_KEYS}
+
+
+def wrap_isolated(cmd: list[str], dest: Path) -> list[str]:
+    """Wrap an agent CLI invocation so it never inherits control-plane
+    secrets. With a provisioned agent identity (corp#41) this switches OS
+    user via a fixed root-owned wrapper; otherwise it degrades to running
+    as the same user with a secret-stripped env (env-vector only -- same-UID
+    file reads are still possible until the identity is provisioned)."""
+    if agent_identity_ready():
+        user = agent_user_name()
+        home = agent_home_dir()
+        binary = f"{home}/.local/bin/{cmd[0]}"
+        return ["sudo", "-n", "-u", user, str(agent_wrapper_path()), str(dest), binary, *cmd[1:]]
+    env = transitional_env()
+    return ["env", "-i"] + [f"{k}={v}" for k, v in sorted(env.items())] + cmd
+
+
 def agent_prompt(repo: str, number: int, title: str, url: str, dest: Path, project: str = "") -> str:
     workshop = ""
     if project == "corp" or dest.resolve() == ROOT.resolve():
@@ -1993,6 +2049,7 @@ def wait_tmux(project: str, run_id: str = "") -> int:
 def launch_agent(kind: str, cmd: list[str], dest: Path, project: str, prefix: str = "", run_id: str = "") -> int:
     tag = prefix or project
     append_log(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} {tag} via {kind} ===\n")
+    cmd = wrap_isolated(cmd, dest)
     if have("tmux"):
         session = tmux_session(project)
         if tmux_alive(project):

@@ -108,6 +108,24 @@ def main() -> None:
     assert kept["models"] == ["grok-4.6"] and kept["stale"]
     fresh = corp.merge_catalog_row({}, {"kind": "grok", "installed": True, "models": []})
     assert fresh["models"] == []
+    # corp#41: writing agents must not inherit control-plane secrets. Without
+    # a provisioned agent identity, launch_agent() still strips known
+    # control-plane secrets from the child's env (env-vector only -- closing
+    # the same-UID file-read gap needs the separate OS identity in
+    # docs/AGENT_ISOLATION.md).
+    os.environ.pop("CORP_AGENT_USER", None)
+    assert not corp.agent_identity_ready()
+    os.environ["TELEGRAM_BOT_TOKEN"] = "shh"
+    os.environ["TELEGRAM_CHAT_ID"] = "123"
+    os.environ["KEEP_ME"] = "yes"
+    wrapped = corp.wrap_isolated(["bash", "-c", "true"], Path("/tmp"))
+    assert wrapped[:2] == ["env", "-i"]
+    joined = " ".join(wrapped)
+    assert "TELEGRAM_BOT_TOKEN=" not in joined and "TELEGRAM_CHAT_ID=" not in joined
+    assert "KEEP_ME=yes" in joined
+    assert wrapped[-3:] == ["bash", "-c", "true"]
+    del os.environ["TELEGRAM_BOT_TOKEN"], os.environ["TELEGRAM_CHAT_ID"], os.environ["KEEP_ME"]
+
     claude = corp.agent_argv("claude", "p", Path("/tmp"), readonly=True)
     assert "--dangerously-skip-permissions" not in claude and "--allowedTools" in claude
     codex = corp.agent_argv("codex", "p", Path("/tmp"), readonly=True)

@@ -67,3 +67,9 @@ curl -fsSL https://x.ai/cli/install.sh | bash
 Cursor CLI is optional (`agent`). Put `CURSOR_API_KEY` in env if you launch
 it from the workshop. Profiles (model, effort, fast) live in workshop
 settings, not in git.
+
+Writing agents run under a separate unprivileged OS identity once
+provisioned (`corp-agent`), so a same-UID read of control-plane secrets by
+known path is not possible. Until provisioned they still run as `corp`
+with Telegram credentials stripped from their env only. See
+[`docs/AGENT_ISOLATION.md`](docs/AGENT_ISOLATION.md).
