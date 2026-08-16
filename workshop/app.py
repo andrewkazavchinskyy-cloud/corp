@@ -544,6 +544,7 @@ async def api_queue_add(request: Request) -> dict:
                 model,
                 effort,
                 fast,
+                body.get("kind") or "",
             )
             added.append(f"{repo}#{number}")
     return {"ok": True, "added": added, "queue": (row or {}).get("queue")}
@@ -706,12 +707,15 @@ def queue_tick() -> None:
                     corp.need_human(f"{item['repo']}#{item['issue']} · пин у тебя (self)\n{blocked}")
                     corp.save_workshop(data)
                 continue
-            profile = next((p for p in data["profiles"] if p["id"] == item["profile"]), None)
+            profile = next((p for p in data["profiles"] if p["id"] == item.get("profile")), None)
             if not profile:
-                item["status"] = "failed"
-                item["last_error"] = "нет профиля"
-                corp.need_human(f"{item['repo']}#{item['issue']} · нет профиля {item.get('profile')}")
-                continue
+                if item.get("kind"):
+                    profile = {"id": "", "kind": item.get("kind"), "model": item.get("model") or ""}
+                else:
+                    item["status"] = "failed"
+                    item["last_error"] = "нет модели"
+                    corp.need_human(f"{item['repo']}#{item['issue']} · нет модели")
+                    continue
             item["status"] = "running"
             item["started_at"] = time.time()
             item["attempts"] = int(item.get("attempts") or 0) + 1
@@ -734,10 +738,10 @@ def _queue_job(item: dict, profile: dict) -> None:
             corp.load_registry(),
             repo,
             number,
-            "",
-            model="",
-            effort="",
-            fast=False,
+            item.get("kind") or "",
+            model=model,
+            effort=effort,
+            fast=bool(fast),
         )
         status = "done" if result.get("ok") else "failed"
         error = "" if result.get("ok") else (result.get("error") or ("не закрыл ишью" if result.get("incomplete") else "упал"))

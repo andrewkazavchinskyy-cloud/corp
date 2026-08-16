@@ -2669,6 +2669,7 @@ def queue_add(
     model: str = "",
     effort: str = "",
     fast: bool | None = None,
+    kind: str = "",
 ) -> dict:
     issue = get_issue(repo, number)
     reason = issue_eligibility(reg, repo, number, issue)
@@ -2679,25 +2680,12 @@ def queue_add(
     if "blocked" in label_names(issue):
         die(f"{repo}#{number} blocked")
     project = project_by_repo(reg, repo)
-    profile_by_id(profile_id)
+    profile = profile_by_id(profile_id) if profile_id else {}
+    kind = (kind or profile.get("kind") or "").strip()
+    model = model or profile.get("model") or ""
     key = issue_ref(repo, number)
     add_labels(repo, number, ["ready", "queued"])
     comment(repo, number, "corp-claim: queue")
-    row = {
-        "repo": repo,
-        "issue": number,
-        "project": project["name"],
-        "title": issue.get("title") or "",
-        "url": issue.get("url") or "",
-        "profile": profile_id,
-        "model": model,
-        "effort": effort,
-        "fast": bool(fast) if fast is not None else None,
-        "status": "waiting",
-        "attempts": int((existing or {}).get("attempts") or 0),
-        "last_error": "",
-        "retry_after": 0,
-    }
     with workshop_lock():
         data = load_workshop()
         existing = None
@@ -2707,6 +2695,22 @@ def queue_add(
                 break
         if existing and existing.get("status") in {"waiting", "running"}:
             die(f"{key} is already queued")
+        row = {
+            "repo": repo,
+            "issue": number,
+            "project": project["name"],
+            "title": issue.get("title") or "",
+            "url": issue.get("url") or "",
+            "profile": profile_id,
+            "kind": kind,
+            "model": model,
+            "effort": effort or profile.get("effort") or "",
+            "fast": bool(fast) if fast is not None else None,
+            "status": "waiting",
+            "attempts": int((existing or {}).get("attempts") or 0),
+            "last_error": "",
+            "retry_after": 0,
+        }
         if existing:
             existing.update(row)
         else:

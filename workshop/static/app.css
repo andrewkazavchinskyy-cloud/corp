@@ -189,6 +189,10 @@ textarea {
 .block-title:first-of-type { margin-top: 4px; }
 .pick { display: flex; gap: 10px; align-items: flex-start; }
 .pick input { width: 18px; height: 18px; margin-top: 4px; min-height: 0; }
+.auto-step { display: grid; gap: 10px; margin: 0 0 18px; }
+.auto-step h2 { margin: 0; }
+#auto-go { width: 100%; min-height: 44px; }
+.pick.card { min-height: 44px; align-items: center; }
 
 .graphs { min-height: 360px; }
 .g-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }

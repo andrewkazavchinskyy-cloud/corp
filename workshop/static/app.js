@@ -38,7 +38,10 @@ let refreshGen = 0;
 let stripHold = 0;
 let stripTarget = "";
 const ROLE_RU = { orchestrator: "Оркестр", build: "Сборка", design: "Дизайн", qa: "QA" };
+const KIND_RU = { claude: "Claude", codex: "Codex", grok: "Grok", cursor: "Cursor" };
 const QUEUE_RU = { waiting: "ждёт", running: "идёт", failed: "упал", done: "готово", skipped: "пропуск" };
+let lastAutoKey = "";
+let autoUi = { propose: "", project: "", checked: [], model: "", err: "" };
 
 function cookieGet(name) {
   const m = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
@@ -651,160 +654,99 @@ function autoProject() {
   return pinNames()[0] || "";
 }
 
-function profileSelect(id, selected, issue) {
-  const attr = issue ? `data-issue="${escapeHtml(issue)}"` : (id ? `id="${id}"` : "");
-  return `<select ${attr}>${(state.profiles || []).map((p) =>
-    `<option value="${escapeHtml(p.id)}" ${p.id === selected ? "selected" : ""}>${escapeHtml(p.label || p.id)}</option>`
-  ).join("")}</select>`;
+function snapAuto() {
+  if ($("propose-title")) autoUi.propose = $("propose-title").value;
+  if ($("propose-project")) autoUi.project = $("propose-project").value;
+  if ($("auto-model")) autoUi.model = $("auto-model").value;
+  if ($("auto-ready")) {
+    autoUi.checked = [...$("auto-ready").querySelectorAll("input:checked")].map((b) => b.value);
+  }
 }
 
-function renderAuto() {
-  if (!$("auto-propose")) return;
-  const project = autoProject();
-  const drafts = (state.drafts || []).filter((d) => {
-    if (!project) return true;
-    return d.project === project || (d.repo || "").endsWith(`/${project}`);
+function autoTyping() {
+  const id = (document.activeElement && document.activeElement.id) || "";
+  return id === "propose-title" || id === "auto-model";
+}
+
+function modelChoices() {
+  const catalog = (state.catalog && state.catalog.kinds) || {};
+  const kinds = ["claude", "codex", "grok", "cursor"];
+  const out = [];
+  kinds.forEach((kind) => {
+    const row = catalog[kind] || {};
+    const name = KIND_RU[kind] || kind;
+    if (row.installed === false) {
+      out.push({ value: `${kind}:`, label: `${name} — нет на сервере`, disabled: true });
+      return;
+    }
+    const models = row.models || [];
+    if (!models.length) {
+      if (row.installed) out.push({ value: `${kind}:`, label: `${name} · как на сервере`, disabled: false });
+      return;
+    }
+    models.forEach((m) => {
+      out.push({ value: `${kind}:${m}`, label: `${name} · ${m}`, disabled: false });
+    });
   });
-  const ready = visibleCards().filter((c) => c.column === "ready" && c.runner !== "self" && c.can_run !== false);
-  const queued = state.queue || [];
-  const waiting = queued.filter((q) => q.status === "waiting").length;
-  const startWhy = state.queue_running
-    ? ""
-    : waiting
-      ? ""
-      : queued.length
-        ? "в очереди нет ожидающих"
-        : ready.length
-          ? "сначала положи карточки в очередь"
-          : "нет ready — подтверди черновик или верни карточку";
-  const defaultProfile = buildProfileId(project) || (state.profiles[0] || {}).id || "";
-
-  $("auto-propose").innerHTML = `
-    <h2>1. Предложить задачу</h2>
-    <p class="meta">Одно поле. В GitHub попадёт только после Approve.</p>
-    <label>Проект
-      <select id="propose-project">${pinNames().map((n) =>
-        `<option ${n === project ? "selected" : ""}>${escapeHtml(n)}</option>`).join("")}</select>
-    </label>
-    <label>Что сделать <textarea id="propose-title" rows="3" maxlength="400" placeholder="Задача и как понять, что готово"></textarea></label>
-    <button type="button" class="btn primary" id="propose-send">Отправить на подтверждение</button>`;
-
-  $("auto-drafts").innerHTML = `
-    <h2>2. Подтвердить</h2>
-    <p class="meta">${drafts.length ? "Approve заводит ишью. Если включено — сразу в очередь." : "Черновиков нет. Предложи задачу или нажми Разобрать в Проекте."}</p>
-    <label class="pick tight"><input type="checkbox" id="auto-enqueue" ${state.auto_queue_on_approve !== false ? "checked" : ""}>
-      <span>После Approve сразу класть в очередь</span></label>
-    <div class="stack" id="auto-draft-list">${drafts.map(draftCard).join("")}</div>`;
-
-  $("auto-ready-box").innerHTML = `
-    <h2>3. В работу</h2>
-    <p class="meta">Отметь карточки, выбери профиль на каждую, положи в очередь, затем запусти автоном.</p>
-    <div class="toolbar">
-      <label class="field tight"><span>Профиль по умолчанию</span>${profileSelect("bulk-profile", defaultProfile)}</label>
-      <button type="button" class="btn" id="auto-add" ${ready.length ? "" : "disabled"}>В очередь</button>
-      <button type="button" class="btn" id="auto-add-all" ${ready.length ? "" : "disabled"}>Все ready</button>
-      <button type="button" class="btn primary" id="auto-start"${startWhy ? " disabled" : ""} title="${escapeHtml(startWhy)}">${state.queue_running ? "Пауза" : "Запустить автоном"}</button>
-    </div>
-    <p class="meta">${startWhy || (state.queue_running ? "автоном идёт" : "автоном: пауза")} · ретраи ${state.queue_retries ?? 2}</p>
-    <div class="stack" id="auto-ready">${ready.map((c) =>
-      `<label class="pick card"><input type="checkbox" value="${issueRef(c)}">
-        <div><strong>${escapeHtml(c.project)} #${c.number} · ${escapeHtml(issueRole(c))}</strong>
-        <div>${escapeHtml(c.title || "")}</div>
-        </div></label>`
-    ).join("") || '<p class="meta">Нет ready. Следующий шаг: подтверди черновик или верни карточку в ready.</p>'}</div>`;
-
-  $("auto-queue-box").innerHTML = `
-    <h2>Очередь и исходы</h2>
-    <p class="meta">Упала — причина на карточке и в Telegram. Сама встанет в очередь. Кнопки — если хочешь откатить или открыть консоль.</p>
-    <div class="stack" id="auto-queue">${queued.map((q) => {
-      const ref = `${q.repo}#${q.issue}`;
-      const running = q.status === "running";
-      const retry = q.status === "failed" || q.status === "done";
-      return `<article class="card ${q.status === "failed" ? "fail" : ""}">
-        <header><span>${escapeHtml(q.project || "")} · ${escapeHtml(q.profile || "")}</span>
-          <span>${escapeHtml(QUEUE_RU[q.status] || q.status)}${q.attempts ? ` · попытка ${q.attempts}` : ""}</span></header>
-        <h3>#${q.issue} ${escapeHtml(q.title || "")}</h3>
-        ${q.last_error ? `<p class="err">${escapeHtml(q.last_error)}</p>` : ""}
-        <div class="row">
-          ${running ? `<button type="button" class="btn danger" data-abort="${escapeHtml(ref)}">Откатить</button>` : ""}
-          ${retry ? `<button type="button" class="btn primary" data-retry="${escapeHtml(ref)}">Перезапустить</button>` : ""}
-          ${q.status !== "running" ? `<button type="button" class="btn" data-rm="${escapeHtml(ref)}">Снять</button>` : ""}
-          <button type="button" class="btn" data-console="${escapeHtml(q.project || "")}" data-issue="${escapeHtml(ref)}">Консоль</button>
-        </div>
-      </article>`;
-    }).join("") || '<p class="meta">Очередь пуста</p>'}</div>`;
-
-  $("propose-send").onclick = async () => {
-    try {
-      const text = ($("propose-title").value || "").trim();
-      await write("/api/draft", {
-        action: "propose",
-        project: $("propose-project").value,
-        title: text.slice(0, 120),
-        body: text,
-      }, "черновик");
-      $("propose-title").value = "";
-    } catch (_) { /* strip */ }
-    refresh();
-  };
-  $("auto-enqueue").onchange = async () => {
-    try {
-      await write("/api/settings", { auto_queue_on_approve: $("auto-enqueue").checked }, "сохранил");
-      state.auto_queue_on_approve = $("auto-enqueue").checked;
-    } catch (_) { /* strip */ }
-  };
-  $("auto-draft-list").querySelectorAll("[data-approve]").forEach((b) => {
-    b.onclick = async () => {
-      try { await write("/api/draft", { id: b.dataset.approve, action: "approve" }, "ишью на GitHub"); } catch (_) { /* strip */ }
-      refresh();
+  if (out.length) return out;
+  return (state.profiles || []).map((p) => {
+    const installed = catalogKind(p.kind).installed !== false;
+    const name = KIND_RU[p.kind] || p.kind;
+    return {
+      value: `${p.kind}:${p.model || ""}`,
+      label: p.model ? `${name} · ${p.model}` : name,
+      disabled: !installed,
     };
   });
-  $("auto-draft-list").querySelectorAll("[data-skip]").forEach((b) => {
-    b.onclick = async () => {
-      try { await write("/api/draft", { id: b.dataset.skip, action: "skip" }, "пропустил"); } catch (_) { /* strip */ }
-      refresh();
-    };
-  });
-  const syncAdd = () => {
-    $("auto-add").disabled = !$("auto-ready").querySelector("input:checked");
-  };
-  $("auto-ready").onchange = syncAdd;
-  $("auto-add").onclick = async () => {
-    const boxes = [...$("auto-ready").querySelectorAll("input:checked")];
-    try {
-      await write("/api/queue/add", {
-        issues: boxes.map((b) => b.value),
-        profile: $("bulk-profile").value,
-      }, "в очередь");
-    } catch (_) { /* strip */ }
-    refresh();
-  };
-  $("auto-add-all").onclick = async () => {
-    $("auto-ready").querySelectorAll("input[type=checkbox]").forEach((b) => { b.checked = true; });
-    $("auto-add").click();
-  };
-  $("auto-start").onclick = async () => {
-    const path = state.queue_running ? "/api/queue/pause" : "/api/queue/start";
-    try { await write(path, {}, state.queue_running ? "пауза" : "автоном"); } catch (_) { /* strip */ }
-    refresh();
-  };
+}
+
+function parseModelPick(raw) {
+  const text = raw || "";
+  const i = text.indexOf(":");
+  if (i < 0) return { kind: text, model: "" };
+  return { kind: text.slice(0, i), model: text.slice(i + 1) };
+}
+
+function bindAutoQueue() {
+  if (!$("auto-queue")) return;
   $("auto-queue").querySelectorAll("[data-rm]").forEach((btn) => {
     btn.onclick = async () => {
-      try { await write("/api/queue/rm", { issue: btn.dataset.rm }, "снял"); } catch (_) { /* strip */ }
-      refresh();
+      try {
+        const data = await api("/api/queue/rm", { issue: btn.dataset.rm });
+        if (data.queue) state.queue = data.queue;
+        autoUi.err = "";
+      } catch (err) {
+        autoUi.err = err.message;
+      }
+      lastAutoKey = "";
+      renderAuto();
     };
   });
   $("auto-queue").querySelectorAll("[data-retry]").forEach((btn) => {
     btn.onclick = async () => {
-      try { await write("/api/queue/retry", { issue: btn.dataset.retry }, "снова в очереди"); } catch (_) { /* strip */ }
-      refresh();
+      try {
+        const data = await api("/api/queue/retry", { issue: btn.dataset.retry });
+        if (data.queue) state.queue = data.queue;
+        autoUi.err = "";
+      } catch (err) {
+        autoUi.err = err.message;
+      }
+      lastAutoKey = "";
+      renderAuto();
     };
   });
   $("auto-queue").querySelectorAll("[data-abort]").forEach((btn) => {
     btn.onclick = async () => {
       if (!confirm("Остановить агента и вернуть карточку в ready?")) return;
-      try { await write("/api/queue/abort", { issue: btn.dataset.abort }, "откатил"); } catch (_) { /* strip */ }
-      refresh();
+      try {
+        const data = await api("/api/queue/abort", { issue: btn.dataset.abort });
+        if (data.queue) state.queue = data.queue;
+        autoUi.err = "";
+      } catch (err) {
+        autoUi.err = err.message;
+      }
+      lastAutoKey = "";
+      renderAuto();
     };
   });
   $("auto-queue").querySelectorAll("[data-console]").forEach((btn) => {
@@ -814,6 +756,218 @@ function renderAuto() {
       setTab("console");
     };
   });
+}
+
+function renderAutoQueue(queued) {
+  $("auto-queue-box").innerHTML = `
+    <h2>Очередь</h2>
+    <p class="meta">${state.queue_running ? "идёт" : "пауза"}${queued.some((q) => q.status === "waiting") ? ` · ждут ${queued.filter((q) => q.status === "waiting").length}` : ""}</p>
+    <div class="stack" id="auto-queue">${queued.map((q) => {
+      const ref = `${q.repo}#${q.issue}`;
+      const running = q.status === "running";
+      const retry = q.status === "failed" || q.status === "done";
+      const model = q.model || q.kind || "";
+      return `<article class="card ${q.status === "failed" ? "fail" : ""}">
+        <header><span>${escapeHtml(q.project || "")}${model ? ` · ${escapeHtml(model)}` : ""}</span>
+          <span>${escapeHtml(QUEUE_RU[q.status] || q.status)}${q.attempts ? ` · попытка ${q.attempts}` : ""}</span></header>
+        <h3>#${q.issue} ${escapeHtml(q.title || "")}</h3>
+        ${q.last_error ? `<p class="err">${escapeHtml(q.last_error)}</p>` : ""}
+        ${q.blocked_reason ? `<p class="err">${escapeHtml(q.blocked_reason)}</p>` : ""}
+        <div class="row">
+          ${running ? `<button type="button" class="btn danger" data-abort="${escapeHtml(ref)}">Откатить</button>` : ""}
+          ${retry ? `<button type="button" class="btn primary" data-retry="${escapeHtml(ref)}">Перезапустить</button>` : ""}
+          ${q.status !== "running" ? `<button type="button" class="btn" data-rm="${escapeHtml(ref)}">Снять</button>` : ""}
+          <button type="button" class="btn" data-console="${escapeHtml(q.project || "")}" data-issue="${escapeHtml(ref)}">Консоль</button>
+        </div>
+      </article>`;
+    }).join("") || '<p class="meta">Очередь пуста</p>'}</div>`;
+  bindAutoQueue();
+}
+
+function renderAuto() {
+  if (!$("auto-propose")) return;
+  snapAuto();
+  const project = autoUi.project || autoProject();
+  const drafts = (state.drafts || []).filter((d) => {
+    if (!project) return true;
+    return d.project === project || (d.repo || "").endsWith(`/${project}`);
+  });
+  const ready = visibleCards().filter((c) => c.column === "ready" && c.runner !== "self" && c.can_run !== false);
+  const queued = state.queue || [];
+  const choices = modelChoices();
+  const key = JSON.stringify([
+    ready.map((c) => [c.repo, c.number, c.title]),
+    queued.map((q) => [q.repo, q.issue, q.status, q.last_error, q.attempts]),
+    drafts.map((d) => d.id),
+    state.queue_running,
+    choices.map((c) => c.value),
+  ]);
+  if (key === lastAutoKey && $("auto-go") && $("auto-ready")) {
+    if ($("auto-err")) $("auto-err").textContent = autoUi.err;
+    return;
+  }
+  lastAutoKey = key;
+  const defaultPick = autoUi.model || (choices.find((c) => !c.disabled) || {}).value || "";
+  const selected = autoUi.checked || [];
+  const why = !ready.length
+    ? "нет готовых задач — подтверди черновик или верни карточку"
+    : !selected.length
+      ? "отметь хотя бы одну задачу"
+      : !defaultPick
+        ? "выбери модель"
+        : "";
+
+  if (!$("propose-send")) {
+    $("auto-propose").innerHTML = `
+      <h2>Новая задача</h2>
+      <p class="meta">В GitHub попадёт только после подтверждения.</p>
+      <label>Проект
+        <select id="propose-project">${pinNames().map((n) =>
+          `<option ${n === project ? "selected" : ""}>${escapeHtml(n)}</option>`).join("")}</select>
+      </label>
+      <label>Что сделать <textarea id="propose-title" rows="3" maxlength="400" placeholder="Задача и как понять, что готово"></textarea></label>
+      <button type="button" class="btn primary" id="propose-send">Отправить на подтверждение</button>`;
+    $("propose-send").onclick = async () => {
+      try {
+        const text = ($("propose-title").value || "").trim();
+        await api("/api/draft", {
+          action: "propose",
+          project: $("propose-project").value,
+          title: text.slice(0, 120),
+          body: text,
+        });
+        autoUi.propose = "";
+        $("propose-title").value = "";
+        autoUi.err = "";
+      } catch (err) {
+        autoUi.err = err.message;
+      }
+      lastAutoKey = "";
+      renderAuto();
+    };
+  }
+  if ($("propose-title") && autoUi.propose) $("propose-title").value = autoUi.propose;
+  if ($("propose-project") && autoUi.project) $("propose-project").value = autoUi.project;
+
+  $("auto-drafts").innerHTML = `
+    <h2>Подтвердить</h2>
+    <p class="meta">${drafts.length ? "Подтверждение заводит ишью в GitHub." : "Черновиков нет."}</p>
+    <label class="pick tight"><input type="checkbox" id="auto-enqueue" ${state.auto_queue_on_approve !== false ? "checked" : ""}>
+      <span>После подтверждения сразу поставить в очередь</span></label>
+    <div class="stack" id="auto-draft-list">${drafts.map(draftCard).join("")}</div>`;
+  $("auto-enqueue").onchange = async () => {
+    try {
+      await api("/api/settings", { auto_queue_on_approve: $("auto-enqueue").checked });
+      state.auto_queue_on_approve = $("auto-enqueue").checked;
+    } catch (err) {
+      autoUi.err = err.message;
+    }
+  };
+  $("auto-draft-list").querySelectorAll("[data-approve]").forEach((b) => {
+    b.onclick = async () => {
+      try {
+        await api("/api/draft", { id: b.dataset.approve, action: "approve" });
+        autoUi.err = "";
+      } catch (err) {
+        autoUi.err = err.message;
+      }
+      lastAutoKey = "";
+      renderAuto();
+    };
+  });
+  $("auto-draft-list").querySelectorAll("[data-skip]").forEach((b) => {
+    b.onclick = async () => {
+      try {
+        await api("/api/draft", { id: b.dataset.skip, action: "skip" });
+        autoUi.err = "";
+      } catch (err) {
+        autoUi.err = err.message;
+      }
+      lastAutoKey = "";
+      renderAuto();
+    };
+  });
+
+  $("auto-ready-box").innerHTML = `
+    <div class="auto-step">
+      <h2>1. Задачи</h2>
+      <div class="stack" id="auto-ready">${ready.map((c) => {
+        const ref = issueRef(c);
+        return `<label class="pick card"><input type="checkbox" value="${escapeHtml(ref)}" ${selected.includes(ref) ? "checked" : ""}>
+          <div><strong>${escapeHtml(c.project)} #${c.number}</strong>
+          <div>${escapeHtml(c.title || "")}</div></div></label>`;
+      }).join("") || '<p class="meta">Нет готовых задач. Подтверди черновик или верни карточку.</p>'}</div>
+    </div>
+    <div class="auto-step">
+      <h2>2. Модель</h2>
+      <label>Какой агент запустит выбранные
+        <select id="auto-model">${choices.map((c) =>
+          `<option value="${escapeHtml(c.value)}" ${c.value === defaultPick ? "selected" : ""} ${c.disabled ? "disabled" : ""}>${escapeHtml(c.label)}</option>`
+        ).join("")}</select>
+      </label>
+    </div>
+    <div class="auto-step">
+      <h2>3. Запуск</h2>
+      <button type="button" class="btn primary" id="auto-go"${why ? " disabled" : ""}>${why || "Запустить выбранные"}</button>
+      <p class="err" id="auto-err">${escapeHtml(autoUi.err)}</p>
+      ${state.queue_running ? '<button type="button" class="btn" id="auto-pause">Пауза</button>' : ""}
+    </div>`;
+  const syncGo = () => {
+    snapAuto();
+    const has = $("auto-ready") && $("auto-ready").querySelector("input:checked");
+    const pick = $("auto-model") && $("auto-model").value;
+    const msg = !ready.length
+      ? "нет готовых задач — подтверди черновик или верни карточку"
+      : !has
+        ? "отметь хотя бы одну задачу"
+        : !pick
+          ? "выбери модель"
+          : "";
+    $("auto-go").disabled = !!msg;
+    $("auto-go").textContent = msg || "Запустить выбранные";
+  };
+  $("auto-ready").onchange = syncGo;
+  $("auto-model").onchange = syncGo;
+  $("auto-go").onclick = async () => {
+    snapAuto();
+    const boxes = [...$("auto-ready").querySelectorAll("input:checked")].map((b) => b.value);
+    const pick = parseModelPick($("auto-model").value);
+    const profile = (state.profiles || []).find((p) => p.kind === pick.kind) || {};
+    try {
+      const added = await api("/api/queue/add", {
+        issues: boxes,
+        profile: profile.id || "",
+        kind: pick.kind,
+        model: pick.model,
+      });
+      if (added.queue) state.queue = added.queue;
+      const started = await api("/api/queue/start", {});
+      state.queue_running = true;
+      if (started.queue) state.queue = started.queue;
+      autoUi.checked = [];
+      autoUi.err = "";
+    } catch (err) {
+      autoUi.err = err.message;
+    }
+    lastAutoKey = "";
+    renderAuto();
+  };
+  if ($("auto-pause")) {
+    $("auto-pause").onclick = async () => {
+      try {
+        const data = await api("/api/queue/pause", {});
+        state.queue_running = false;
+        if (data.queue) state.queue = data.queue;
+        autoUi.err = "";
+      } catch (err) {
+        autoUi.err = err.message;
+      }
+      lastAutoKey = "";
+      renderAuto();
+    };
+  }
+
+  renderAutoQueue(queued);
 }
 
 function orbSize(nodes) {
@@ -1448,7 +1602,6 @@ async function refresh() {
     state = { ...state, ...board };
     renderFilters();
     renderBoard();
-    renderAuto();
     if ($("tab-project").classList.contains("on")) renderProject();
     if ($("tab-graphs").classList.contains("on")) renderGraphs();
 
@@ -1482,7 +1635,7 @@ async function refresh() {
           ? `<i class="pulse"></i><b>orch · ${escapeHtml(researching)}</b>`
           : `<i class="pulse"></i><b>${state.queue_running ? `автоном · ждут ${q}` : "тихо"}</b>`;
     }
-    renderAuto();
+    if (!autoTyping()) renderAuto();
     renderMap(mapped);
     if (!settingsDirty && settings) {
       renderSlots();
