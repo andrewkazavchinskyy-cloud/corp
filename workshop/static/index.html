@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Schibsted+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=37">
+  <link rel="stylesheet" href="/static/app.css?v=38">
 </head>
 <body>
   <div id="gate" class="gate">
@@ -103,6 +103,11 @@
         <section id="tab-console" class="tab">
           <div class="term">
             <div class="term-h">
+              <div class="seg hidden" id="console-modes" role="tablist" aria-label="Лог">
+                <button type="button" id="console-mode-issue" role="tab" aria-selected="true">эта карточка</button>
+                <button type="button" id="console-mode-run" role="tab" aria-selected="false">run.log</button>
+              </div>
+              <button type="button" class="btn hidden" id="console-to-card">К карточке</button>
               <select id="console-project" aria-label="Сессия"></select>
             </div>
             <pre id="console"></pre>
@@ -195,7 +200,7 @@
     </section>
   </div>
 
-  <script src="/static/vendor/sortable.min.js?v=37"></script>
-  <script src="/static/app.js?v=37"></script>
+  <script src="/static/vendor/sortable.min.js?v=38"></script>
+  <script src="/static/app.js?v=38"></script>
 </body>
 </html>

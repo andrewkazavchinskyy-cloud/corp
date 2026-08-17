@@ -44,10 +44,12 @@ let graphsKey = "";
 let orchPoll = 0;
 let consolePick = "";
 let consoleIssue = "";
+let consoleLogMode = "issue";
 let sheetReturn = null;
 let refreshGen = 0;
 let stripHold = 0;
 let stripTarget = "";
+let stripIssue = "";
 const ROLE_RU = { orchestrator: "Оркестр", build: "Сборка", design: "Дизайн", qa: "QA" };
 const KIND_RU = { claude: "Claude", codex: "Codex", grok: "Grok", cursor: "Cursor" };
 const QUEUE_RU = { waiting: "ждёт", running: "идёт", failed: "упал", done: "отработал", skipped: "пропуск" };
@@ -467,6 +469,7 @@ function badge(card) {
   if (card.runner === "self") bits.push('<span class="badge self">я</span>');
   else if (card.runner && card.runner !== "queued") bits.push(`<span class="badge vps">VPS · ${escapeHtml(card.runner)}</span>`);
   if (card.column === "qa") bits.push('<span class="badge">QA</span>');
+  if (isDisposable(card)) bits.push('<span class="badge">песочница</span>');
   (card.labels || []).forEach((l) => {
     if (l.name === "qa-fail") bits.push('<span class="badge blocked">QA вернул</span>');
     if (["P0", "P1", "P2"].includes(l.name)) bits.push(`<span class="badge${l.name === "P0" ? " blocked" : ""}">${l.name}</span>`);
@@ -679,6 +682,46 @@ function vpsRunner(card) {
   return card.runner && card.runner !== "self" && card.runner !== "queued";
 }
 
+function isDisposable(item) {
+  const t = `${item.title || ""} ${item.body || ""} ${item.why || ""}`.toLowerCase();
+  return /песочниц|sandbox|throwaway|выброс|однораз/.test(t);
+}
+
+function sandboxBlocked(card) {
+  return !!(card.blocked || card.runner === "self" || (card.labels || []).some((l) => l.name === "P0"));
+}
+
+function liveWritingCard(project) {
+  if (!project) return null;
+  const cards = state.cards || [];
+  const q = (state.queue || []).find((i) => i.status === "running" && (i.project === project || String(i.repo || "").endsWith(`/${project}`)));
+  if (q) {
+    const hit = cards.find((c) => c.repo === q.repo && String(c.number) === String(q.issue));
+    if (hit) return hit;
+  }
+  return cards.find((c) => c.project === project && vpsRunner(c)) || null;
+}
+
+function setSheetOpen(on) {
+  const main = document.querySelector(".main");
+  if (main) main.classList.toggle("sheet-open", on);
+}
+
+function paintConsoleChrome() {
+  const has = !!consoleIssue;
+  if ($("console-modes")) $("console-modes").classList.toggle("hidden", !has);
+  if ($("console-to-card")) $("console-to-card").classList.toggle("hidden", !has);
+  const issueOn = has && consoleLogMode !== "run";
+  if ($("console-mode-issue")) {
+    $("console-mode-issue").classList.toggle("on", issueOn);
+    $("console-mode-issue").setAttribute("aria-selected", issueOn ? "true" : "false");
+  }
+  if ($("console-mode-run")) {
+    $("console-mode-run").classList.toggle("on", !issueOn);
+    $("console-mode-run").setAttribute("aria-selected", !issueOn ? "true" : "false");
+  }
+}
+
 function colWord(column) {
   return (COLS.find(([id]) => id === column) || [column, column])[1];
 }
@@ -738,16 +781,36 @@ function sheetFocusables() {
 function showSheet() {
   $("sheet").classList.remove("hidden");
   $("scrim").classList.remove("hidden");
+  setSheetOpen(true);
   const first = sheetFocusables()[0];
   (first || $("sheet-cancel")).focus();
 }
 
-function openConsoleFor(card) {
-  consoleIssue = issueRef(card);
-  consolePick = card.project;
-  closeSheet();
-  setFilter(card.project);
+function hideSheet(keepIssue) {
+  $("sheet").classList.add("hidden");
+  $("scrim").classList.add("hidden");
+  setSheetOpen(false);
+  lastBoardKey = "";
+  if (!keepIssue && issueFromUrl()) setIssueParam("");
+  if (!keepIssue && sheetReturn && sheetReturn.focus) {
+    try { sheetReturn.focus(); } catch (_) { /* gone */ }
+  }
+  sheetReturn = null;
+}
+
+function openConsole(pick, issue) {
+  consolePick = pick || "";
+  consoleIssue = issue || "";
+  consoleLogMode = consoleIssue ? "issue" : "run";
+  if (consoleIssue) setIssueParam(consoleIssue);
+  paintConsoleChrome();
   setTab("console");
+}
+
+function openConsoleFor(card) {
+  hideSheet(true);
+  renderBoard();
+  openConsole(card.project, issueRef(card));
 }
 
 function issueFromUrl() {
@@ -957,14 +1020,7 @@ function openSheet(issue) {
 }
 
 function closeSheet() {
-  $("sheet").classList.add("hidden");
-  $("scrim").classList.add("hidden");
-  lastBoardKey = "";
-  if (issueFromUrl()) setIssueParam("");
-  if (sheetReturn && sheetReturn.focus) {
-    try { sheetReturn.focus(); } catch (_) { /* gone */ }
-  }
-  sheetReturn = null;
+  hideSheet(false);
   refresh();
 }
 
@@ -1133,9 +1189,7 @@ function bindAutoQueue() {
     if (!root) return;
     root.querySelectorAll("[data-console]").forEach((btn) => {
       btn.onclick = () => {
-        consolePick = btn.dataset.console;
-        consoleIssue = btn.dataset.issue || "";
-        setTab("console");
+        openConsole(btn.dataset.console, btn.dataset.issue || "");
       };
     });
     root.querySelectorAll("[data-sheet]").forEach((btn) => {
@@ -1279,17 +1333,27 @@ function renderAuto() {
       <button type="button" class="btn primary auto-next"${step >= 3 ? " disabled" : ""}>Дальше</button>
     </div>`;
   const goBtn = `<button type="button" class="btn primary auto-go"${why ? " disabled" : ""}>${why || "Запустить выбранные"}</button>`;
+  const sandDrafts = drafts.filter(isDisposable);
+  const sandReady = ready.filter((c) => isDisposable(c) && !sandboxBlocked(c));
 
   root.innerHTML = `
     ${autoStatusHtml(queued)}
     <ol class="wizard" data-step="${step}">
       <li class="auto-step" data-step="1">
         <h2><i>1</i> Задачи</h2>
+        <section class="panel" id="auto-sandbox">
+          <h2>Песочница</h2>
+          <p class="meta">путь · /home/corp/projects/${escapeHtml(project || "corp")}</p>
+          <p class="meta">Одноразовый черновик, не P0. Живой GitHub и Автоном отсюда не стартуют. P0 / я / блок отсюда не запускаются.</p>
+          <button type="button" class="btn" id="sandbox-propose">Предложить одноразовый черновик</button>
+          ${sandDrafts.length ? `<p class="meta">черновик · ${sandDrafts.map((d) => escapeHtml(d.title || d.id)).join(" · ")}</p>` : ""}
+          ${sandReady.length ? `<p class="meta">готово · ${sandReady.map((c) => `${escapeHtml(c.project)} #${c.number}`).join(" · ")}</p>` : ""}
+        </section>
         <div class="stack" id="auto-ready">${ready.map((c) => {
           const ref = issueRef(c);
           return `<label class="pick card"><input type="checkbox" value="${escapeHtml(ref)}" ${selected.includes(ref) ? "checked" : ""}>
             <div><strong>${escapeHtml(c.project)} #${c.number}</strong>
-            <div>${escapeHtml(c.title || "")}</div></div></label>`;
+            <div>${escapeHtml(c.title || "")}${isDisposable(c) ? ' <span class="badge">песочница</span>' : ""}</div></div></label>`;
         }).join("") || '<p class="meta">Нет карточек в колонке Готово. Прими черновик ниже или верни карточку в Готово с доски.</p>'}</div>
         ${drafts.length ? `${draftBatchBar("auto-draft")}<div class="stack" id="auto-draft-list">${drafts.map((d) => draftCard(d, true)).join("")}</div>` : `<p class="meta empty-next">Черновиков нет. Нажми Разобрать на Проекте или опиши задачу ниже.</p>`}
         <details class="auto-new"${openNew ? " open" : ""}>
@@ -1326,6 +1390,24 @@ function renderAuto() {
 
   if ($("propose-title") && autoUi.propose) $("propose-title").value = autoUi.propose;
   if ($("propose-project") && autoUi.project) $("propose-project").value = autoUi.project;
+  if ($("sandbox-propose")) {
+    $("sandbox-propose").onclick = async () => {
+      const pin = ($("propose-project") && $("propose-project").value) || project || "corp";
+      try {
+        await api("/api/draft", {
+          action: "propose",
+          project: pin,
+          title: "Песочница первого часа — выбросить после проверки",
+          body: "Одноразовая песочница. Не P0, не self, не blocked. После проверки выбросить.",
+        });
+        autoUi.err = "";
+      } catch (err) {
+        autoUi.err = err.message;
+      }
+      lastAutoKey = "";
+      renderAuto();
+    };
+  }
   if ($("propose-send")) {
     $("propose-send").onclick = async () => {
       try {
@@ -1835,7 +1917,7 @@ function draftCard(d, pick) {
   const box = pick
     ? `<label class="pick"><input type="checkbox" data-draft-id="${escapeHtml(d.id)}" ${autoDraftChecked.includes(d.id) ? "checked" : ""}><span class="sr-only">Выбрать черновик ${escapeHtml(d.title || d.id)} для принятия</span></label>`
     : "";
-  return `<article class="card draft${pick ? " pick" : ""}"><header><span>${escapeHtml(d.kind || "build")}</span><span>${escapeHtml(d.label || "")}</span></header>
+  return `<article class="card draft${pick ? " pick" : ""}"><header><span>${escapeHtml(d.kind || "build")}</span><span>${escapeHtml(d.label || "")}${isDisposable(d) ? ' <span class="badge">песочница</span>' : ""}</span></header>
     ${box}
     <h3>${escapeHtml(d.title)}</h3>
     ${why}${prd}${open}
@@ -1972,24 +2054,28 @@ async function renderProject() {
     const researching = Boolean(orch.running || orch.status === "running");
     $("orch-run").disabled = researching;
     $("orch-run").textContent = researching ? "Идёт разбор…" : "Разобрать";
-    let journalHtml = '<p class="meta">Журнал загружается…</p>';
-    try {
-      const [mem, ev] = await Promise.all([
-        api(`/api/memory?name=${encodeURIComponent(name)}`),
-        api("/api/events"),
-      ]);
-      const notes = (mem.notes || []).filter((n) => matchesQuery(n.name, n.text));
-      const events = (ev.events || []).filter((e) => matchesQuery(e.kind, e.ref, e.text, eventKindRu(e.kind)));
-      journalHtml = renderJournalHtml(notes, events, name);
-    } catch (err) {
-      journalHtml = `<p class="err">${escapeHtml(err.message)}</p>`;
+    const phone = phoneNarrow();
+    let journalHtml = "";
+    if (!phone) {
+      journalHtml = '<p class="meta">Журнал загружается…</p>';
+      try {
+        const [mem, ev] = await Promise.all([
+          api(`/api/memory?name=${encodeURIComponent(name)}`),
+          api("/api/events"),
+        ]);
+        const notes = (mem.notes || []).filter((n) => matchesQuery(n.name, n.text));
+        const events = (ev.events || []).filter((e) => matchesQuery(e.kind, e.ref, e.text, eventKindRu(e.kind)));
+        journalHtml = renderJournalHtml(notes, events, name);
+      } catch (err) {
+        journalHtml = `<p class="err">${escapeHtml(err.message)}</p>`;
+      }
     }
     const emptyDrafts = researching
       ? ""
       : '<p class="meta empty-next">Черновиков нет. Нажми Разобрать — оркестр предложит следующие шаги, не пустую доску.</p>';
     $("project-box").innerHTML = `
       <div class="project-split">
-        <aside class="project-journal">${journalHtml}</aside>
+        ${phone ? "" : `<aside class="project-journal">${journalHtml}</aside>`}
         <div class="project-main stack">
           <article class="card"><h3>${escapeHtml(stageLine(s))}</h3>
             <p class="meta">открыто ${s.open || 0} · в Готово ${s.ready || 0} · P0 ${s.p0 || 0} · ход ${s.in_progress || 0} · QA ${s.qa || 0}</p>
@@ -1999,16 +2085,17 @@ async function renderProject() {
           ${orchCard(orch, name)}
           ${drafts.length ? draftBatchBar("proj-draft") : ""}
           ${drafts.map((d) => draftCard(d, true)).join("") || emptyDrafts}
+          ${phone ? '<p class="meta"><button type="button" class="btn link" id="proj-journal">Журнал</button></p>' : ""}
         </div>
       </div>`;
     bindDraftList($("project-box"), () => renderProject(), (err) => { if (err) flash(err, true); });
     bindDraftBatch("proj-draft", drafts, () => renderProject(), (err) => {
       if (err) flash(err, true);
     });
+    if ($("proj-journal")) $("proj-journal").onclick = () => setTab("journal");
     if ($("orch-console")) {
       $("orch-console").onclick = () => {
-        consolePick = `orch:${$("orch-console").dataset.orch || name}`;
-        setTab("console");
+        openConsole(`orch:${$("orch-console").dataset.orch || name}`, "");
       };
     }
     watchOrch(researching);
@@ -2325,7 +2412,31 @@ $("save-settings").onclick = async () => {
   refresh();
 };
 
-$("console-project").onchange = () => pollConsole();
+$("console-project").onchange = () => {
+  consolePick = $("console-project").value;
+  pollConsole();
+};
+if ($("console-mode-issue")) {
+  $("console-mode-issue").onclick = () => {
+    consoleLogMode = "issue";
+    paintConsoleChrome();
+    pollConsole();
+  };
+}
+if ($("console-mode-run")) {
+  $("console-mode-run").onclick = () => {
+    consoleLogMode = "run";
+    paintConsoleChrome();
+    pollConsole();
+  };
+}
+if ($("console-to-card")) {
+  $("console-to-card").onclick = () => {
+    if (!consoleIssue) return;
+    setTab("board");
+    openSheet(consoleIssue);
+  };
+}
 
 function liveLabel(p) {
   return p.startsWith("orch:") ? `разбор · ${p.slice(5)}` : p;
@@ -2334,10 +2445,10 @@ function liveLabel(p) {
 async function pollConsole() {
   const f = currentFilter();
   let pick = consolePick || $("console-project").value;
-  if (isPin(f) && pick !== f && pick !== `orch:${f}`) pick = f;
-  if (consolePick) pick = consolePick;
-  consolePick = "";
-  const issue = consoleIssue;
+  if (!consoleIssue && isPin(f) && pick !== f && pick !== `orch:${f}`) pick = f;
+  consolePick = pick;
+  const issue = (consoleIssue && consoleLogMode !== "run") ? consoleIssue : "";
+  paintConsoleChrome();
   try {
     const qs = new URLSearchParams();
     if (pick) qs.set("project", pick);
@@ -2412,11 +2523,13 @@ async function refresh() {
     state._map = mapped;
     const running = (mapped.live || [])[0];
     const researching = (mapped.orch || [])[0];
+    const writing = liveWritingCard(running);
+    stripIssue = writing ? issueRef(writing) : "";
     const q = (state.queue || []).filter((i) => i.status === "waiting").length;
     if (Date.now() >= stripHold) {
       $("strip").classList.remove("bad");
       stripTarget = running ? "console" : researching ? "project" : "";
-      $("strip").disabled = !stripTarget;
+      $("strip").disabled = !(stripTarget || stripIssue);
       $("strip").innerHTML = running
         ? `<i class="pulse"></i><b>VPS · ${escapeHtml(running)}${q ? ` · очередь ${q}` : ""}</b>`
         : researching
@@ -2442,6 +2555,23 @@ async function refresh() {
 }
 
 $("strip").onclick = () => {
+  if (stripIssue) {
+    const card = (state.cards || []).find((c) => issueRef(c) === stripIssue);
+    if (card) {
+      consoleIssue = stripIssue;
+      consolePick = card.project;
+      consoleLogMode = "issue";
+      phoneCol = card.column || phoneCol;
+      setTab("board");
+      openSheet(stripIssue);
+      return;
+    }
+  }
+  const running = (state._map && state._map.live && state._map.live[0]) || "";
+  if (running) {
+    openConsole(running, stripIssue);
+    return;
+  }
   if (stripTarget) setTab(stripTarget);
 };
 
