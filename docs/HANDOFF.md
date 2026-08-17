@@ -112,3 +112,10 @@ looks aimed at a real P0.
 - `corp` command as root works; as `corp` it should too via the same
   wrapper path.
 - Isolation smoke and `CORP_AGENT_USER` are out of scope for first hour.
+
+## Backup (not git)
+
+Copy, do not commit: `/home/corp/.config/corp/{env,workshop.json,workshop.db}`.
+Modes: directory `0700`, files `0600`. Restore onto a new VPS, then
+re-enroll Passkeys if the db was lost. Agent CLI logins are separate.
+Do not put this tarball in the corp repo.
