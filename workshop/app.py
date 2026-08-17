@@ -422,6 +422,7 @@ def api_settings(probe: bool = False) -> dict:
     data["catalog"] = corp.load_catalog()
     data["pins"] = [{"name": p["name"], "repo": p.get("repo")} for p in corp.pinned_projects(corp.load_registry())]
     data["slots"] = {p["name"]: corp.slots_for(p["name"]) for p in corp.pinned_projects(corp.load_registry())}
+    data["doctor"] = corp.doctor_payload()
     return data
 
 

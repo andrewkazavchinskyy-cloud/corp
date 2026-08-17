@@ -48,6 +48,9 @@ start daemons.
 ./bin/corp cycle --write   # memory/next.local.md, gitignored
 ```
 
+If `gh` is missing or not logged in, cycle prints `corp doctor` and
+`run gh auth login`. It does not die before that report.
+
 Priority:
 
 1. Open Issues with label `ready` and without `blocked`, across active repos.

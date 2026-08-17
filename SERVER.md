@@ -31,7 +31,7 @@ Do not treat these as one checkout.
 
 ```bash
 ssh corp-vps
-corp doctor
+corp doctor   # unit, /opt/corp vs origin/main, uvicorn SHA, db mode, Serve not Funnel, isolation
 corp cycle
 corp take --issue owner/repo#n
 corp run --issue owner/repo#n --agent claude

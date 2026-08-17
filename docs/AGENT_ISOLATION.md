@@ -36,7 +36,9 @@ absolute path. This doc is the fix and the runbook for it.
   but **does not** stop the agent from reading `~/.config/corp/*` by
   absolute path -- that requires provisioning the isolated mode below.
 
-`corp doctor` reports which mode is active.
+`corp doctor` reports which mode is active (`isolated` vs `transitional`).
+Transitional is a NO. Isolated is ok only if the agent UID cannot read
+control-plane secrets. Doctor does not flip the flag or provision.
 
 ## Provisioning (root, once per VPS)
 
@@ -88,7 +90,7 @@ Restart the workshop service so it picks up the new env, then verify:
 
 ```bash
 bash deploy/agent-isolation-smoke.sh
-corp doctor   # "agent identity (corp#41): ok"
+corp doctor   # isolation: isolated  /  NO  agent isolation
 ```
 
 ## Smoke check

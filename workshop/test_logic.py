@@ -518,6 +518,113 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert report["queue_after_rollback"] == []
     assert report["killed"] == ["corp"]
     assert ("andrewkazavchinskyy-cloud/corp", 0) in report["released"]
+    assert "[redacted]" in corp.redact_secrets("Authorization: Bearer abcdefghijklmnop")
+    assert "[redacted]" in corp.redact_secrets("token=ghp_abcdefghijklmnopqrstuvwxyz1234")
+    assert "[redacted]" in corp.redact_secrets("123456789:AAHxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+    assert corp.redact_secrets("hello") == "hello"
+    assert "sk-" not in corp.redact_secrets("need_human token=sk-abcdefghijklmnopqrstuvwxyz1234567890")
+    assert "[redacted]" in corp.tg_clip("Authorization: Bearer abcdefghijklmnop", 80)
+    assert corp.pin_owns_repo("andrewkazavchinskyy-cloud/corp", reg2)
+    assert not corp.pin_owns_repo("andrewkazavchinskyy-cloud/LifeBalance", reg2)
+    db = Path(tempfile.mkdtemp(prefix="corp-db-")) / "workshop.db"
+    db.write_text("")
+    os.chmod(db, 0o644)
+    assert not corp.workshop_db_mode_ok(db)
+    os.chmod(db, 0o600)
+    assert corp.workshop_db_mode_ok(db)
+    corp._isolation_cache = None
+    old_user = os.environ.get("CORP_AGENT_USER")
+    os.environ.pop("CORP_AGENT_USER", None)
+    try:
+        iso = corp.isolation_status()
+        assert iso["mode"] == "transitional" and iso["ok"] is False
+    finally:
+        if old_user is None:
+            os.environ.pop("CORP_AGENT_USER", None)
+        else:
+            os.environ["CORP_AGENT_USER"] = old_user
+        corp._isolation_cache = None
+    old_gh = corp.gh_ready
+    corp.gh_ready = lambda: False
+    try:
+        payload = corp.cycle_payload({"org": "andrewkazavchinskyy-cloud", "projects": []})
+        assert payload["mode"] == "auth"
+        assert payload["instruction"] == "run gh auth login"
+        text = corp.render(payload)
+        assert "run gh auth login" in text and "uvicorn should serve" in text
+        names = [c["name"] for c in payload["doctor"]["checks"]]
+        for need in (
+            "workshop unit",
+            "live /opt/corp clean",
+            "live /opt/corp at origin/main",
+            "auth_policy",
+            "workshop.db 0600",
+            "graphify",
+            "tailscale serve",
+            "tailscale funnel off",
+            "cursor",
+            "agent isolation",
+        ):
+            assert need in names
+        assert payload["doctor"]["isolation"] in {"isolated", "transitional"}
+    finally:
+        corp.gh_ready = old_gh
+    old_ok = corp.kind_cli_ok
+    corp.kind_cli_ok = lambda kind: False
+    try:
+        assert next(c["ok"] for c in corp.doctor_payload()["checks"] if c["name"] == "cursor") is False
+    finally:
+        corp.kind_cli_ok = old_ok
+    abort_tmp = Path(tempfile.mkdtemp(prefix="corp-abort-")) / "workshop.json"
+    killed, released, notes = [], [], []
+    with corp.workshop_json_override(abort_tmp):
+        corp.save_workshop(corp.default_workshop())
+        idle = corp.queue_abort(
+            "andrewkazavchinskyy-cloud/clarity",
+            99,
+            kill=lambda name: killed.append(name),
+            release=lambda repo, number: released.append((repo, number)),
+            notify=lambda *a, **k: notes.append(a),
+        )
+        assert idle["aborted"] is False and killed == [] and released == [] and notes == []
+        data = corp.load_workshop()
+        data["queue"] = [
+            {
+                "repo": "andrewkazavchinskyy-cloud/corp",
+                "issue": 1,
+                "project": "corp",
+                "status": "running",
+                "last_error": "Authorization: Bearer supersecrettokenvalue",
+            },
+            {
+                "repo": "andrewkazavchinskyy-cloud/corp",
+                "issue": 2,
+                "project": "corp",
+                "status": "waiting",
+                "last_error": "",
+            },
+        ]
+        corp.save_workshop(data)
+        loaded = corp.load_workshop()
+        assert "supersecret" not in (loaded["queue"][0]["last_error"] or "")
+        assert "[redacted]" in loaded["queue"][0]["last_error"]
+        other = corp.queue_abort(
+            "andrewkazavchinskyy-cloud/corp",
+            2,
+            kill=lambda name: killed.append(name),
+            release=lambda repo, number: released.append((repo, number)),
+            notify=lambda *a, **k: notes.append(a),
+        )
+        assert other["aborted"] is True and killed == []
+        assert ("andrewkazavchinskyy-cloud/corp", 2) in released
+        running = corp.queue_abort(
+            "andrewkazavchinskyy-cloud/corp",
+            1,
+            kill=lambda name: killed.append(name),
+            release=lambda repo, number: released.append((repo, number)),
+            notify=lambda *a, **k: notes.append(a),
+        )
+        assert running["aborted"] is True and killed == ["corp"]
     print("ok")
 
 

@@ -46,6 +46,21 @@ TOKEN_PATH = CONFIG_DIR / "workshop-setup-token"
 RUN_LOG = CONFIG_DIR / "run.log"
 CONTROL_PLANE_SECRET_KEYS = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
 AGENT_WRAPPER_DEFAULT = "/usr/local/sbin/corp-agent-exec"
+WORKSHOP_UNIT = "workshop"
+WORKSHOP_DB = CONFIG_DIR / "workshop.db"
+_REDACT_PATTERNS = (
+    re.compile(r"(?i)\b(authorization|cookie)\s*[:=]\s*\S.*"),
+    re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-+/=]{8,}"),
+    re.compile(r"(?i)\b(api[_-]?key|secret|token)\s*[:=]\s*\S+"),
+    re.compile(r"\b(?:ghp_|gho_|ghu_|ghs_|ghr_|github_pat_)[A-Za-z0-9_]{20,}"),
+    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}"),
+    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}"),
+    re.compile(r"\b\d{8,12}:[A-Za-z0-9_-]{20,}"),
+    re.compile(
+        r"(?i)\b(TELEGRAM_BOT_TOKEN|TELEGRAM_CHAT_ID|CURSOR_API_KEY|GH_TOKEN|OPENAI_API_KEY)=\S+"
+    ),
+)
+_isolation_cache: tuple[float, dict] | None = None
 DEFAULT_PROFILES = [
     {"id": "claude", "kind": "claude", "label": "Claude", "model": "sonnet", "effort": "high", "fast": False},
     {"id": "codex", "kind": "codex", "label": "Codex", "model": "", "effort": "high", "fast": False},
@@ -165,6 +180,151 @@ def gh_ready() -> bool:
     if not have("gh"):
         return False
     return run(["gh", "auth", "status"], check=False).returncode == 0
+
+
+def redact_secrets(text: str) -> str:
+    out = text or ""
+    for pat in _REDACT_PATTERNS:
+        out = pat.sub("[redacted]", out)
+    return out
+
+
+def live_corp_path() -> Path:
+    return Path(os.environ.get("CORP_LIVE") or "/opt/corp").expanduser()
+
+
+def git_tree_report(path: Path) -> dict:
+    empty = {"exists": False, "dirty": True, "behind": True, "head": "", "origin_main": ""}
+    if not path.is_dir():
+        return empty
+    inside = run(["git", "-C", str(path), "rev-parse", "--is-inside-work-tree"], check=False, timeout=8)
+    if inside.returncode != 0 or (inside.stdout or "").strip() != "true":
+        return empty
+    head = (run(["git", "-C", str(path), "rev-parse", "HEAD"], check=False, timeout=8).stdout or "").strip()
+    origin = (
+        run(["git", "-C", str(path), "rev-parse", "origin/main"], check=False, timeout=8).stdout or ""
+    ).strip()
+    porcelain = (
+        run(["git", "-C", str(path), "status", "--porcelain"], check=False, timeout=8).stdout or ""
+    ).strip()
+    behind_proc = run(
+        ["git", "-C", str(path), "rev-list", "--count", "HEAD..origin/main"],
+        check=False,
+        timeout=8,
+    )
+    if behind_proc.returncode != 0:
+        behind = True
+    else:
+        try:
+            behind = int((behind_proc.stdout or "1").strip() or "1") > 0
+        except ValueError:
+            behind = True
+    return {
+        "exists": True,
+        "dirty": bool(porcelain),
+        "behind": behind,
+        "head": head,
+        "origin_main": origin,
+    }
+
+
+def workshop_unit_active() -> bool:
+    if not have("systemctl"):
+        return False
+    proc = run(["systemctl", "is-active", WORKSHOP_UNIT], check=False, timeout=5)
+    return (proc.stdout or "").strip() == "active"
+
+
+def workshop_db_mode(path: Path | None = None) -> str:
+    target = path or WORKSHOP_DB
+    if not target.is_file():
+        return "missing"
+    return oct(target.stat().st_mode & 0o777)
+
+
+def workshop_db_mode_ok(path: Path | None = None) -> bool:
+    return workshop_db_mode(path) == "0o600"
+
+
+def auth_policy_present(root: Path | None = None) -> bool:
+    return ((root or live_or_root()) / "workshop" / "auth_policy.py").is_file()
+
+
+def live_or_root() -> Path:
+    live = live_corp_path()
+    return live if live.is_dir() else ROOT
+
+
+def uvicorn_target_sha() -> str:
+    live = git_tree_report(live_corp_path())
+    if live["origin_main"]:
+        return live["origin_main"]
+    return git_tree_report(ROOT)["origin_main"]
+
+
+def tailscale_status() -> dict:
+    missing = {"serve": False, "funnel": True, "ok": False}
+    if not have("tailscale"):
+        return missing
+    proc = run(["tailscale", "serve", "status", "--json"], check=False, timeout=8)
+    try:
+        data = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    serve_on = bool(data.get("Web") or data.get("TCP"))
+    allow = data.get("AllowFunnel") or {}
+    funnel_on = any(bool(v) for v in allow.values()) if isinstance(allow, dict) else bool(allow)
+    if not serve_on and (proc.stdout or "").strip() and proc.returncode == 0:
+        text = proc.stdout or ""
+        serve_on = "http" in text.lower() or "https" in text.lower()
+    if not funnel_on:
+        fun = run(["tailscale", "funnel", "status"], check=False, timeout=8)
+        text = ((fun.stdout or "") + "\n" + (fun.stderr or "")).lower()
+        if "no funnel" in text or "funnel is not" in text or "funnel off" in text:
+            funnel_on = False
+        elif re.search(r"https://\S+", text) and "off" not in text:
+            funnel_on = True
+    return {"serve": serve_on, "funnel": funnel_on, "ok": serve_on and not funnel_on}
+
+
+def isolation_status() -> dict:
+    global _isolation_cache
+    now = time.time()
+    if _isolation_cache and now - _isolation_cache[0] < 30:
+        return _isolation_cache[1]
+    user = agent_user_name()
+    wrapper = agent_wrapper_path()
+    if not user:
+        result = {"mode": "transitional", "ok": False, "reason": "CORP_AGENT_USER unset"}
+    elif not wrapper.is_file():
+        result = {"mode": "transitional", "ok": False, "reason": "wrapper missing"}
+    elif run(["sudo", "-n", "-u", user, "true"], check=False, timeout=5).returncode != 0:
+        result = {"mode": "transitional", "ok": False, "reason": "sudo failed"}
+    else:
+        leaked = ""
+        for path in (CONFIG_DIR / "env", WORKSHOP_JSON, WORKSHOP_DB, TOKEN_PATH):
+            if not path.exists():
+                continue
+            probe = run(["sudo", "-n", "-u", user, "test", "-r", str(path)], check=False, timeout=5)
+            if probe.returncode == 0:
+                leaked = path.name
+                break
+        if leaked:
+            result = {"mode": "isolated", "ok": False, "reason": f"agent can read {leaked}"}
+        else:
+            result = {"mode": "isolated", "ok": True, "reason": ""}
+    _isolation_cache = (now, result)
+    return result
+
+
+def sanitize_workshop(data: dict) -> dict:
+    for item in data.get("queue") or []:
+        err = item.get("last_error")
+        if err:
+            item["last_error"] = redact_secrets(str(err))
+    return data
 
 
 def active_projects(reg: dict, include_paused: bool = False) -> list[dict]:
@@ -564,7 +724,12 @@ def graph_detail(reg: dict, name: str) -> dict:
 
 def cycle_payload(reg: dict) -> dict:
     if not gh_ready():
-        die("gh is missing or not logged in. Run: gh auth login")
+        return {
+            "mode": "auth",
+            "next": None,
+            "doctor": doctor_payload(),
+            "instruction": "run gh auth login",
+        }
 
     issues = collect_issues(reg)
     ready, other = split_ready(reg, issues)
@@ -597,6 +762,11 @@ def cycle_payload(reg: dict) -> dict:
 
 
 def render(payload: dict) -> str:
+    if payload.get("mode") == "auth":
+        lines = ["=== CORP CYCLE ===", "mode: auth", ""]
+        lines += doctor_lines(payload.get("doctor") or doctor_payload())
+        lines += ["", payload.get("instruction") or "run gh auth login"]
+        return "\n".join(lines) + "\n"
     lines = ["=== CORP CYCLE ===", f"mode: {payload['mode']}"]
     nxt = payload.get("next")
     if nxt:
@@ -651,6 +821,12 @@ def status(reg: dict) -> None:
 
 def doctor_payload() -> dict:
     load_env()
+    live = live_corp_path()
+    tree = git_tree_report(live)
+    ts = tailscale_status()
+    iso = isolation_status()
+    db_mode = workshop_db_mode()
+    uvicorn_sha = uvicorn_target_sha()
     checks = [
         ("git", have("git")),
         ("gh", have("gh")),
@@ -665,21 +841,50 @@ def doctor_payload() -> dict:
         ("tmux", have("tmux")),
         ("telegram token", bool(os.environ.get("TELEGRAM_BOT_TOKEN"))),
         ("telegram chat", bool(os.environ.get("TELEGRAM_CHAT_ID"))),
-        ("agent identity isolated", agent_identity_ready()),
+        ("workshop unit", workshop_unit_active()),
+        ("live /opt/corp clean", tree["exists"] and not tree["dirty"]),
+        ("live /opt/corp at origin/main", tree["exists"] and bool(tree["origin_main"]) and not tree["behind"]),
+        ("auth_policy", auth_policy_present()),
+        ("workshop.db 0600", workshop_db_mode_ok()),
+        ("tailscale serve", ts["serve"]),
+        ("tailscale funnel off", not ts["funnel"]),
+        ("agent isolation", iso["ok"]),
     ]
     return {
         "corp": str(ROOT),
         "workspace": str(workspace()),
+        "live": str(live),
+        "live_exists": tree["exists"],
+        "live_sha": tree["head"],
+        "live_dirty": tree["dirty"] if tree["exists"] else True,
+        "live_behind": tree["behind"] if tree["exists"] else True,
+        "uvicorn_sha": uvicorn_sha,
+        "workshop_db_mode": db_mode,
+        "isolation": iso["mode"],
+        "isolation_reason": iso.get("reason") or "",
         "checks": [{"name": name, "ok": ok} for name, ok in checks],
     }
 
 
+def doctor_lines(payload: dict | None = None) -> list[str]:
+    payload = payload or doctor_payload()
+    iso = payload.get("isolation") or "transitional"
+    reason = payload.get("isolation_reason") or ""
+    iso_line = f"isolation: {iso}" + (f" ({reason})" if reason and iso != "isolated" else "")
+    return [
+        f"corp: {payload.get('corp')}",
+        f"workspace: {payload.get('workspace')}",
+        f"live: {payload.get('live') or 'missing'}",
+        f"live HEAD: {payload.get('live_sha') or '—'}",
+        f"uvicorn should serve: {payload.get('uvicorn_sha') or '—'}",
+        f"workshop.db: {payload.get('workshop_db_mode') or 'missing'}",
+        iso_line,
+        *[f"{'ok' if row['ok'] else 'NO':2}  {row['name']}" for row in payload.get("checks") or []],
+    ]
+
+
 def doctor() -> None:
-    payload = doctor_payload()
-    print(f"corp: {payload['corp']}")
-    print(f"workspace: {payload['workspace']}")
-    for row in payload["checks"]:
-        print(f"{'ok' if row['ok'] else 'NO':2}  {row['name']}")
+    print("\n".join(doctor_lines()))
 
 
 def tg_creds() -> tuple[str, str]:
@@ -707,7 +912,7 @@ def notify(text: str, buttons: list | None = None, keyboard: list | None = None)
     _, chat = tg_creds()
     if not chat:
         die("telegram not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in ~/.config/corp/env")
-    payload = {"chat_id": chat, "text": text, "disable_web_page_preview": "true"}
+    payload = {"chat_id": chat, "text": redact_secrets(text), "disable_web_page_preview": "true"}
     if buttons:
         payload["reply_markup"] = json.dumps({"inline_keyboard": buttons})
     elif keyboard:
@@ -728,7 +933,7 @@ def notify_safe(text: str, buttons: list | None = None, keyboard: list | None = 
 
 
 def need_human(text: str, buttons: list | None = None) -> None:
-    first = (text or "").strip().split("\n", 1)[0]
+    first = redact_secrets((text or "").strip().split("\n", 1)[0])
     tg_notify_event("need_human", "Нужно тебя", tg_clip(first, 60), buttons=buttons)
 
 
@@ -777,7 +982,7 @@ def load_workshop() -> dict:
     data.setdefault("registry", {})
     data.setdefault("auto_queue_on_approve", True)
     data.setdefault("queue_retries", QUEUE_MAX_ATTEMPTS)
-    return data
+    return sanitize_workshop(data)
 
 
 @contextmanager
@@ -794,6 +999,7 @@ def workshop_lock():
 
 def save_workshop(data: dict) -> None:
     config_dir()
+    sanitize_workshop(data)
     tmp = WORKSHOP_JSON.with_name(".workshop.json.tmp")
     tmp.write_text(json.dumps(data, indent=2) + "\n")
     os.chmod(tmp, 0o600)
@@ -1140,7 +1346,7 @@ def last_log_lines(n: int = 3, prefix: str = "") -> str:
         return "тишина"
     clipped = []
     for line in lines[-n:]:
-        clipped.append(line[:200])
+        clipped.append(redact_secrets(line[:200]))
     return "\n".join(clipped)
 
 
@@ -1655,7 +1861,7 @@ def tg_reset_dedup() -> None:
 
 
 def tg_clip(text: str, n: int = 48) -> str:
-    clean = " ".join((text or "").split())
+    clean = " ".join(redact_secrets(text or "").split())
     return clean if len(clean) <= n else clean[: n - 1] + "…"
 
 
@@ -1828,7 +2034,9 @@ def tg_drafts_text(drafts: list) -> str:
 
 
 def tg_pulse_text(repo: str, number: int, mins: int, log_line: str, prev_log: str) -> str | None:
-    if not prev_log or log_line == prev_log:
+    cur = redact_secrets(log_line or "")
+    prev = redact_secrets(prev_log or "")
+    if not prev or cur == prev:
         return None
     return tg_card(tg_short_ref(repo, number), f"{mins} мин", "пишет")
 
@@ -2103,7 +2311,9 @@ def tg_cmd_retry(arg: str) -> None:
 
 def tg_cmd_abort(arg: str) -> None:
     repo, number = tg_parse_issue_arg(arg)
-    queue_abort(repo, number)
+    result = queue_abort(repo, number)
+    if not result.get("aborted"):
+        notify_safe(tg_card(tg_short_ref(repo, number), "не в очереди"))
 
 
 TG_HANDLERS = {
@@ -2161,7 +2371,9 @@ def handle_tg_callback(code: str) -> None:
         return
     if code.startswith("k:") or code.startswith("qb:"):
         repo, number = parse_issue_ref(code.split(":", 1)[1])
-        queue_abort(repo, number)
+        result = queue_abort(repo, number)
+        if not result.get("aborted"):
+            notify_safe(tg_card(tg_short_ref(repo, number), "не в очереди"))
 
 
 def parse_issue_ref(raw: str) -> tuple[str, int]:
@@ -2804,10 +3016,7 @@ def agent_wrapper_path() -> Path:
 
 
 def agent_identity_ready() -> bool:
-    user = agent_user_name()
-    if not user or not agent_wrapper_path().is_file():
-        return False
-    return run(["sudo", "-n", "-u", user, "true"], check=False).returncode == 0
+    return isolation_status()["ok"]
 
 
 def transitional_env() -> dict[str, str]:
@@ -3314,23 +3523,41 @@ def queue_rm(repo: str, number: int) -> dict:
     return {"ok": True, "queue": kept}
 
 
+def queue_item(data: dict, repo: str, number: int) -> dict | None:
+    for item in data.get("queue") or []:
+        if item.get("repo") == repo and item.get("issue") == number:
+            return item
+    return None
+
+
+def pin_owns_repo(repo: str, reg: dict | None = None) -> bool:
+    try:
+        registry = reg if reg is not None else load_registry()
+    except Exception:
+        return False
+    return any(project.get("repo") == repo for project in pinned_projects(registry))
+
+
 def queue_abort(repo: str, number: int, kill=None, release=None, notify=None) -> dict:
     kill = kill or tmux_kill
     release = release or release_runner
     notify = notify or notify_safe
     with workshop_lock():
         data = load_workshop()
-        found = None
-        for item in data["queue"]:
-            if item["repo"] == repo and item["issue"] == number:
-                found = item
-                break
+        found = queue_item(data, repo, number)
         if found is None:
-            release(repo, number)
-            return {"ok": True, "queue": data["queue"], "aborted": True}
-        kill(found.get("project") or "")
+            return {"ok": True, "queue": data["queue"], "aborted": False}
+        project = found.get("project") or ""
+        others_running = any(
+            item is not found
+            and (item.get("project") or "") == project
+            and item.get("status") == "running"
+            for item in data["queue"]
+        )
         data["queue"] = [item for item in data["queue"] if item is not found]
         save_workshop(data)
+    if not others_running:
+        kill(project)
     release(repo, number)
     notify(tg_card(tg_short_ref(repo, number), "откатил"))
     return {"ok": True, "queue": data["queue"], "aborted": True}
