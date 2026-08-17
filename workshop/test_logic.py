@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 import sqlite3
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,6 +42,19 @@ def main() -> None:
     assert corp.is_free_ready(issue(["ready"]), reg)
     assert not corp.is_free_ready(issue(["ready", "queued"]), reg)
     assert not corp.is_free_ready(issue(["ready", "self"]), reg)
+    assert not corp.is_free_ready(issue(["ready", "in-qa"]), reg)
+    assert not corp.is_free_ready(issue(["in-qa"]), reg)
+    assert corp.is_free_ready(issue(["ready", "qa-fail"]), reg)
+    assert corp.is_free_ready(issue(["ready", "in-qa", "qa-fail"]), reg)
+    after_abort = set(["in-qa", "in-progress", "via:claude"])
+    remove, add = corp.release_labels(after_abort)
+    leftover = (after_abort - set(remove)) | set(add)
+    assert "in-qa" in leftover and "ready" not in leftover
+    assert not corp.is_free_ready(issue(list(leftover)), reg)
+    crashed = set(["in-progress", "via:claude"])
+    remove, add = corp.release_labels(crashed)
+    ready_again = (crashed - set(remove)) | set(add)
+    assert "ready" in ready_again and corp.is_free_ready(issue(list(ready_again)), reg)
     reg2 = {
         "org": "andrewkazavchinskyy-cloud",
         "projects": [
@@ -87,6 +101,9 @@ def main() -> None:
     assert corp.write_block_reason(cards, "missing") == ""
     qa_cards = [{"project": "corp", "number": 4, "state": "OPEN", "column": "qa", "runner": "queued"}]
     assert corp.write_block_reason(qa_cards, "corp", 9).startswith("VPS")
+    qa_idle = [{"project": "corp", "number": 4, "state": "OPEN", "column": "qa", "runner": ""}]
+    assert corp.write_block_reason(qa_idle, "corp", 9) == "corp is in QA"
+    assert corp.write_block_reason(qa_idle, "corp", 4) == ""
     drafts = [{"project": "corp", "title": "expand board"}]
     assert corp.next_move(cards, drafts, "corp") is None
     empty_ready = [c for c in cards if c["column"] != "ready"]
@@ -238,6 +255,79 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert "self" in corp.issue_eligibility(reg2, repo, 2, issue(["ready"]), cards=cards)
     free = [{"project": "corp", "number": 9, "state": "OPEN", "column": "ready", "runner": ""}]
     assert corp.issue_eligibility(reg2, repo, 9, issue(["ready"]), cards=free) == ""
+    assert "QA" in corp.issue_eligibility(reg2, repo, 1, issue(["in-qa"]), cards=[])
+    assert "QA" in corp.issue_eligibility(reg2, repo, 1, issue(["ready", "in-qa"]), cards=[])
+    assert corp.issue_eligibility(reg2, repo, 1, issue(["in-qa"]), cards=[], allow_in_qa=True) == ""
+    assert corp.close_action(issue(["ready"])) == "send-to-qa"
+    assert corp.close_action(issue(["in-qa"])) == "close"
+    assert corp.close_action(issue(["ready"]), force=True) == "close"
+    assert corp.close_action(issue(["in-qa"]), fail=True) == "reject"
+    assert corp.close_action(issue(["ready"]), fail=True) == "not-qa"
+    assert corp.can_promote_to_qa(0, issue(["ready"]))
+    assert not corp.can_promote_to_qa(1, issue(["ready"]))
+    assert not corp.can_promote_to_qa(0, issue(["ready"], "CLOSED"))
+    assert corp.parse_exit_code("noise\nandrewkazavchinskyy-cloud/corp#59 EXIT:9\n") == 9
+    assert corp.parse_exit_code("corp#1 EXIT:0\ncorp#1 EXIT:3\n", "corp#1") == 3
+    assert corp.parse_exit_code("no code here") is None
+    assert corp.read_tmux_exit("", "") == 1
+    assert corp.read_tmux_exit("", "pane EXIT:4") == 4
+    script = corp.tmux_agent_script(Path("/tmp/dest"), "false 2>&1", "corp#59")
+    assert "set -o pipefail" in script and "EXIT:$?" in script
+    class _Gone:
+        returncode = 1
+    old_run = corp.run
+    old_log = corp.RUN_LOG
+    tmp = Path(tempfile.mkdtemp(prefix="corp-tmux-")) / "run.log"
+    tmp.write_text("andrewkazavchinskyy-cloud/corp#59 EXIT:9\n")
+    try:
+        corp.RUN_LOG = tmp
+        corp.run = lambda *a, **k: _Gone()
+        assert corp.wait_tmux("corp", "andrewkazavchinskyy-cloud/corp#59") == 9
+        tmp.write_text("killed, no exit line\n")
+        assert corp.wait_tmux("corp") == 1
+    finally:
+        corp.run = old_run
+        corp.RUN_LOG = old_log
+    added = []
+    old_get = corp.get_issue
+    old_add = corp.add_labels
+    old_remove = corp.remove_labels
+    old_inv = corp.invalidate_board
+    old_notify = corp.notify_safe
+    try:
+        corp.get_issue = lambda repo, number: issue(["ready"])
+        corp.add_labels = lambda *a, **k: added.append(("add", a, k))
+        corp.remove_labels = lambda *a, **k: added.append(("rm", a, k))
+        corp.invalidate_board = lambda: None
+        corp.notify_safe = lambda *a, **k: None
+        busy = [{"project": "corp", "number": 4, "state": "OPEN", "column": "qa", "runner": ""}]
+        try:
+            corp.send_to_qa(reg2, repo, 9, enqueue=False, cards=busy)
+            raise AssertionError("second in-qa should die")
+        except corp.CorpError as exc:
+            assert "QA" in str(exc)
+        sent = corp.send_to_qa(
+            reg2,
+            repo,
+            9,
+            enqueue=False,
+            cards=[{"project": "corp", "number": 9, "state": "OPEN", "column": "ready", "runner": ""}],
+        )
+        assert sent["queued"] is False and sent["column"] == "qa"
+        assert any(row[0] == "add" and "in-qa" in row[1][2] for row in added)
+        old_pin = corp.pin_write_block
+        corp.pin_write_block = lambda *a, **k: ""
+        try:
+            routed = corp.close_issue(reg2, repo, 9)
+            assert routed.get("column") == "qa" and not routed.get("closed")
+        finally:
+            corp.pin_write_block = old_pin
+    finally:
+        corp.get_issue = old_get
+        corp.add_labels = old_add
+        corp.remove_labels = old_remove
+        corp.invalidate_board = old_inv
+        corp.notify_safe = old_notify
     class _Proc:
         def __init__(self, code, err="", out="[]"):
             self.returncode = code

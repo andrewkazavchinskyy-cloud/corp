@@ -557,7 +557,15 @@ async def api_move(request: Request) -> dict:
 async def api_close(request: Request) -> dict:
     body = await request.json()
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
-    return call(corp.close_issue, corp.load_registry(), repo, number)
+    return call(
+        corp.close_issue,
+        corp.load_registry(),
+        repo,
+        number,
+        force=bool(body.get("force")),
+        fail=bool(body.get("fail") or body.get("verdict") == "fail"),
+        note=body.get("note") or "",
+    )
 
 
 @app.post("/api/run")
