@@ -1618,6 +1618,17 @@ def notify_safe(
         return {}
 
 
+def tg_send(
+    text: str,
+    buttons: list | None = None,
+    keyboard: list | None = None,
+    force_reply: bool = False,
+) -> dict:
+    return notify_safe(
+        text, buttons=buttons, keyboard=keyboard, force_reply=force_reply, parse_mode="HTML"
+    )
+
+
 def need_human(text: str, buttons: list | None = None) -> None:
     first = redact_secrets((text or "").strip().split("\n", 1)[0])
     action_ref = ""
@@ -1656,6 +1667,8 @@ def default_workshop() -> dict:
         "tg_reply": {},
         "tg_status": {},
         "tg_board": {},
+        "tg_cycle": {},
+        "tg_more": {},
         "registry": {},
         "auto_queue_on_approve": True,
         "queue_retries": QUEUE_MAX_ATTEMPTS,
@@ -1682,6 +1695,8 @@ def load_workshop() -> dict:
     data.setdefault("tg_reply", {})
     data.setdefault("tg_status", {})
     data.setdefault("tg_board", {})
+    data.setdefault("tg_cycle", {})
+    data.setdefault("tg_more", {})
     data.setdefault("registry", {})
     data.setdefault("auto_queue_on_approve", True)
     data.setdefault("queue_retries", QUEUE_MAX_ATTEMPTS)
@@ -2827,33 +2842,48 @@ def tg_upsert_status(process_key: str = "", *, keep_card: bool = False) -> None:
     mid = state.get("message_id")
     same = str(state.get("process_key") or "") == str(key)
     if mid and (same or keep_card):
-        if tg_edit_status(int(mid), text, buttons):
+        if tg_edit_message(int(mid), text, buttons, parse_mode="HTML"):
             if not same:
                 tg_save_status(key, int(mid))
             return
-    result = notify_safe(text, buttons=buttons)
+    result = tg_send(text, buttons=buttons)
     new_id = ((result or {}).get("result") or {}).get("message_id")
     if new_id:
         tg_save_status(key, int(new_id))
 
 
+def tg_need_human_text(ref: str = "", why: str = "") -> str:
+    lines = []
+    if ref:
+        lines.append(ref)
+    if why and why != ref:
+        lines.append(tg_clip(why, 80))
+    return tg_screen("Нужно тебя", lines or ["Что-то остановилось."], "выбери действие.")
+
+
 def tg_need_human_buttons(ref: str = "", url: str = "") -> list:
     row = [{"text": "Пауза", "callback_data": "c:pause"}]
     action = ""
-    open_url = url or ""
     raw = (ref or "").strip()
     if raw and "#" in raw:
         try:
             repo, number = parse_issue_ref(raw) if "/" in raw else tg_parse_issue_arg(raw)
             action = issue_ref(repo, number)
-            open_url = open_url or tg_workshop_issue_url(repo, number, action)
         except CorpError:
             action = ""
     if action:
         row.append({"text": "Повторить", "callback_data": f"q:{action}"})
-    if open_url:
-        row.append({"text": "Открыть карточку", "url": open_url})
-    return [row]
+    row.append({"text": "Доска", "callback_data": "h:b"})
+    shop = url if url and ".ts.net" in url else ""
+    if not shop and action:
+        try:
+            repo, number = parse_issue_ref(action)
+            shop = tg_workshop_issue_url(repo, number, action)
+        except CorpError:
+            shop = ""
+    if shop and ".ts.net" in shop:
+        row.append({"text": "Мастерская", "url": shop})
+    return [row[:4]]
 
 
 def tg_notify_event(
@@ -2878,11 +2908,23 @@ def tg_notify_event(
         markup = buttons if buttons is not None else (
             tg_need_human_buttons(action_ref or ref, url) if kind == "need_human" else tg_event_buttons(kind, url=url, ref=action_ref or ref)
         )
-        notify_safe(tg_card(ref, happened, nxt), buttons=markup or None)
+        if kind == "need_human":
+            text = tg_need_human_text(ref, happened)
+        else:
+            title = "Упало" if kind == "fail" else "Завис"
+            text = tg_screen(title, [str(ref), happened], nxt or "пауза или повтори.")
+        tg_send(text, buttons=markup or None)
         tg_upsert_status(process)
         return
     markup = buttons if buttons is not None else tg_event_buttons(kind, url=url, ref=action_ref or ref)
     notify_safe(tg_card(ref, happened, nxt), buttons=markup or None)
+
+
+def tg_shop_url() -> str:
+    base = workshop_public_url()
+    if base and ".ts.net" in base:
+        return base
+    return ""
 
 
 def workshop_public_url() -> str:
@@ -2914,22 +2956,20 @@ def tg_workshop_issue_url(repo: str = "", number: int | None = None, ref: str = 
 
 def tg_event_buttons(kind: str, url: str = "", ref: str = "") -> list:
     row = []
-    open_url = ""
+    shop = url if url and ".ts.net" in url else ""
     if ref and "#" in str(ref):
         try:
             repo, number = parse_issue_ref(ref)
-            open_url = tg_workshop_issue_url(repo, number, ref)
+            shop = shop or tg_workshop_issue_url(repo, number, ref)
         except CorpError:
-            open_url = tg_workshop_issue_url(ref=ref)
-    if not open_url:
-        open_url = tg_workshop_issue_url(ref=ref) or url
-    if open_url:
-        row.append({"text": "Открыть карточку", "url": open_url})
+            shop = shop or tg_workshop_issue_url(ref=ref)
+    if shop and ".ts.net" in shop:
+        row.append({"text": "Мастерская", "url": shop})
     retry_kinds = {"fail", "incomplete", "hung", "waiting_error"}
     if kind in retry_kinds and ref:
-        row.append({"text": "Повторить карточку", "callback_data": f"q:{ref}"})
+        row.append({"text": "Повторить", "callback_data": f"q:{ref}"})
     if kind in {"start", "hung"}:
-        row.append({"text": "Поставить на паузу", "callback_data": "c:pause"})
+        row.append({"text": "Пауза", "callback_data": "c:pause"})
     if kind in {"to_qa", "ready_qa"} and ref:
         row.append({"text": "QA прошёл", "callback_data": f"qap:{ref}"})
         row.append({"text": "QA не принял", "callback_data": f"qaf:{ref}"})
@@ -2940,7 +2980,7 @@ def tg_draft_buttons(drafts: list) -> list:
     if not drafts:
         return []
     did = drafts[0].get("id") or ""
-    return [[{"text": "Принять черновик", "callback_data": f"a:{did}"}, {"text": "Пропустить черновик", "callback_data": f"s:{did}"}]]
+    return [[{"text": "Принять", "callback_data": f"a:{did}"}, {"text": "Пропустить", "callback_data": f"s:{did}"}]]
 
 
 def tg_col_ru(column: str) -> str:
@@ -2982,21 +3022,17 @@ def tg_pulse_card(
         else:
             nxt = "открой доску или продолжи автоном"
     lines = [
-        "Сейчас",
-        "",
         f"Очередь: {'идёт' if queue_on else 'пауза'}",
         f"Пишет: {writer or 'тихо'}",
-        f"Команда: {council or 'не идёт'}",
+        f"Цикл: {council or 'не идёт'}",
     ]
     if err:
         lines.append(f"Ошибка: {err}")
-    lines.append(f"Сервер: {'ок' if server_ok else 'нет места на диске'}")
+    if not server_ok:
+        lines.append("Диск: нет места")
     if int(drafts) > 0:
         lines.append(f"Черновики: {int(drafts)}")
-    lines.append(tg_iso_line(iso_mode))
-    lines.append("")
-    lines.append(f"Дальше: {nxt}")
-    return "\n".join(lines)
+    return tg_screen("Сейчас", lines, nxt)
 
 
 def tg_status_text(*, queue_on: bool, writer: str, server_ok: bool, drafts: int) -> str:
@@ -3070,6 +3106,45 @@ def tg_html(text: str) -> str:
     import html
 
     return html.escape(text or "", quote=False)
+
+
+def tg_screen(title: str, lines: list[str] | None = None, nxt: str = "") -> str:
+    parts = [f"<b>{tg_html(title)}</b>"]
+    body = [tg_html(str(line)) for line in (lines or []) if str(line).strip()]
+    if body:
+        parts.append("")
+        parts.extend(body[:9])
+    if nxt:
+        parts.append("")
+        parts.append(f"Дальше: {tg_html(nxt)}")
+    return "\n".join(parts)
+
+
+def tg_err(exc: Exception) -> str:
+    raw = tg_clip(redact_secrets(str(exc) or ""), 80)
+    low = raw.lower()
+    if "use --issue" in low or "parse failed" in low:
+        return tg_screen("Ошибка", ["Не понял карточку."], "открой доску.")
+    return tg_screen("Ошибка", [raw], "открой доску или Ещё.")
+
+
+def tg_save_slot(slot: str, message_id: int) -> None:
+    with workshop_lock():
+        data = load_workshop()
+        row = dict(data.get(slot) or {})
+        row["message_id"] = int(message_id)
+        data[slot] = row
+        save_workshop(data)
+
+
+def tg_upsert_html(slot: str, text: str, buttons: list | None = None) -> None:
+    mid = (load_workshop().get(slot) or {}).get("message_id")
+    if mid and tg_edit_message(int(mid), text, buttons, parse_mode="HTML"):
+        return
+    result = tg_send(text, buttons=buttons or None)
+    new_id = ((result or {}).get("result") or {}).get("message_id")
+    if new_id:
+        tg_save_slot(slot, int(new_id))
 
 
 def tg_card_project(card: dict) -> str:
@@ -3181,32 +3256,26 @@ def tg_board_text(cards: list, project: str = "", page: int = 1, open_ref: str =
         col = tg_col_ru(opened.get("column") or "backlog")
         title = tg_clip(opened.get("title") or "", 80)
         nxt = "QA прошёл или QA не принял." if (opened.get("column") or "") == "qa" else "возьми себе или поставь в очередь."
-        lines = [f"<b>Доска</b> · <b>{tg_html(ref)}</b>", tg_html(col), ""]
+        body = [col]
         if title:
-            lines.append(tg_html(title))
-            lines.append("")
-        lines.append(f"Дальше: {nxt}")
-        return "\n".join(lines)
+            body.append(title)
+        return tg_screen(f"Доска · {ref}", body, nxt)
     counts = tg_board_counts(ranked)
     label = (project or "").strip()
-    head = f"<b>Доска</b> · <b>{tg_html(label)}</b>" if label else "<b>Доска</b>"
-    lines = [head, "", f"Готово {counts['ready']} · Ход {counts['in-progress']} · QA {counts['qa']}"]
+    head = f"Доска · {label}" if label else "Доска"
+    lines = [f"Готово {counts['ready']} · Ход {counts['in-progress']} · QA {counts['qa']}"]
     page_cards, page, pages = tg_board_slice(ranked, page)
     if not page_cards:
-        lines.extend(["", "Открытых карточек нет.", "", "Дальше: запусти цикл или смени фильтр."])
-        return "\n".join(lines)
+        where = f"в {label} пусто" if label else "на доске пусто"
+        return tg_screen(head, lines + [f"{where} — смени фильтр или открой цикл"], "смени фильтр или запусти цикл.")
     for card in page_cards:
         ref = tg_short_ref(card.get("repo") or card.get("project") or "", card.get("number"))
-        title = tg_clip(card.get("title") or "", 40)
+        title = tg_clip(card.get("title") or "", 36)
         col = tg_col_ru(card.get("column") or "backlog")
-        lines.append("")
-        lines.append(f"<b>{tg_html(ref)}</b> · {tg_html(col)}")
-        if title:
-            lines.append(tg_html(title))
+        lines.append(f"{ref} · {col}" + (f" · {title}" if title else ""))
     if pages > 1:
-        lines.extend(["", f"{page}/{pages}"])
-    lines.extend(["", "Дальше: открой карточку или смени проект."])
-    return "\n".join(lines)
+        lines.append(f"{page}/{pages}")
+    return tg_screen(head, lines, "открой карточку или смени проект.")
 
 
 def tg_board_card_buttons(card: dict, shop: str = "") -> list:
@@ -3219,8 +3288,8 @@ def tg_board_card_buttons(card: dict, shop: str = "") -> list:
     labels = tg_card_labels(card)
     open_url = tg_workshop_issue_url(repo, int(number), key) or shop
     rows = []
-    if open_url:
-        rows.append([{"text": "Открыть", "url": open_url}])
+    if open_url and ".ts.net" in open_url:
+        rows.append([{"text": "Мастерская", "url": open_url}])
     if col == "qa":
         rows.append([
             {"text": "QA прошёл", "callback_data": f"qap:{key}"},
@@ -3249,7 +3318,7 @@ def tg_board_buttons(
     chips = [{"text": "· Все" if not (project or "").strip() else "Все", "callback_data": "b:f:"}]
     for name in tg_board_pin_names(pins, cards):
         chips.append({"text": f"· {name}" if (project or "").strip() == name else name, "callback_data": f"b:f:{name}"})
-    rows = _tg_rows(chips, 4)
+    rows = _tg_rows(chips, 3)
     opens = []
     for card in page_cards:
         short = tg_short_ref(card.get("repo") or card.get("project") or "", card.get("number"))
@@ -3263,7 +3332,7 @@ def tg_board_buttons(
         if page < pages:
             nav.append({"text": "→", "callback_data": f"b:p:{page + 1}"})
         rows.append(nav)
-    if shop:
+    if shop and ".ts.net" in shop:
         rows.append([{"text": "Мастерская", "url": shop}])
     return rows
 
@@ -3307,7 +3376,7 @@ def tg_upsert_board(
     _, pg, _ = tg_board_slice(ranked, pg)
     text = tg_board_text(cards, project=filt, page=pg, open_ref=opened)
     buttons = tg_board_buttons(
-        cards, project=filt, page=pg, pins=pins, open_ref=opened, shop=workshop_public_url()
+        cards, project=filt, page=pg, pins=pins, open_ref=opened, shop=tg_shop_url()
     )
     mid = state.get("message_id")
     if mid and tg_edit_message(int(mid), text, buttons, parse_mode="HTML"):
@@ -3322,9 +3391,82 @@ def tg_upsert_board(
 def tg_drafts_text(drafts: list) -> str:
     if not drafts:
         return "Черновиков нет"
-    cur = drafts[0]
-    project = cur.get("project") or cur.get("label") or (cur.get("repo") or "").rsplit("/", 1)[-1] or "черновик"
-    return f"Черновики: {len(drafts)}\n{project} · {tg_clip(cur.get('title') or '', 60)}"
+    lines = [f"Черновики: {len(drafts)}"]
+    for draft in drafts[:3]:
+        project = draft.get("project") or draft.get("label") or (draft.get("repo") or "").rsplit("/", 1)[-1] or "черновик"
+        lines.append(f"{project} · {tg_clip(draft.get('title') or '', 40)}")
+    if len(drafts) > 3:
+        lines.append(f"ещё {len(drafts) - 3}")
+    return "\n".join(lines)
+
+
+def tg_more_text(data: dict | None = None) -> str:
+    data = data or load_workshop()
+    drafts = data.get("drafts") or []
+    queue = data.get("queue") or []
+    queued = [item for item in queue if item.get("status") in {"waiting", "running", "failed"}]
+    lines = [
+        f"Автоном: {'идёт' if data.get('queue_running') else 'пауза'}",
+        f"Черновики: {len(drafts)}",
+    ]
+    if queued:
+        item = queued[0]
+        lines.append(f"В очереди: {tg_short_ref(item.get('repo') or '', item.get('issue'))}")
+    if council_busy(data):
+        lines.append("Цикл сейчас идёт.")
+    for draft in drafts[:3]:
+        project = draft.get("project") or draft.get("label") or (draft.get("repo") or "").rsplit("/", 1)[-1] or "черновик"
+        lines.append(f"· {project} · {tg_clip(draft.get('title') or '', 40)}")
+    if len(drafts) > 3:
+        lines.append(f"ещё {len(drafts) - 3}")
+    nxt = "прими или пропусти черновик." if drafts else "выбери действие."
+    return tg_screen("Ещё", lines, nxt)
+
+
+def tg_more_buttons(data: dict | None = None) -> list:
+    data = data or load_workshop()
+    drafts = data.get("drafts") or []
+    queue = data.get("queue") or []
+    queued = [item for item in queue if item.get("status") in {"waiting", "running", "failed"}]
+    shop = tg_shop_url()
+    rows = []
+    if data.get("queue_running"):
+        rows.append([{"text": "Пауза", "callback_data": "c:pause"}])
+    else:
+        rows.append([{"text": "Автоном", "callback_data": "?g"}])
+    extra = []
+    if queued:
+        key = issue_ref(queued[0]["repo"], queued[0]["issue"])
+        extra.append({"text": "Откатить", "callback_data": f"?k:{key}"})
+    if council_busy(data):
+        extra.append({"text": "Стоп цикла", "callback_data": "?c"})
+    if extra:
+        rows.append(extra)
+    if shop:
+        rows.append([{"text": "Мастерская", "url": shop}])
+    rows.append([{"text": "Помощь", "callback_data": "h:p"}])
+    if drafts:
+        rows.extend(tg_draft_buttons(drafts))
+    return rows
+
+
+def tg_upsert_more() -> None:
+    prune_drafts()
+    data = load_workshop()
+    tg_upsert_html("tg_more", tg_more_text(data), tg_more_buttons(data))
+
+
+def tg_cycle_buttons(data: dict | None = None) -> list:
+    if council_busy(data or load_workshop()):
+        return [[{"text": "Стоп цикла", "callback_data": "?c"}]]
+    return []
+
+
+def tg_show_cycle(text: str, buttons: list | None = None, notify=None) -> None:
+    if notify is not None:
+        notify(text)
+        return
+    tg_upsert_html("tg_cycle", text, buttons)
 
 
 def tg_pulse_text(repo: str, number: int, mins: int, log_line: str, prev_log: str) -> str | None:
@@ -3464,15 +3606,15 @@ def council_existing_titles(reg: dict, repo: str, issues: list | None = None, dr
 
 
 def tg_help_text() -> str:
-    return (
-        "Что умеет бот\n"
-        "\n"
-        "Сейчас — очередь, команда, ошибка, что дальше.\n"
-        "Доска — до пяти карточек: открыть, взять себе, в очередь, QA.\n"
-        "Цикл — команда QA, PM и Дизайн заведёт карточки.\n"
-        "Ещё — пауза, продолжить автоном, откатить, мастерская.\n"
-        "\n"
-        "Дальше: нажми одну кнопку внизу."
+    return tg_screen(
+        "Помощь",
+        [
+            "Сейчас — очередь, цикл, ошибка.",
+            "Доска — открыть, себе, очередь, QA.",
+            "Цикл — команда QA, PM и Дизайн.",
+            "Ещё — пауза, автоном, откатить, черновики.",
+        ],
+        "нажми одно внизу.",
     )
 
 
@@ -3495,28 +3637,23 @@ def tg_council_text(row: dict) -> str:
     roles = ", ".join(COUNCIL_ROLE_RU[role] for role in COUNCIL_ROLES)
     phase = tg_council_phase_ru(status)
     if status == "analyze":
-        return (
-            f"Цикл\n"
-            f"\n"
-            f"{roles} · {project}\n"
-            f"Сейчас: {phase}.\n"
-            f"\n"
-            f"Дальше: подожди карточки. Стоп — только если нужно."
+        return tg_screen(
+            "Цикл",
+            [f"{roles} · {project}", f"Сейчас: {phase}."],
+            "подожди карточки. Стоп — только если нужно.",
         )
     queued = sum(1 for item in filed if item.get("phase") in {"queue", "running"})
     review = sum(1 for item in filed if item.get("phase") == "review")
     done = sum(1 for item in filed if item.get("phase") == "main")
     fail = sum(1 for item in filed if item.get("phase") == "fail")
-    extra = f"\nНе принял: {fail}." if fail else ""
-    return (
-        f"Цикл\n"
-        f"\n"
-        f"{roles} · {project}\n"
-        f"Сейчас: {phase}.\n"
-        f"Завели {len(filed)} · в работе {queued} · на проверке {review} · в main {done}.{extra}\n"
-        f"\n"
-        f"Дальше: смотри доску или пульс."
-    )
+    lines = [
+        f"{roles} · {project}",
+        f"Сейчас: {phase}.",
+        f"Завели {len(filed)} · в работе {queued} · на проверке {review} · в main {done}.",
+    ]
+    if fail:
+        lines.append(f"Не принял: {fail}.")
+    return tg_screen("Цикл", lines, "смотри доску или Сейчас.")
 
 
 def council_role_brief(role: str) -> str:
@@ -3746,7 +3883,7 @@ def council_start(
         data["council"] = row
         save_workshop(data)
     record_event("council", name, "старт")
-    (notify or notify_safe)(tg_council_text(row))
+    tg_show_cycle(tg_council_text(row), tg_cycle_buttons({"council": row}), notify=notify)
     (launch or council_launch_analyzers)(reg, row)
     return {"ok": True, "project": name, "repo": repo, "status": "analyze"}
 
@@ -3822,7 +3959,8 @@ def council_finish_analyze(
     added, errors = council_enqueue_refs(reg, refs, enqueue=enqueue, kind="grok")
     if filed:
         (start_queue or (lambda: queue_set_running(True)))()
-    (notify or notify_safe)(row["pulse"] + (f"\n{errors[0]}" if errors else ""))
+    pulse = row["pulse"] + (f"\n{errors[0]}" if errors else "")
+    tg_show_cycle(pulse, tg_cycle_buttons({"council": row}), notify=notify)
     record_event("council", row.get("project") or "", f"завели {len(added)}")
     return {"ok": True, "filed": filed, "added": added, "errors": errors, "status": row["status"]}
 
@@ -3923,7 +4061,7 @@ def council_after_writer(
     if verdict != "pass":
         council_mark_phase(repo, number, "fail")
         result = (reject or reject_qa)(reg, repo, number, "council QA не принял. Смотри diff vs origin/main.")
-        (notify or notify_safe)(tg_council_text(council_load()))
+        tg_show_cycle(tg_council_text(council_load()), tg_cycle_buttons(), notify=notify)
         result["council_qa"] = "fail"
         return result
     closed = (close or (lambda: close_issue(reg, repo, number, force=True, note=note)))()
@@ -3932,7 +4070,7 @@ def council_after_writer(
     if merged.get("ok"):
         deployed = (deploy or council_deploy_trees)()
     council_mark_phase(repo, number, "main" if merged.get("ok") else "fail")
-    (notify or notify_safe)(tg_council_text(council_load()))
+    tg_show_cycle(tg_council_text(council_load()), tg_cycle_buttons(), notify=notify)
     closed = dict(closed or {})
     closed.update({"ok": bool(closed.get("ok") and merged.get("ok")), "council_qa": "pass", "merged": merged, "deployed": deployed})
     return closed
@@ -3959,8 +4097,8 @@ def tg_set_pending(row: dict | None) -> None:
 
 def tg_command_menu() -> list[dict]:
     return [
-        {"command": "start", "description": "домой"},
-        {"command": "сейчас", "description": "пульс"},
+        {"command": "start", "description": "четыре дела"},
+        {"command": "сейчас", "description": "очередь и кто пишет"},
         {"command": "доска", "description": "карточки"},
         {"command": "цикл", "description": "команда QA/PM/дизайн"},
         {"command": "пауза", "description": "стоп очереди"},
@@ -3969,15 +4107,20 @@ def tg_command_menu() -> list[dict]:
 
 
 def tg_home_text() -> str:
-    return (
-        "Мастерская\n"
-        "\n"
-        "Четыре дела. Нажми одно внизу.\n"
-        "Сейчас — что происходит.\n"
-        "Доска — карточки.\n"
-        "Цикл — команда QA, PM и Дизайн.\n"
-        "Ещё — пауза, откатить, мастерская."
+    return tg_screen(
+        "Мастерская",
+        [
+            "Сейчас — очередь и кто пишет.",
+            "Доска — карточки.",
+            "Цикл — команда QA, PM и Дизайн.",
+            "Ещё — пауза, черновики, мастерская.",
+        ],
+        "нажми одно внизу.",
     )
+
+
+def tg_home_payload() -> tuple[str, list]:
+    return tg_home_text(), tg_reply_keyboard()
 
 
 def tg_home_buttons() -> list:
@@ -3997,18 +4140,25 @@ def tg_needs_confirm(name: str) -> bool:
 
 def tg_confirm_text(kind: str, ref: str = "") -> str:
     if kind == "council":
-        return (
-            "Запустить цикл?\n"
-            "\n"
-            "Команда QA, PM и Дизайн заведёт карточки и может влить в main после проверки."
+        return tg_screen(
+            "Цикл",
+            [
+                "Команда QA, PM и Дизайн заведёт карточки.",
+                "После проверки может влить в main.",
+            ],
+            "подтверди запуск или отмени.",
         )
     if kind == "go":
-        return "Продолжить автоном?\n\nОчередь снова возьмёт карточки."
+        return tg_screen("Автоном", ["Очередь снова возьмёт карточки."], "подтверди или отмени.")
     if kind == "abort":
-        return f"Откатить {ref}?\n\nКарточка вернётся в Готово, агент этой карточки остановится."
+        return tg_screen(
+            "Откатить",
+            [ref, "Карточка вернётся в Готово. Агент этой карточки остановится."],
+            "подтверди или отмени.",
+        )
     if kind == "cycle_stop":
-        return "Остановить цикл?\n\nКоманда QA, PM и Дизайн прекратит работу."
-    return "Точно?"
+        return tg_screen("Цикл", ["Команда QA, PM и Дизайн прекратит работу."], "подтверди или отмени.")
+    return tg_screen("Точно?", [], "подтверди или отмени.")
 
 
 def tg_web_app_url() -> str:
@@ -4052,7 +4202,7 @@ def telegram_tick() -> None:
                 try:
                     handle_tg_callback(cb.get("data") or "")
                 except CorpError as exc:
-                    notify_safe(tg_clip(str(exc), 80))
+                    tg_send(tg_err(exc))
             if cb.get("id"):
                 try:
                     tg_post("answerCallbackQuery", {"callback_query_id": cb["id"]})
@@ -4075,7 +4225,7 @@ def telegram_tick() -> None:
                     tg_set_pending(None)
                 handle_tg_text(text)
         except CorpError as exc:
-            notify_safe(tg_clip(str(exc), 80))
+            tg_send(tg_err(exc))
     if new_offset != offset:
         set_tg_offset(new_offset)
 
@@ -4247,17 +4397,16 @@ def tg_council_line(data: dict | None = None) -> str:
 def tg_now_buttons(data: dict | None = None) -> list:
     data = data or load_workshop()
     rows = []
-    shop = workshop_public_url()
+    shop = tg_shop_url()
     row = []
     if shop:
-        row.append({"text": "Открыть мастерскую", "url": shop})
+        row.append({"text": "Мастерская", "url": shop})
     item = tg_retryable_item(data)
     if item:
         key = issue_ref(item["repo"], item["issue"])
-        row.append({"text": "Повторить карточку", "callback_data": f"q:{key}"})
+        row.append({"text": "Повторить", "callback_data": f"q:{key}"})
     if row:
         rows.append(row[:4])
-    rows.extend(tg_home_buttons())
     return rows
 
 
@@ -4282,12 +4431,12 @@ def tg_cmd_start(arg: str = "") -> None:
     if handler:
         handler("")
         return
-    notify_safe("Кнопки внизу — те же четыре дела.", keyboard=tg_reply_keyboard())
-    notify_safe(tg_home_text(), buttons=tg_home_buttons())
+    text, keyboard = tg_home_payload()
+    tg_send(text, keyboard=keyboard)
 
 
 def tg_cmd_help(_arg: str = "") -> None:
-    notify_safe(tg_help_text(), buttons=tg_home_buttons())
+    tg_send(tg_help_text())
 
 
 def tg_cmd_now(_arg: str = "") -> None:
@@ -4329,49 +4478,16 @@ def tg_cmd_drafts(_arg: str = "") -> None:
 
 
 def tg_cmd_more(_arg: str = "") -> None:
-    prune_drafts()
-    data = load_workshop()
-    drafts = data.get("drafts") or []
-    queue = data.get("queue") or []
-    queued = [item for item in queue if item.get("status") in {"waiting", "running", "failed"}]
-    shop = workshop_public_url()
-    lines = [
-        "Ещё",
-        "",
-        f"Автоном: {'идёт' if data.get('queue_running') else 'пауза'}",
-        f"Черновики: {len(drafts)}",
-    ]
-    if queued:
-        item = queued[0]
-        lines.append(f"В очереди: {tg_short_ref(item.get('repo') or '', item.get('issue'))}")
-    if council_busy(data):
-        lines.append("Цикл сейчас идёт.")
-    lines.extend(["", "Дальше: выбери действие."])
-    rows = []
-    if data.get("queue_running"):
-        rows.append([{"text": "Поставить на паузу", "callback_data": "c:pause"}])
-    else:
-        rows.append([{"text": "Продолжить автоном", "callback_data": "?g"}])
-    if queued:
-        key = issue_ref(queued[0]["repo"], queued[0]["issue"])
-        rows.append([{"text": "Откатить карточку", "callback_data": f"?k:{key}"}])
-    if council_busy(data):
-        rows.append([{"text": "Остановить цикл", "callback_data": "?c"}])
-    if shop:
-        rows.append([{"text": "Открыть мастерскую", "url": shop}])
-    rows.append([{"text": "Что умеет бот", "callback_data": "h:p"}])
-    if drafts:
-        rows.extend(tg_draft_buttons(drafts))
-    notify_safe("\n".join(lines), buttons=rows)
+    tg_upsert_more()
 
 
 def tg_cmd_go(_arg: str = "") -> None:
-    notify_safe(tg_confirm_text("go"), buttons=tg_confirm_buttons("!g"))
+    tg_upsert_html("tg_more", tg_confirm_text("go"), tg_confirm_buttons("!g"))
 
 
 def tg_cmd_go_yes(_arg: str = "") -> None:
     queue_set_running(True)
-    notify_safe("Автоном продолжен.\n\nДальше: очередь снова берёт карточки.", buttons=tg_home_buttons())
+    tg_send(tg_screen("Автоном", ["Очередь снова берёт карточки."], "открой доску или Сейчас."))
 
 
 def tg_cmd_pause(_arg: str = "") -> None:
@@ -4387,44 +4503,36 @@ def tg_cmd_retry(arg: str) -> None:
 def tg_cmd_abort(arg: str) -> None:
     if not (arg or "").strip():
         if council_busy():
-            notify_safe(tg_confirm_text("cycle_stop"), buttons=tg_confirm_buttons("!c"))
+            tg_show_cycle(tg_confirm_text("cycle_stop"), tg_confirm_buttons("!c"))
             return
         item = tg_retryable_item() or next(
             (row for row in (load_workshop().get("queue") or []) if row.get("status") in {"waiting", "running", "failed"}),
             None,
         )
         if not item:
-            notify_safe("Нечего откатывать.\n\nДальше: открой доску.", buttons=tg_home_buttons())
+            tg_send(tg_screen("Откатить", ["Нечего откатывать."], "открой доску."))
             return
         arg = issue_ref(item["repo"], item["issue"])
     repo, number = tg_parse_issue_arg(arg)
     ref = tg_short_ref(repo, number)
-    notify_safe(tg_confirm_text("abort", ref), buttons=tg_confirm_buttons(f"!k:{issue_ref(repo, number)}"))
+    tg_upsert_html("tg_more", tg_confirm_text("abort", ref), tg_confirm_buttons(f"!k:{issue_ref(repo, number)}"))
 
 
 def tg_do_abort(repo: str, number: int) -> None:
     result = queue_abort(repo, number)
+    ref = tg_short_ref(repo, number)
     if not result.get("aborted"):
-        notify_safe(
-            f"{tg_short_ref(repo, number)} не в очереди.\n\nДальше: открой доску.",
-            buttons=tg_home_buttons(),
-        )
+        tg_send(tg_screen("Откатить", [f"{ref} не в очереди."], "открой доску."))
         return
-    notify_safe(
-        f"{tg_short_ref(repo, number)} откатил в Готово.\n\nДальше: открой доску или пульс.",
-        buttons=tg_home_buttons(),
-    )
+    tg_send(tg_screen("Откатить", [f"{ref} вернул в Готово."], "открой доску или Сейчас."))
 
 
 def tg_cmd_council(arg: str = "") -> None:
     data = load_workshop()
     if council_busy(data):
-        notify_safe(
-            tg_council_text(data.get("council") or {}),
-            buttons=[[{"text": "Остановить цикл", "callback_data": "?c"}], *tg_home_buttons()],
-        )
+        tg_show_cycle(tg_council_text(data.get("council") or {}), tg_cycle_buttons(data))
         return
-    notify_safe(tg_confirm_text("council"), buttons=tg_confirm_buttons("!y"))
+    tg_show_cycle(tg_confirm_text("council"), tg_confirm_buttons("!y"))
 
 
 def tg_cmd_council_yes(arg: str = "") -> None:
@@ -4433,8 +4541,12 @@ def tg_cmd_council_yes(arg: str = "") -> None:
 
 def tg_ask_qa_note(repo: str, number: int) -> None:
     tg_set_pending({"kind": "qaf", "repo": repo, "number": number})
-    notify_safe(
-        f"{tg_short_ref(repo, number)} — QA не принял.\n\nНапиши, что поправить. Это уйдёт в карточку.",
+    tg_send(
+        tg_screen(
+            "QA не принял",
+            [tg_short_ref(repo, number), "Напиши, что поправить. Это уйдёт в карточку."],
+            "ответь на это сообщение.",
+        ),
         force_reply=True,
     )
 
@@ -4450,10 +4562,7 @@ def handle_tg_reply(pending: dict, text: str) -> None:
             tg_ask_qa_note(repo, number)
             return
         close_issue(load_registry(), repo, number, fail=True, note=note)
-        notify_safe(
-            f"{tg_short_ref(repo, number)} вернул в Готово с правками.\n\nДальше: открой доску.",
-            buttons=tg_home_buttons(),
-        )
+        tg_send(tg_screen("QA", [f"{tg_short_ref(repo, number)} вернул в Готово с правками."], "открой доску."))
         return
     handle_tg_text(text)
 
@@ -4490,7 +4599,7 @@ def handle_tg_text(text: str) -> None:
     name, arg = tg_parse_command(text)
     handler = TG_HANDLERS.get(name)
     if handler is None:
-        notify_safe("Не понял.\n\nДальше: нажми Меню или /start — четыре дела.", buttons=tg_home_buttons())
+        tg_send(tg_screen("Не понял", ["Это не команда."], "нажми одно внизу."), buttons=tg_home_buttons())
         return
     handler(arg)
 
@@ -4538,23 +4647,24 @@ def handle_tg_callback(code: str) -> None:
         tg_cmd_go_yes("")
         return
     if raw == "?y":
-        notify_safe(tg_confirm_text("council"), buttons=tg_confirm_buttons("!y"))
+        tg_show_cycle(tg_confirm_text("council"), tg_confirm_buttons("!y"))
         return
     if raw == "!y":
         tg_cmd_council_yes("")
         return
     if raw == "?c":
-        notify_safe(tg_confirm_text("cycle_stop"), buttons=tg_confirm_buttons("!c"))
+        tg_show_cycle(tg_confirm_text("cycle_stop"), tg_confirm_buttons("!c"))
         return
     if raw == "!c":
         council_abort()
-        notify_safe("Цикл остановлен.\n\nДальше: открой доску или пульс.", buttons=tg_home_buttons())
+        tg_show_cycle(tg_screen("Цикл", ["Остановлен."], "открой доску или Сейчас."))
         return
     if raw.startswith("?k:"):
         repo, number = parse_issue_ref(raw.split(":", 1)[1])
-        notify_safe(
+        tg_upsert_html(
+            "tg_more",
             tg_confirm_text("abort", tg_short_ref(repo, number)),
-            buttons=tg_confirm_buttons(f"!k:{issue_ref(repo, number)}"),
+            tg_confirm_buttons(f"!k:{issue_ref(repo, number)}"),
         )
         return
     if raw.startswith("!k:"):
@@ -4566,76 +4676,60 @@ def handle_tg_callback(code: str) -> None:
         return
     if raw.startswith("a:"):
         approve_draft(raw[2:])
-        notify_safe("Черновик принят.\n\nДальше: он станет карточкой на доске.", buttons=tg_home_buttons())
+        tg_send(tg_screen("Ещё", ["Черновик принят. Он станет карточкой на доске."], "открой доску."))
         return
     if raw.startswith("s:"):
         skip_draft(raw[2:])
-        drafts = load_workshop().get("drafts") or []
-        notify_safe(tg_drafts_text(drafts), buttons=tg_draft_buttons(drafts) or tg_home_buttons())
+        tg_upsert_more()
         return
     if raw.startswith("t:"):
         repo, number = parse_issue_ref(raw.split(":", 1)[1])
         take_issue(load_registry(), repo, number)
-        notify_safe(
-            f"{tg_short_ref(repo, number)} взял себе.\n\nДальше: работай в мастерской или верни карточку.",
-            buttons=tg_home_buttons(),
-        )
+        tg_send(tg_screen("Доска", [f"{tg_short_ref(repo, number)} взял себе."], "работай или верни карточку."))
         return
     if raw.startswith("d:"):
         repo, number = parse_issue_ref(raw.split(":", 1)[1])
         drop_self(repo, number)
-        notify_safe(
-            f"{tg_short_ref(repo, number)} снял с себя.\n\nДальше: открой доску.",
-            buttons=tg_home_buttons(),
-        )
+        tg_send(tg_screen("Доска", [f"{tg_short_ref(repo, number)} снял с себя."], "открой доску."))
         return
     if raw.startswith("u:"):
         repo, number = parse_issue_ref(raw.split(":", 1)[1])
         queue_add(load_registry(), repo, number, "")
-        notify_safe(
-            f"{tg_short_ref(repo, number)} в очереди.\n\nДальше: продолжи автоном, если он на паузе.",
-            buttons=tg_home_buttons(),
-        )
+        tg_send(tg_screen("Доска", [f"{tg_short_ref(repo, number)} в очереди."], "продолжи автоном, если он на паузе."))
         return
     if raw.startswith("m:"):
         repo, number = parse_issue_ref(raw.split(":", 1)[1])
         send_to_qa(load_registry(), repo, number, enqueue=False)
-        notify_safe(
-            f"{tg_short_ref(repo, number)} на QA.\n\nДальше: QA прошёл или QA не принял.",
-            buttons=tg_home_buttons(),
-        )
+        tg_send(tg_screen("QA", [f"{tg_short_ref(repo, number)} на QA."], "QA прошёл или QA не принял."))
         return
     if raw.startswith("qap:"):
         repo, number = parse_issue_ref(raw.split(":", 1)[1])
         if not tg_issue_in_qa(repo, number):
-            notify_safe(
-                f"{tg_short_ref(repo, number)} не в колонке QA.\n\nДальше: поставь её на QA, не закрывай.",
+            tg_send(
+                tg_screen("QA", [f"{tg_short_ref(repo, number)} не в колонке QA."], "поставь её на QA, не закрывай."),
                 buttons=[[{"text": "На QA", "callback_data": f"m:{issue_ref(repo, number)}"}]],
             )
             return
         close_issue(load_registry(), repo, number)
-        notify_safe(
-            f"{tg_short_ref(repo, number)} закрыта. QA прошёл.\n\nДальше: открой доску.",
-            buttons=tg_home_buttons(),
-        )
+        tg_send(tg_screen("QA", [f"{tg_short_ref(repo, number)} закрыта. QA прошёл."], "открой доску."))
         return
     if raw.startswith("qaf:"):
         repo, number = parse_issue_ref(raw.split(":", 1)[1])
         issue = get_issue(repo, number)
         if close_action(issue, fail=True) != "reject":
-            notify_safe(
-                f"{tg_short_ref(repo, number)} не в колонке QA.\n\nДальше: сначала поставь её на QA.",
-                buttons=tg_home_buttons(),
-            )
+            tg_send(tg_screen("QA", [f"{tg_short_ref(repo, number)} не в колонке QA."], "сначала поставь её на QA."))
             return
         tg_ask_qa_note(repo, number)
         return
     if raw.startswith("qa:"):
         repo, number = parse_issue_ref(raw.split(":", 1)[1])
-        open_url = tg_workshop_issue_url(repo, number)
-        notify_safe(
-            f"{tg_short_ref(repo, number)} на QA.\n\nДальше: открой карточку или нажми QA прошёл / QA не принял.",
-            buttons=[[{"text": "Открыть карточку", "url": open_url}]] if open_url else None,
+        key = issue_ref(repo, number)
+        tg_send(
+            tg_screen("QA", [f"{tg_short_ref(repo, number)} на QA."], "QA прошёл или QA не принял."),
+            buttons=[[
+                {"text": "QA прошёл", "callback_data": f"qap:{key}"},
+                {"text": "QA не принял", "callback_data": f"qaf:{key}"},
+            ]],
         )
         return
     if raw.startswith("q:") or raw.startswith("qx:"):
@@ -4650,9 +4744,10 @@ def handle_tg_callback(code: str) -> None:
         return
     if raw.startswith("k:") or raw.startswith("qb:"):
         repo, number = parse_issue_ref(raw.split(":", 1)[1])
-        notify_safe(
+        tg_upsert_html(
+            "tg_more",
             tg_confirm_text("abort", tg_short_ref(repo, number)),
-            buttons=tg_confirm_buttons(f"!k:{issue_ref(repo, number)}"),
+            tg_confirm_buttons(f"!k:{issue_ref(repo, number)}"),
         )
 
 
@@ -6254,7 +6349,7 @@ def queue_set_running(running: bool) -> dict:
     if not running:
         waiting = sum(1 for item in data.get("queue") or [] if item.get("status") == "waiting")
         extra = f" Ждут {waiting}." if waiting else ""
-        notify_safe(f"Очередь на паузе.{extra}\n\nДальше: Ещё → Продолжить, когда можно.")
+        tg_send(tg_screen("Пауза", [f"Очередь остановлена.{extra}"], "Ещё → Автоном, когда можно."))
     return {"ok": True, "queue_running": running, "queue": data["queue"]}
 
 
