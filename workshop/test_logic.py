@@ -346,6 +346,29 @@ Nodes (33): active_projects(), board_payload() (+31 more)
         assert corp.issues_for("o/r") == []
         corp.run = lambda *a, **k: _Proc(0, out="[]")
         assert corp.issues_for("o/r") == []
+        assert corp.github_transient("HTTP 503: No server is currently available")
+        assert not corp.github_transient("HTTP 401: Bad credentials")
+        sleeps = []
+        old_sleep = corp.time.sleep
+        corp.time.sleep = lambda s: sleeps.append(s)
+        n = {"i": 0}
+        def flaky(*a, **k):
+            n["i"] += 1
+            if n["i"] < 3:
+                return _Proc(1, "HTTP 503: No server is currently available")
+            return _Proc(0, out='[{"number":1,"title":"x","url":"","labels":[],"updatedAt":"","state":"OPEN"}]')
+        corp.run = flaky
+        assert corp.issues_for("o/r")[0]["number"] == 1
+        assert sleeps
+        def gql_down(*a, **k):
+            cmd = a[0]
+            if len(cmd) > 1 and cmd[1] == "issue":
+                return _Proc(1, "HTTP 503: No server is currently available")
+            return _Proc(0, out='[{"number":2,"title":"y","html_url":"u","labels":[{"name":"ready"}],"updated_at":"t","state":"open","closed_at":null}]')
+        corp.run = gql_down
+        rest = corp.issues_for("o/r")
+        assert rest[0]["number"] == 2 and rest[0]["state"] == "OPEN"
+        corp.time.sleep = old_sleep
     finally:
         corp.run = old_run
     old_token = os.environ.get("TELEGRAM_BOT_TOKEN")

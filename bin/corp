@@ -257,7 +257,59 @@ def issues_enabled(project: dict) -> bool:
     return project.get("issues", True)
 
 
-def issues_for(repo: str, state: str = "open", limit: int = 50) -> list[dict]:
+def github_transient(err: str) -> bool:
+    text = (err or "").lower()
+    needles = (
+        "http 502",
+        "http 503",
+        "http 504",
+        "http 429",
+        "no server is currently available",
+        "something went wrong while executing your query",
+        "timed out",
+        "timeout",
+        "secondary rate limit",
+        "abuse detection",
+    )
+    return any(n in text for n in needles)
+
+
+def github_issues_disabled(err: str) -> bool:
+    text = (err or "").lower()
+    return "disabled issues" in text or "issues are disabled" in text
+
+
+def _parse_issue_list(repo: str, raw: str) -> list[dict]:
+    try:
+        data = json.loads(raw or "[]")
+    except json.JSONDecodeError as exc:
+        die(f"github list parse failed {repo}: {exc}")
+    if not isinstance(data, list):
+        die(f"github list parse failed {repo}: not a list")
+    return data
+
+
+def _normalize_rest_issue(item: dict) -> dict | None:
+    if item.get("pull_request"):
+        return None
+    labels = []
+    for label in item.get("labels") or []:
+        if isinstance(label, dict):
+            labels.append({"name": label.get("name") or ""})
+        elif label:
+            labels.append({"name": str(label)})
+    return {
+        "number": item.get("number"),
+        "title": item.get("title") or "",
+        "url": item.get("html_url") or item.get("url") or "",
+        "labels": labels,
+        "updatedAt": item.get("updated_at") or item.get("updatedAt") or "",
+        "state": (item.get("state") or "open").upper(),
+        "closedAt": item.get("closed_at") or item.get("closedAt"),
+    }
+
+
+def _issues_via_graphql(repo: str, state: str, limit: int) -> tuple[list[dict] | None, str]:
     proc = run(
         [
             "gh",
@@ -274,15 +326,52 @@ def issues_for(repo: str, state: str = "open", limit: int = 50) -> list[dict]:
         ],
         check=False,
     )
+    if proc.returncode == 0:
+        return _parse_issue_list(repo, proc.stdout), ""
+    return None, (proc.stderr or proc.stdout or "").strip()
+
+
+def _issues_via_rest(repo: str, state: str, limit: int) -> tuple[list[dict] | None, str]:
+    proc = run(
+        [
+            "gh",
+            "api",
+            "-X",
+            "GET",
+            f"repos/{repo}/issues?state={state}&per_page={min(int(limit), 100)}",
+        ],
+        check=False,
+    )
     if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout).strip()
-        if "disabled issues" in err.lower() or "issues are disabled" in err.lower():
+        return None, (proc.stderr or proc.stdout or "").strip()
+    rows = []
+    for item in _parse_issue_list(repo, proc.stdout):
+        if not isinstance(item, dict):
+            continue
+        row = _normalize_rest_issue(item)
+        if row is not None:
+            rows.append(row)
+    return rows, ""
+
+
+def issues_for(repo: str, state: str = "open", limit: int = 50) -> list[dict]:
+    last_err = ""
+    for attempt in range(3):
+        rows, err = _issues_via_graphql(repo, state, limit)
+        if rows is not None:
+            return rows
+        last_err = err
+        if github_issues_disabled(err):
             return []
-        die(f"github list failed {repo}: {err}")
-    try:
-        return json.loads(proc.stdout or "[]")
-    except json.JSONDecodeError as exc:
-        die(f"github list parse failed {repo}: {exc}")
+        if not github_transient(err):
+            die(f"github list failed {repo}: {err}")
+        time.sleep(min(0.35 * (attempt + 1), 1.0))
+    rows, rest_err = _issues_via_rest(repo, state, limit)
+    if rows is not None:
+        return rows
+    if github_issues_disabled(rest_err):
+        return []
+    die(f"github list failed {repo}: {last_err or rest_err}")
 
 
 def label_names(issue: dict) -> set[str]:
@@ -2043,11 +2132,23 @@ def board_payload(reg: dict) -> dict:
     if _board_memo["data"] is not None and _board_memo["key"] == cache_key and now - _board_memo["t"] < 20:
         return _board_memo["data"]
     cards = []
+    warnings = []
     for project in pinned_projects(reg):
         if not issues_enabled(project):
             continue
-        open_issues = issues_for(project["repo"], "open", 80)
-        closed = issues_for(project["repo"], "closed", 20)
+        try:
+            open_issues = issues_for(project["repo"], "open", 80)
+            closed = issues_for(project["repo"], "closed", 20)
+        except CorpError as exc:
+            msg = str(exc)
+            if github_transient(msg) and _board_memo["data"] is not None and _board_memo["key"] == cache_key:
+                stale = dict(_board_memo["data"])
+                stale["github_warning"] = "GitHub временно не отвечает. Показываю последнее."
+                return stale
+            if github_transient(msg):
+                warnings.append(project["name"])
+                continue
+            raise
         seen = set()
         for issue in open_issues + closed:
             number = issue.get("number")
@@ -2073,8 +2174,15 @@ def board_payload(reg: dict) -> dict:
     cards.sort(key=lambda item: (item["column"], rank(item)))
     pins = [{"name": p["name"], "repo": p.get("repo")} for p in pinned_projects(reg)]
     drafts = draft_summaries(reg)
-    payload = {"cards": cards, "projects": research_report(reg), "pins": pins, "drafts": drafts}
-    _board_memo.update({"t": time.time(), "key": cache_key, "data": payload})
+    payload = {
+        "cards": cards,
+        "projects": research_report(reg),
+        "pins": pins,
+        "drafts": drafts,
+        "github_warning": "GitHub временно не отвечает. Обнови через пару секунд." if warnings else "",
+    }
+    if cards or not warnings:
+        _board_memo.update({"t": time.time(), "key": cache_key, "data": payload})
     return payload
 
 
