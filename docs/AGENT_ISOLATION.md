@@ -25,18 +25,30 @@ absolute path. This doc is the fix and the runbook for it.
 `launch_agent()` always routes the agent CLI invocation through
 `wrap_isolated()`:
 
-- **Isolated** (`CORP_AGENT_USER` set, wrapper installed, `sudo -n -u
-  $CORP_AGENT_USER true` succeeds): the command runs as the agent identity
-  through the fixed root-owned wrapper (`corp-agent-exec`), with a strict
-  env allowlist and a forced separate `$HOME`. This is the real boundary.
-- **Transitional** (default, nothing provisioned yet): the command still
+- **Isolated** (`CORP_AGENT_USER` set and the wrapper file present): the
+  command runs as the agent identity through the fixed root-owned wrapper
+  (`corp-agent-exec`), with a strict env allowlist and a forced separate
+  `$HOME`. This is the real boundary. The hop is always
+  `sudo -n -u $CORP_AGENT_USER /usr/local/sbin/corp-agent-exec …` — never
+  `sudo -n -u $CORP_AGENT_USER true`. Sudoers only allows the wrapper;
+  `true` either fails (as `corp`) or falsely succeeds (as root).
+- **Transitional** (default, `CORP_AGENT_USER` unset): the command still
   runs as the control-plane user, but `TELEGRAM_BOT_TOKEN` /
   `TELEGRAM_CHAT_ID` are stripped from its env (`env -i` plus an
   allowlist-by-subtraction). This closes the env-vector leak immediately
   but **does not** stop the agent from reading `~/.config/corp/*` by
-  absolute path -- that requires provisioning the isolated mode below.
+  absolute path -- that requires arming isolated mode below.
 
-`corp doctor` reports which mode is active.
+`probe_isolation()` / `corp doctor` report three states honestly:
+
+| Mode | Meaning |
+| --- | --- |
+| `transitional` | Flag off. Writers share the control-plane UID. May still be missing wrapper, workspace perms, or CLIs. |
+| `ready-to-arm` | Wrapper `--probe` passes, workspace is traversable and not world-readable, secrets denied, `claude` or `agent` exists under the agent UID. Flag still off. |
+| `isolated` | Flag on **and** the probe is complete. Doctor `ok` only here. |
+
+Do not set `CORP_AGENT_USER` until doctor says `ready-to-arm`. A provisioned
+UID with an empty `~/.local/bin` is still `transitional`.
 
 ## Provisioning (root, once per VPS)
 
@@ -49,11 +61,12 @@ This is idempotent. It:
 
 1. Creates the `corp-agent` user and a shared `corp-write` group; adds
    both `corp` and `corp-agent` to it.
-2. Group-enables write access to `CORP_WORKSPACE` only (`chgrp -R`,
-   `chmod g+rwX`, `g+s` on directories so new files inherit the group).
-   Never touches `~/.config/corp` -- that stays mode 0600/0700, owned by
-   `corp`, and is therefore already unreadable to `corp-agent` by
-   construction; no extra denial rule needed.
+2. Makes the control-plane home traversable (`chmod o+x` on `/home/corp`)
+   so `corp-agent` can reach `CORP_WORKSPACE`, then group-enables write
+   access to that workspace only (`chgrp -R`, `g+rwX`, `g+s`, **`o-rwx`**
+   so it is not world-readable). Tightens `~/.config` and `~/.config/corp`
+   to `0700` without opening them to the agent UID. Never grants
+   `corp-agent` a path into secrets.
 3. Creates `corp-agent`'s adapter credential file at
    `/home/corp-agent/.config/corp-agent/env` (mode 600, owned by
    `corp-agent`) for things like `CURSOR_API_KEY`. Never copy
@@ -78,7 +91,12 @@ curl -fsSL https://claude.ai/install.sh | bash
 claude login   # and/or codex, grok, cursor's `agent` login
 ```
 
-And on the control-plane side, add to `~/.config/corp/env`:
+Do **not** add `CORP_AGENT_USER` yet. Remaining blocker after a typical
+provision: the agent UID has no CLI binaries or logins
+(`/home/corp-agent/.local/bin` is empty). Arming the flag before that
+breaks writers and does not close secrets.
+
+When `corp doctor` reports `ready-to-arm`, add to `~/.config/corp/env`:
 
 ```
 CORP_AGENT_USER=corp-agent
@@ -88,18 +106,34 @@ Restart the workshop service so it picks up the new env, then verify:
 
 ```bash
 bash deploy/agent-isolation-smoke.sh
-corp doctor   # "agent identity (corp#41): ok"
+corp doctor   # mode: isolated — "ok  agent identity isolated"
 ```
 
 ## Smoke check
 
-`deploy/agent-isolation-smoke.sh` asserts, as the control-plane user:
+`deploy/agent-isolation-smoke.sh` runs one hop as the control-plane user:
 
-- the agent identity **can** write inside `CORP_WORKSPACE`
-- the agent identity **cannot** read `~/.config/corp/{env,workshop.json,
-  workshop.db,workshop-setup-token}`
+```bash
+sudo -n -u corp-agent /usr/local/sbin/corp-agent-exec --probe
+```
 
-It never prints secret contents, only pass/fail per path.
+The wrapper itself asserts: workspace writable, workspace not
+world-readable, `~/.config/corp` not open, known secret files unreadable.
+It never prints secret contents. It never uses `sudo -n -u corp-agent true`.
+
+## Remaining blockers (do not arm)
+
+On the live VPS after #41 provision and before this card's provision
+re-run:
+
+- `/home/corp` is `750` — `corp-agent` is not in group `corp`, so it
+  cannot traverse to `/home/corp/projects`. Re-run provision (`o+x` on
+  the home, `0700` on `~/.config` / `~/.config/corp`).
+- `/home/corp/projects` is `2775` (world-readable). Provision sets `2750`.
+- `/home/corp-agent/.local/bin` is empty. Install and log in `claude` /
+  `agent` (and any other adapter) **as corp-agent**. Doctor stays
+  `transitional` until those binaries exist.
+- `CORP_AGENT_USER` must stay unset until doctor says `ready-to-arm`.
 
 ## Rollback
 

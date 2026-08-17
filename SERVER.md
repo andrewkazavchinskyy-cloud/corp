@@ -101,9 +101,9 @@ Cursor CLI is optional (`agent`). Put `CURSOR_API_KEY` in env if you launch
 it from the workshop. Profiles (model, effort, fast) live in workshop
 settings, not in git.
 
-Writing agents run under a separate unprivileged OS identity once
-provisioned (`corp-agent`), so a same-UID read of control-plane secrets by
-known path is not possible. Until provisioned they still run as `corp`
-with Telegram credentials stripped from their env only. See
-[`docs/AGENT_ISOLATION.md`](docs/AGENT_ISOLATION.md). Do not flip
-`CORP_AGENT_USER` during a first-hour handoff.
+Writing agents stay **transitional** (`env -i` Telegram strip, same UID)
+until `corp doctor` reports `ready-to-arm`. The UID/wrapper may already
+exist; that is not isolated. Remaining blocker: CLIs are not installed
+under `corp-agent`. Do not set `CORP_AGENT_USER` on a first-hour handoff
+or while doctor says `transitional`. See
+[`docs/AGENT_ISOLATION.md`](docs/AGENT_ISOLATION.md).

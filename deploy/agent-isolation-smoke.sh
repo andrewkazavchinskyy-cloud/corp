@@ -1,43 +1,27 @@
 #!/usr/bin/env bash
-# corp#41: run after deploy/provision-agent-identity.sh (as the control-plane
-# user, e.g. `corp`) to confirm the boundary actually holds:
-#   - the agent identity can write inside the project workspace
-#   - the agent identity cannot read control-plane secrets by known path
+# corp#41 / corp#60: run after deploy/provision-agent-identity.sh (as the
+# control-plane user, e.g. `corp`) to confirm the boundary actually holds.
+# The only sudo hop is the root-owned wrapper --probe. Never
+# `sudo -n -u $AGENT_USER true` (or bash/test): sudoers does not allow them,
+# and as root they falsely succeed.
 # Never prints secret contents, only pass/fail.
 set -euo pipefail
 
 AGENT_USER="${CORP_AGENT_USER:-corp-agent}"
-WORKSPACE="${CORP_WORKSPACE:-/home/corp/projects}"
-CONFIG_DIR="${CORP_CONFIG_DIR:-$HOME/.config/corp}"
+WRAPPER="${CORP_AGENT_WRAPPER:-/usr/local/sbin/corp-agent-exec}"
 
 fail=0
 pass() { echo "ok    $1"; }
 bad()  { echo "FAIL  $1"; fail=1; }
 
 command -v sudo >/dev/null || { echo "no sudo on this host" >&2; exit 1; }
-if ! sudo -n -u "$AGENT_USER" true 2>/dev/null; then
-  echo "FAIL  sudo -n -u $AGENT_USER not available -- run provision-agent-identity.sh first" >&2
-  exit 1
-fi
+[ -x "$WRAPPER" ] || { echo "FAIL  wrapper missing: $WRAPPER" >&2; exit 1; }
 
-scratch="$WORKSPACE/.corp-agent-smoke-$$"
-if sudo -n -u "$AGENT_USER" bash -c "mkdir -p '$scratch' && echo ok > '$scratch/f' && rm -rf '$scratch'"; then
-  pass "agent identity can write inside $WORKSPACE"
+if sudo -n -u "$AGENT_USER" "$WRAPPER" --probe; then
+  pass "wrapper --probe (workspace writable, not world-readable, secrets denied)"
 else
-  bad "agent identity cannot write inside $WORKSPACE"
+  bad "wrapper --probe failed — isolated mode cannot engage"
 fi
-
-for secret in "$CONFIG_DIR/env" "$CONFIG_DIR/workshop.json" "$CONFIG_DIR/workshop.db" "$CONFIG_DIR/workshop-setup-token"; do
-  if [ ! -e "$secret" ]; then
-    echo "skip  $secret (not present)"
-    continue
-  fi
-  if sudo -n -u "$AGENT_USER" test -r "$secret" 2>/dev/null; then
-    bad "agent identity CAN read $secret"
-  else
-    pass "agent identity cannot read $secret"
-  fi
-done
 
 if [ "$fail" = 0 ]; then
   echo "PASS: agent isolation boundary holds"

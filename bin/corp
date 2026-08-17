@@ -45,7 +45,10 @@ WORKSHOP_JSON = Path(os.environ["CORP_WORKSHOP_JSON"]) if os.environ.get("CORP_W
 TOKEN_PATH = CONFIG_DIR / "workshop-setup-token"
 RUN_LOG = CONFIG_DIR / "run.log"
 CONTROL_PLANE_SECRET_KEYS = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
+AGENT_USER_DEFAULT = "corp-agent"
 AGENT_WRAPPER_DEFAULT = "/usr/local/sbin/corp-agent-exec"
+ISOLATION_CLIS = ("claude", "codex", "grok", "agent")
+ISOLATION_SECRET_NAMES = ("env", "workshop.json", "workshop.db", "workshop-setup-token")
 DEFAULT_PROFILES = [
     {"id": "claude", "kind": "claude", "label": "Claude", "model": "sonnet", "effort": "high", "fast": False},
     {"id": "codex", "kind": "codex", "label": "Codex", "model": "", "effort": "high", "fast": False},
@@ -649,8 +652,9 @@ def status(reg: dict) -> None:
         print(f"{project['status']:7} {project['name']:28} {mark}")
 
 
-def doctor_payload() -> dict:
+def doctor_payload(isolation: dict | None = None) -> dict:
     load_env()
+    iso = isolation if isolation is not None else probe_isolation()
     checks = [
         ("git", have("git")),
         ("gh", have("gh")),
@@ -665,12 +669,13 @@ def doctor_payload() -> dict:
         ("tmux", have("tmux")),
         ("telegram token", bool(os.environ.get("TELEGRAM_BOT_TOKEN"))),
         ("telegram chat", bool(os.environ.get("TELEGRAM_CHAT_ID"))),
-        ("agent identity isolated", agent_identity_ready()),
+        ("agent identity isolated", iso["isolated"]),
     ]
     return {
         "corp": str(ROOT),
         "workspace": str(workspace()),
         "checks": [{"name": name, "ok": ok} for name, ok in checks],
+        "isolation": iso,
     }
 
 
@@ -680,6 +685,10 @@ def doctor() -> None:
     print(f"workspace: {payload['workspace']}")
     for row in payload["checks"]:
         print(f"{'ok' if row['ok'] else 'NO':2}  {row['name']}")
+    iso = payload["isolation"]
+    print(f"    isolation mode: {iso['mode']}")
+    if iso.get("blockers"):
+        print(f"    isolation blockers: {'; '.join(iso['blockers'])}")
 
 
 def tg_creds() -> tuple[str, str]:
@@ -2792,22 +2801,111 @@ def agent_user_name() -> str:
     return os.environ.get("CORP_AGENT_USER", "").strip()
 
 
-def agent_home_dir() -> Path:
+def isolation_probe_user() -> str:
+    return agent_user_name() or AGENT_USER_DEFAULT
+
+
+def agent_home_dir(user: str | None = None) -> Path:
     custom = os.environ.get("CORP_AGENT_HOME", "").strip()
     if custom:
         return Path(custom)
-    return Path(f"/home/{agent_user_name()}")
+    return Path(f"/home/{user or isolation_probe_user()}")
 
 
 def agent_wrapper_path() -> Path:
     return Path(os.environ.get("CORP_AGENT_WRAPPER", "").strip() or AGENT_WRAPPER_DEFAULT)
 
 
+def isolation_secret_paths(config: Path | None = None) -> list[Path]:
+    base = config if config is not None else Path.home() / ".config" / "corp"
+    return [base / name for name in ISOLATION_SECRET_NAMES]
+
+
+def isolation_wrapper_argv(user: str | None = None) -> list[str]:
+    return ["sudo", "-n", "-u", user or isolation_probe_user(), str(agent_wrapper_path()), "--probe"]
+
+
+def workspace_isolation_ok(dest_workspace: Path | None = None, config: Path | None = None) -> tuple[bool, list[str]]:
+    ws = dest_workspace if dest_workspace is not None else workspace()
+    cfg = config if config is not None else Path.home() / ".config" / "corp"
+    blockers: list[str] = []
+    if not ws.is_dir():
+        return False, ["workspace missing"]
+    if ws.stat().st_mode & 0o004:
+        blockers.append("workspace is world-readable")
+    parent = ws.parent
+    if parent.is_dir() and not (parent.stat().st_mode & 0o001):
+        blockers.append("workspace parent is not traversable by other users")
+    if cfg.is_dir() and (cfg.stat().st_mode & 0o007):
+        blockers.append("control-plane config is open to other users")
+    dot_config = cfg.parent
+    if dot_config.is_dir() and dot_config.name == ".config" and (dot_config.stat().st_mode & 0o007):
+        blockers.append("~/.config is open to other users")
+    return not blockers, blockers
+
+
+def probe_isolation(
+    run_cmd=None,
+    dest_workspace: Path | None = None,
+    config: Path | None = None,
+) -> dict:
+    """Fail-closed isolation report. Uses the wrapper only — never `sudo -n -u $user true`."""
+    run_cmd = run_cmd or (lambda cmd: run(cmd, check=False))
+    user = isolation_probe_user()
+    wrapper = agent_wrapper_path()
+    armed = bool(agent_user_name())
+    blockers: list[str] = []
+    wrapper_ok = False
+    if wrapper.is_file():
+        argv = isolation_wrapper_argv(user)
+        if argv[-1] != "--probe" or "true" in argv:
+            blockers.append("probe argv is not wrapper-only")
+        else:
+            wrapper_ok = run_cmd(argv).returncode == 0
+            if not wrapper_ok:
+                blockers.append("wrapper probe failed")
+    else:
+        blockers.append("wrapper not installed")
+    ws_ok, ws_blockers = workspace_isolation_ok(dest_workspace, config)
+    blockers.extend(ws_blockers)
+    secrets_denied = True
+    for path in isolation_secret_paths(config):
+        if path.exists() and (path.stat().st_mode & 0o077):
+            secrets_denied = False
+            blockers.append(f"{path.name} is group/world accessible")
+    home = agent_home_dir(user)
+    clis = {}
+    for name in ISOLATION_CLIS:
+        path = home / ".local" / "bin" / name
+        clis[name] = path.is_file() and os.access(path, os.X_OK)
+    if not (clis.get("claude") or clis.get("agent")):
+        blockers.append("CLIs not installed under that UID")
+    if not armed:
+        blockers.append("CORP_AGENT_USER unset")
+    ready_to_arm = wrapper_ok and ws_ok and secrets_denied and bool(clis.get("claude") or clis.get("agent"))
+    isolated = ready_to_arm and armed
+    if isolated:
+        mode = "isolated"
+    elif ready_to_arm:
+        mode = "ready-to-arm"
+    else:
+        mode = "transitional"
+    return {
+        "mode": mode,
+        "armed": armed,
+        "isolated": isolated,
+        "ready_to_arm": ready_to_arm,
+        "wrapper_ok": wrapper_ok,
+        "workspace_ok": ws_ok,
+        "secrets_denied": secrets_denied,
+        "clis": clis,
+        "user": user,
+        "blockers": blockers,
+    }
+
+
 def agent_identity_ready() -> bool:
-    user = agent_user_name()
-    if not user or not agent_wrapper_path().is_file():
-        return False
-    return run(["sudo", "-n", "-u", user, "true"], check=False).returncode == 0
+    return bool(probe_isolation().get("isolated"))
 
 
 def transitional_env() -> dict[str, str]:
@@ -2815,11 +2913,12 @@ def transitional_env() -> dict[str, str]:
 
 
 def wrap_isolated(cmd: list[str], dest: Path) -> list[str]:
-    if agent_identity_ready():
+    # Isolated path is opt-in via CORP_AGENT_USER. Do not probe with `sudo true`.
+    if agent_user_name() and agent_wrapper_path().is_file():
         user = agent_user_name()
-        home = agent_home_dir()
-        binary = f"{home}/.local/bin/{cmd[0]}"
-        return ["sudo", "-n", "-u", user, str(agent_wrapper_path()), str(dest), binary, *cmd[1:]]
+        home = agent_home_dir(user)
+        binary = str(home / ".local" / "bin" / cmd[0])
+        return ["sudo", "-n", "-u", user, str(agent_wrapper_path()), str(dest.resolve()), binary, *cmd[1:]]
     env = transitional_env()
     return ["env", "-i"] + [f"{k}={v}" for k, v in sorted(env.items())] + cmd
 
