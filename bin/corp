@@ -1675,6 +1675,9 @@ def default_workshop() -> dict:
         "auto_queue_on_approve": True,
         "queue_retries": QUEUE_MAX_ATTEMPTS,
         "council": {},
+        "board_snap": {},
+        "board_ov": {},
+        "board_sync": [],
     }
 
 
@@ -1703,6 +1706,9 @@ def load_workshop() -> dict:
     data.setdefault("auto_queue_on_approve", True)
     data.setdefault("queue_retries", QUEUE_MAX_ATTEMPTS)
     data.setdefault("council", {})
+    data.setdefault("board_snap", {})
+    data.setdefault("board_ov", {})
+    data.setdefault("board_sync", [])
     return sanitize_workshop(data)
 
 
@@ -5010,6 +5016,7 @@ def column_of(issue: dict) -> str:
 
 _board_memo = {"t": 0.0, "key": "", "data": None}
 _research_memo = {"t": 0.0, "key": "", "data": None}
+_board_fetch_t = 0.0
 
 
 def invalidate_board() -> None:
@@ -5035,16 +5042,75 @@ def _pin_issue_job(job: tuple) -> tuple:
         return project, state, [], str(exc)
 
 
-def board_payload(reg: dict) -> dict:
-    cache_key = ",".join(p["name"] for p in pinned_projects(reg))
-    now = time.time()
-    if _board_memo["data"] is not None and _board_memo["key"] == cache_key and now - _board_memo["t"] < 20:
-        return _board_memo["data"]
+def board_key(repo: str, number: int | str) -> str:
+    return f"{repo}#{number}"
+
+
+def _slim_card(card: dict) -> dict:
+    return {
+        "repo": card.get("repo"),
+        "number": card.get("number"),
+        "title": card.get("title") or "",
+        "url": card.get("url") or "",
+        "project": card.get("project") or "",
+        "column": card.get("column") or "backlog",
+        "runner": card.get("runner") or "",
+        "queued": bool(card.get("queued")),
+        "blocked": bool(card.get("blocked")),
+        "role": card.get("role") or "build",
+        "state": card.get("state") or "OPEN",
+        "labels": card.get("labels") or [],
+        "can_run": bool(card.get("can_run")),
+        "block_reason": card.get("block_reason") or "",
+    }
+
+
+def _paint_card(card: dict, overlay: dict) -> dict:
+    row = dict(card)
+    if not overlay:
+        return row
+    for key in ("column", "runner", "queued", "state"):
+        if key in overlay and overlay[key] is not None:
+            row[key] = overlay[key]
+    if overlay.get("pending"):
+        row["pending"] = overlay["pending"]
+    if overlay.get("error"):
+        row["sync_error"] = overlay["error"]
+    if row.get("runner") == "self" or row.get("column") in {"in-progress", "qa"}:
+        row["can_run"] = False
+    return row
+
+
+def _assemble_board(reg: dict, cards: list, warning: str = "") -> dict:
+    painted = []
+    overlays = (load_workshop().get("board_ov") or {})
+    for card in cards:
+        painted.append(_paint_card(card, overlays.get(board_key(card.get("repo") or "", card.get("number") or ""))))
+    for row in painted:
+        if row.get("runner") == "self" or row.get("column") in {"in-progress", "qa"} or (row.get("state") or "").upper() == "CLOSED":
+            row["can_run"] = False
+            continue
+        reason = issue_eligibility(reg, row["repo"], row["number"], row, cards=painted)
+        row["block_reason"] = reason
+        row["can_run"] = not reason
+    painted.sort(key=lambda item: (item.get("column") or "", rank(item)))
+    pins = [{"name": p["name"], "repo": p.get("repo")} for p in pinned_projects(reg)]
+    key = ",".join(p["name"] for p in pins)
+    projects = _research_memo["data"] if _research_memo["key"] == key and _research_memo["data"] is not None else []
+    return {
+        "cards": painted,
+        "projects": projects,
+        "pins": pins,
+        "drafts": draft_summaries(reg),
+        "github_warning": warning,
+    }
+
+
+def _github_cards(reg: dict) -> tuple[list, str]:
     cards = []
     warnings = []
     pins_on = [p for p in pinned_projects(reg) if issues_enabled(p)]
     jobs = [(p, "open", 80) for p in pins_on] + [(p, "closed", 20) for p in pins_on]
-    fetched: list[tuple] = []
     if len(jobs) <= 1:
         fetched = [_pin_issue_job(job) for job in jobs]
     else:
@@ -5060,10 +5126,6 @@ def board_payload(reg: dict) -> dict:
         project = row["project"]
         if row["err"]:
             msg = row["err"]
-            if github_transient(msg) and _board_memo["data"] is not None and _board_memo["key"] == cache_key:
-                stale = dict(_board_memo["data"])
-                stale["github_warning"] = "GitHub временно не отвечает. Показываю последнее."
-                return stale
             if github_transient(msg):
                 warnings.append(project["name"])
                 continue
@@ -5076,34 +5138,284 @@ def board_payload(reg: dict) -> dict:
             seen.add(number)
             role, _slot = slot_for_issue(project["name"], issue)
             cards.append(
-                {
-                    **issue,
-                    "project": project["name"],
-                    "repo": project["repo"],
-                    "column": column_of(issue),
-                    "runner": runner_of(issue),
-                    "queued": "queued" in label_names(issue),
-                    "blocked": "blocked" in label_names(issue),
-                    "role": role,
-                }
+                _slim_card(
+                    {
+                        **issue,
+                        "project": project["name"],
+                        "repo": project["repo"],
+                        "column": column_of(issue),
+                        "runner": runner_of(issue),
+                        "queued": "queued" in label_names(issue),
+                        "blocked": "blocked" in label_names(issue),
+                        "role": role,
+                        "can_run": True,
+                        "block_reason": "",
+                    }
+                )
             )
-    for row in cards:
-        reason = issue_eligibility(reg, row["repo"], row["number"], row, cards=cards)
-        row["block_reason"] = reason
-        row["can_run"] = not reason
-    cards.sort(key=lambda item: (item["column"], rank(item)))
-    pins = [{"name": p["name"], "repo": p.get("repo")} for p in pinned_projects(reg)]
-    drafts = draft_summaries(reg)
-    payload = {
-        "cards": cards,
-        "projects": cached_research(reg, cards),
-        "pins": pins,
-        "drafts": drafts,
-        "github_warning": "GitHub временно не отвечает. Обнови через пару секунд." if warnings else "",
-    }
-    if cards or not warnings:
+    warning = "GitHub временно не отвечает. Показываю последнее." if warnings else ""
+    return cards, warning
+
+
+def fetch_github_board(reg: dict) -> dict:
+    global _board_fetch_t
+    cache_key = ",".join(p["name"] for p in pinned_projects(reg))
+    cards, warning = _github_cards(reg)
+    with workshop_lock():
+        data = load_workshop()
+        pending = {
+            key
+            for key, ov in (data.get("board_ov") or {}).items()
+            if (ov or {}).get("pending")
+        }
+        merged = []
+        for card in cards:
+            key = board_key(card.get("repo") or "", card.get("number") or "")
+            if key in pending:
+                old = next(
+                    (
+                        item
+                        for item in (data.get("board_snap") or {}).get("cards") or []
+                        if board_key(item.get("repo") or "", item.get("number") or "") == key
+                    ),
+                    card,
+                )
+                merged.append(old)
+            else:
+                merged.append(card)
+        data["board_snap"] = {"t": time.time(), "key": cache_key, "cards": merged, "warning": warning}
+        save_workshop(data)
+    _board_fetch_t = time.time()
+    invalidate_board()
+    return board_payload(reg)
+
+
+def board_payload(reg: dict) -> dict:
+    cache_key = ",".join(p["name"] for p in pinned_projects(reg))
+    data = load_workshop()
+    snap = data.get("board_snap") or {}
+    if snap.get("cards") is not None and snap.get("key") == cache_key:
+        payload = _assemble_board(reg, list(snap.get("cards") or []), snap.get("warning") or "")
         _board_memo.update({"t": time.time(), "key": cache_key, "data": payload})
-    return payload
+        return payload
+    if _board_memo["data"] is not None and _board_memo["key"] == cache_key:
+        return _board_memo["data"]
+    return fetch_github_board(reg)
+
+
+def _card_waiting_qa(card: dict) -> bool:
+    names = label_names(card)
+    return card.get("column") == "qa" or ("in-qa" in names and "qa-fail" not in names)
+
+
+def _find_snap_card(cards: list, repo: str, number: int) -> dict | None:
+    for card in cards or []:
+        if card.get("repo") == repo and card.get("number") == number:
+            return card
+    return None
+
+
+def board_click(
+    reg: dict,
+    action: str,
+    repo: str,
+    number: int,
+    column: str = "",
+    note: str = "",
+    profile: str = "",
+    model: str = "",
+    effort: str = "",
+    fast: bool | None = None,
+    kind: str = "",
+) -> dict:
+    payload = board_payload(reg)
+    card = _find_snap_card(payload["cards"], repo, number)
+    if card is None:
+        die(f"{repo}#{number} нет на доске")
+    fields: dict = {"pending": action, "error": ""}
+    if action == "move":
+        if column not in {"backlog", "ready", "in-progress", "qa", "done"}:
+            die("column must be backlog|ready|in-progress|qa|done")
+        if column == "ready" and _card_waiting_qa(card):
+            if not (note or "").strip():
+                die("нужен комментарий с правками")
+            action = "qa_fail"
+            fields.update({"column": "ready", "runner": "", "queued": False, "pending": "qa_fail", "note": note.strip()})
+        elif column in {"done", "qa"}:
+            if _card_waiting_qa(card) and column == "done":
+                action = "qa_pass"
+                fields.update({"column": "done", "state": "CLOSED", "runner": "", "queued": False, "pending": "qa_pass"})
+            else:
+                action = "to_qa"
+                fields.update({"column": "qa", "runner": "", "queued": False, "pending": "to_qa"})
+        else:
+            fields.update({"column": column, "runner": "" if column != "in-progress" else card.get("runner") or ""})
+    elif action == "take":
+        if card.get("column") in {"in-progress", "qa", "done"} or (card.get("runner") or "") not in {"", "queued"}:
+            die(f"{repo}#{number} already claimed ({card.get('runner') or card.get('column')})")
+        reason = issue_eligibility(reg, repo, number, card, cards=payload["cards"])
+        if reason:
+            die(reason)
+        fields.update({"column": "in-progress", "runner": "self", "queued": False})
+    elif action == "drop":
+        fields.update({"runner": "", "column": "ready" if card.get("column") == "in-progress" else card.get("column")})
+    elif action == "qa_pass":
+        if not _card_waiting_qa(card) and card.get("column") != "qa":
+            die(f"{repo}#{number} не на QA")
+        fields.update({"column": "done", "state": "CLOSED", "runner": "", "queued": False})
+    elif action == "qa_fail":
+        if not (note or "").strip():
+            die("нужен комментарий с правками")
+        fields.update({"column": "ready", "runner": "", "queued": False, "note": note.strip()})
+    elif action == "queue":
+        names = label_names(card)
+        if is_sandbox_card(card):
+            if "P0" in names:
+                die(f"{repo}#{number} sandbox не берёт P0")
+            if "self" in names:
+                die(f"{repo}#{number} claimed as self")
+            if "blocked" in names:
+                die(f"{repo}#{number} blocked")
+        reason = issue_eligibility(reg, repo, number, card, cards=payload["cards"])
+        if reason and "self" in reason:
+            die(reason)
+        if card.get("column") in {"in-progress", "qa", "done"}:
+            die(f"{repo}#{number} {card.get('column')}")
+        fields.update({"queued": True, "column": "ready"})
+    else:
+        die(f"unknown board action: {action}")
+    job = {
+        "action": fields.get("pending") or action,
+        "repo": repo,
+        "number": number,
+        "column": fields.get("column") or column,
+        "note": fields.get("note") or note,
+        "profile": profile,
+        "model": model,
+        "effort": effort,
+        "fast": fast,
+        "kind": kind,
+    }
+    with workshop_lock():
+        data = load_workshop()
+        snap = data.setdefault("board_snap", {"t": time.time(), "key": "", "cards": []})
+        hit = _find_snap_card(snap.get("cards") or [], repo, number)
+        if hit:
+            hit.update({k: fields[k] for k in ("column", "runner", "queued", "state") if k in fields})
+        ov = data.setdefault("board_ov", {})
+        key = board_key(repo, number)
+        row = dict(ov.get(key) or {})
+        row.update(fields)
+        row["updated"] = time.time()
+        ov[key] = row
+        if action == "queue":
+            qkey = issue_ref(repo, number)
+            existing = None
+            for item in data.get("queue") or []:
+                if issue_ref(item.get("repo") or "", item.get("issue")) == qkey:
+                    existing = item
+                    break
+            if existing and existing.get("status") in {"waiting", "running"}:
+                die(f"{qkey} is already queued")
+            qrow = {
+                "repo": repo,
+                "issue": number,
+                "project": card.get("project") or "",
+                "title": card.get("title") or "",
+                "url": card.get("url") or "",
+                "profile": profile,
+                "kind": kind,
+                "model": model,
+                "effort": effort,
+                "fast": fast,
+                "status": "waiting",
+                "attempts": int((existing or {}).get("attempts") or 0),
+                "last_error": "",
+                "retry_after": 0,
+            }
+            if existing:
+                existing.update(qrow)
+            else:
+                data.setdefault("queue", []).append(qrow)
+        data.setdefault("board_sync", []).append(job)
+        save_workshop(data)
+    invalidate_board()
+    painted = board_payload(reg)
+    now = _find_snap_card(painted["cards"], repo, number) or card
+    result = {
+        "ok": True,
+        "repo": repo,
+        "issue": number,
+        "column": now.get("column"),
+        "runner": now.get("runner") or "",
+        "queued": bool(now.get("queued")),
+        "queue": load_workshop().get("queue") or [],
+    }
+    return result
+
+
+def run_one_board_sync(reg: dict) -> bool:
+    with workshop_lock():
+        data = load_workshop()
+        jobs = data.get("board_sync") or []
+        if not jobs:
+            return False
+        job = jobs.pop(0)
+        data["board_sync"] = jobs
+        save_workshop(data)
+    repo = job.get("repo") or ""
+    number = int(job.get("number") or 0)
+    action = job.get("action") or ""
+    key = board_key(repo, number)
+    try:
+        if action == "move":
+            move_issue(reg, repo, number, job.get("column") or "backlog")
+        elif action == "take":
+            take_issue(reg, repo, number)
+        elif action == "drop":
+            drop_self(repo, number)
+        elif action == "qa_pass":
+            close_issue(reg, repo, number, force=False, fail=False)
+        elif action == "qa_fail":
+            reject_qa(reg, repo, number, job.get("note") or "")
+        elif action == "to_qa":
+            send_to_qa(reg, repo, number, enqueue=False)
+        elif action == "queue":
+            add_labels(repo, number, ["ready", "queued"])
+            comment(repo, number, "corp-claim: queue")
+        with workshop_lock():
+            data = load_workshop()
+            ov = data.setdefault("board_ov", {})
+            row = ov.get(key) or {}
+            if row.get("pending") in {"", action}:
+                ov.pop(key, None)
+            elif key in ov:
+                ov[key]["error"] = ""
+            save_workshop(data)
+    except Exception as exc:
+        with workshop_lock():
+            data = load_workshop()
+            ov = data.setdefault("board_ov", {})
+            row = dict(ov.get(key) or {})
+            row["error"] = tg_clip(str(exc), 120)
+            ov[key] = row
+            save_workshop(data)
+        append_log(f"board sync {key} {action}: {exc}\n")
+    invalidate_board()
+    return True
+
+
+def maybe_refresh_board(reg: dict, stale: float = 20) -> None:
+    global _board_fetch_t
+    data = load_workshop()
+    snap_t = float((data.get("board_snap") or {}).get("t") or 0)
+    if time.time() - max(_board_fetch_t, snap_t) < stale:
+        return
+    try:
+        fetch_github_board(reg)
+        cached_research(reg, (load_workshop().get("board_snap") or {}).get("cards"))
+    except Exception as exc:
+        append_log(f"board fetch: {exc}\n")
 
 
 def draft_summaries(reg: dict) -> list[dict]:
