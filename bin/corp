@@ -117,20 +117,84 @@ def _registry_overlay() -> dict:
         return {}
 
 
-def overlay_active(extra: dict | None = None) -> bool:
+def overlay_diverges(extra: dict | None = None, git_reg: dict | None = None) -> bool:
+    """True only when overlay adds a project or changes a pin vs git registry."""
     data = extra if extra is not None else _registry_overlay()
-    return bool(data.get("projects") or data.get("pins"))
+    pins = data.get("pins") or {}
+    extra_projects = data.get("projects") or []
+    if not pins and not extra_projects:
+        return False
+    if git_reg is None:
+        try:
+            git_reg = json.loads(REGISTRY_PATH.read_text())
+        except (OSError, json.JSONDecodeError):
+            return True
+    git_by = {p.get("name"): p for p in git_reg.get("projects") or [] if p.get("name")}
+    for name, pinned in pins.items():
+        row = git_by.get(name)
+        if row is None:
+            return True
+        if bool(row.get("workshop")) != bool(pinned):
+            return True
+    for row in extra_projects:
+        name = row.get("name")
+        if not name:
+            continue
+        git_row = git_by.get(name)
+        if git_row is None:
+            return True
+        if row.get("repo") and git_row.get("repo") and row.get("repo") != git_row.get("repo"):
+            return True
+        if name not in pins and bool(row.get("workshop")) != bool(git_row.get("workshop")):
+            return True
+    return False
+
+
+def overlay_active(extra: dict | None = None) -> bool:
+    return overlay_diverges(extra)
+
+
+def git_registry_candidates() -> list[Path]:
+    seen: list[Path] = []
+    for path in (REGISTRY_PATH, writers_corp_path() / "registry.json", live_corp_path() / "registry.json"):
+        try:
+            key = path.resolve()
+        except OSError:
+            key = path
+        if key in seen:
+            continue
+        seen.append(key)
+    return seen
 
 
 def registry_status() -> dict:
     extra = _registry_overlay()
+    candidates = git_registry_candidates()
+    git_writable = False
+    for path in candidates:
+        try:
+            if path.is_file():
+                git_writable = os.access(path, os.W_OK)
+            elif path.parent.is_dir():
+                git_writable = os.access(path.parent, os.W_OK)
+        except OSError:
+            git_writable = False
+        if git_writable:
+            break
+    diverges = overlay_diverges(extra)
+    root_writable = os.access(REGISTRY_PATH, os.W_OK)
+    hint = ""
+    if not root_writable:
+        hint = "need write to git registry / deploy path"
     return {
         "canonical": "git",
         "overlay": "emergency",
-        "uncommitted_registry": overlay_active(extra),
-        "registry_writable": os.access(REGISTRY_PATH, os.W_OK),
+        "uncommitted_registry": diverges,
+        "registry_writable": root_writable,
+        "registry_git_writable": git_writable,
         "registry_path": str(REGISTRY_PATH),
         "overlay_path": str(WORKSHOP_JSON),
+        "registry_write_hint": hint if (not root_writable or diverges) else "",
     }
 
 
@@ -252,6 +316,55 @@ def live_corp_path() -> Path:
     return Path(os.environ.get("CORP_LIVE") or "/opt/corp").expanduser()
 
 
+def writers_corp_path() -> Path:
+    custom = (os.environ.get("CORP_WRITERS") or "").strip()
+    if custom:
+        return Path(custom).expanduser()
+    ws = (os.environ.get("CORP_WORKSPACE") or "").strip()
+    if ws:
+        return Path(ws).expanduser() / "corp"
+    live = live_corp_path()
+    try:
+        if ROOT.resolve() != live.resolve():
+            return ROOT
+    except OSError:
+        return ROOT
+    return Path("/home/corp/projects/corp")
+
+
+def two_trees_report() -> dict:
+    live_path = live_corp_path()
+    writers_path = writers_corp_path()
+    live = git_tree_report(live_path)
+    writers = git_tree_report(writers_path)
+    live_head = live.get("head") or ""
+    writers_head = writers.get("head") or ""
+    return {
+        "live_path": str(live_path),
+        "writers_path": str(writers_path),
+        "live": live,
+        "writers": writers,
+        "live_sha": live_head,
+        "writers_sha": writers_head,
+        "trees_match": bool(live_head and writers_head and live_head == writers_head),
+    }
+
+
+def _short_sha(sha: str) -> str:
+    return (sha or "")[:7]
+
+
+def _tree_git_label(tree: dict) -> str:
+    if not tree.get("exists"):
+        return "missing"
+    bits = []
+    if tree.get("dirty"):
+        bits.append("dirty")
+    if tree.get("behind"):
+        bits.append("behind")
+    return ", ".join(bits) if bits else "clean"
+
+
 def git_tree_report(path: Path) -> dict:
     empty = {"exists": False, "dirty": True, "behind": True, "head": "", "origin_main": ""}
     if not path.is_dir():
@@ -294,15 +407,146 @@ def workshop_unit_active() -> bool:
     return (proc.stdout or "").strip() == "active"
 
 
+def workshop_unit_props() -> dict:
+    empty = {"user": "", "main_pid": 0, "working_directory": "", "active": False}
+    if not have("systemctl"):
+        return empty
+    proc = run(
+        [
+            "systemctl",
+            "show",
+            WORKSHOP_UNIT,
+            "-p",
+            "User",
+            "-p",
+            "MainPID",
+            "-p",
+            "WorkingDirectory",
+            "-p",
+            "ActiveState",
+        ],
+        check=False,
+        timeout=5,
+    )
+    props: dict[str, str] = {}
+    for line in (proc.stdout or "").splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            props[key] = value
+    try:
+        pid = int(props.get("MainPID") or 0)
+    except ValueError:
+        pid = 0
+    return {
+        "user": (props.get("User") or "").strip(),
+        "main_pid": pid,
+        "working_directory": (props.get("WorkingDirectory") or "").strip(),
+        "active": (props.get("ActiveState") or "").strip() == "active",
+    }
+
+
+def workshop_service_home(unit: dict | None = None) -> Path:
+    custom = (os.environ.get("CORP_HOME") or "").strip()
+    if custom:
+        return Path(custom).expanduser()
+    info = unit if unit is not None else workshop_unit_props()
+    user = (info.get("user") or "").strip()
+    if user and user != "root":
+        return Path(f"/home/{user}")
+    return Path("/home/corp")
+
+
+def workshop_service_db(unit: dict | None = None) -> Path:
+    return workshop_service_home(unit) / ".config" / "corp" / "workshop.db"
+
+
 def workshop_db_mode(path: Path | None = None) -> str:
-    target = path or WORKSHOP_DB
-    if not target.is_file():
+    target = path or workshop_service_db()
+    try:
+        if not target.is_file():
+            return "missing"
+        return oct(target.stat().st_mode & 0o777)
+    except OSError:
         return "missing"
-    return oct(target.stat().st_mode & 0o777)
 
 
 def workshop_db_mode_ok(path: Path | None = None) -> bool:
     return workshop_db_mode(path) == "0o600"
+
+
+def proc_cwd(pid: int) -> str:
+    if not pid:
+        return ""
+    try:
+        return str(Path(f"/proc/{pid}/cwd").resolve())
+    except OSError:
+        return ""
+
+
+def proc_start_time(pid: int) -> float:
+    if not pid:
+        return 0.0
+    try:
+        return float(Path(f"/proc/{pid}").stat().st_ctime)
+    except OSError:
+        return 0.0
+
+
+def git_head_commit_time(path: Path) -> float:
+    proc = run(["git", "-C", str(path), "log", "-1", "--format=%ct"], check=False, timeout=8)
+    try:
+        return float((proc.stdout or "0").strip() or 0)
+    except ValueError:
+        return 0.0
+
+
+def uvicorn_matches_live(
+    live_path: Path | None = None,
+    live_head: str = "",
+    live_commit_time: float = 0.0,
+    pid: int = 0,
+    cwd: str = "",
+    start_time: float = 0.0,
+    working_directory: str = "",
+) -> dict:
+    live = live_path or live_corp_path()
+    try:
+        live_res = str(live.resolve())
+    except OSError:
+        live_res = str(live)
+    here = cwd or working_directory or ""
+    under_live = bool(here and (here == live_res or here.startswith(live_res + os.sep)))
+    stale = bool(pid and live_commit_time and start_time and start_time < live_commit_time)
+    ok = bool(pid and under_live and not stale)
+    return {
+        "ok": ok,
+        "pid": pid,
+        "cwd": here,
+        "head": live_head,
+        "stale": stale or not under_live or not pid,
+        "under_live": under_live,
+    }
+
+
+def uvicorn_process_report(unit: dict | None = None) -> dict:
+    live = live_corp_path()
+    tree = git_tree_report(live)
+    info = unit if unit is not None else workshop_unit_props()
+    pid = int(info.get("main_pid") or 0)
+    cwd = proc_cwd(pid) or (info.get("working_directory") or "")
+    start = proc_start_time(pid)
+    head_time = git_head_commit_time(live) if tree.get("exists") else 0.0
+    match = uvicorn_matches_live(
+        live_path=live,
+        live_head=tree.get("head") or "",
+        live_commit_time=head_time,
+        pid=pid,
+        cwd=cwd,
+        start_time=start,
+        working_directory=info.get("working_directory") or "",
+    )
+    match["origin_main"] = tree.get("origin_main") or ""
+    return match
 
 
 def auth_policy_present(root: Path | None = None) -> bool:
@@ -321,6 +565,32 @@ def uvicorn_target_sha() -> str:
     return git_tree_report(ROOT)["origin_main"]
 
 
+def funnel_enabled_from_text(text: str) -> bool:
+    """Funnel ON only from an explicit signal — never a Serve HTTPS URL."""
+    raw = text or ""
+    low = raw.lower()
+    if not low.strip():
+        return False
+    if "no funnel" in low or "funnel is not" in low or "funnel off" in low:
+        return False
+    if "tailnet only" in low:
+        return False
+    if "funnel is enabled" in low or "allowfunnel" in low:
+        return True
+    if re.search(r"\bfunnel\b.*\bon\b", low) or "funnel on" in low:
+        return True
+    if "funnel" in low and re.search(r"https://\S+", low) and "tailnet only" not in low:
+        return True
+    return False
+
+
+def allow_funnel_on(data: dict) -> bool:
+    allow = data.get("AllowFunnel")
+    if isinstance(allow, dict):
+        return any(bool(value) for value in allow.values())
+    return bool(allow)
+
+
 def tailscale_status() -> dict:
     missing = {"serve": False, "funnel": True, "ok": False}
     if not have("tailscale"):
@@ -333,18 +603,14 @@ def tailscale_status() -> dict:
     if not isinstance(data, dict):
         data = {}
     serve_on = bool(data.get("Web") or data.get("TCP"))
-    allow = data.get("AllowFunnel") or {}
-    funnel_on = any(bool(v) for v in allow.values()) if isinstance(allow, dict) else bool(allow)
+    funnel_on = allow_funnel_on(data)
     if not serve_on and (proc.stdout or "").strip() and proc.returncode == 0:
         text = proc.stdout or ""
         serve_on = "http" in text.lower() or "https" in text.lower()
     if not funnel_on:
         fun = run(["tailscale", "funnel", "status"], check=False, timeout=8)
-        text = ((fun.stdout or "") + "\n" + (fun.stderr or "")).lower()
-        if "no funnel" in text or "funnel is not" in text or "funnel off" in text:
-            funnel_on = False
-        elif re.search(r"https://\S+", text) and "off" not in text:
-            funnel_on = True
+        text = (fun.stdout or "") + "\n" + (fun.stderr or "")
+        funnel_on = funnel_enabled_from_text(text)
     return {"serve": serve_on, "funnel": funnel_on, "ok": serve_on and not funnel_on}
 
 
@@ -381,15 +647,7 @@ def pinned_projects(reg: dict) -> list[dict]:
     return [project for project in reg.get("projects", []) if is_pinned(project)]
 
 
-def save_registry(reg: dict) -> None:
-    invalidate_board()
-    text = json.dumps(reg, indent=2) + "\n"
-    try:
-        REGISTRY_PATH.write_text(text)
-        _clear_registry_overlay()
-        return
-    except OSError:
-        pass
+def _write_registry_overlay(reg: dict) -> None:
     git_names: set[str] = set()
     try:
         git_raw = json.loads(REGISTRY_PATH.read_text())
@@ -402,6 +660,35 @@ def save_registry(reg: dict) -> None:
         "projects": [dict(p) for p in reg.get("projects") or [] if p.get("name") and p.get("name") not in git_names],
     }
     save_workshop(data)
+
+
+def save_registry(reg: dict) -> None:
+    invalidate_board()
+    text = json.dumps(reg, indent=2) + "\n"
+    wrote_root = False
+    wrote_git = False
+    for path in git_registry_candidates():
+        try:
+            if not path.parent.is_dir():
+                continue
+            path.write_text(text)
+            wrote_git = True
+            try:
+                if path.resolve() == REGISTRY_PATH.resolve():
+                    wrote_root = True
+            except OSError:
+                if path == REGISTRY_PATH:
+                    wrote_root = True
+        except OSError:
+            continue
+    if wrote_root:
+        _clear_registry_overlay()
+        return
+    # Live git file stayed unwritable. Keep an emergency overlay so the
+    # workshop still sees pins, but do not pretend overlay is canon.
+    _write_registry_overlay(reg)
+    if not wrote_git:
+        print("need write to git registry / deploy path", file=sys.stderr)
 
 
 def org_name(reg: dict) -> str:
@@ -612,16 +899,27 @@ def project_by_repo(reg: dict, repo: str) -> dict:
     die(f"repo not in registry: {repo}")
 
 
-def collect_issues(reg: dict, skip_blocked: bool = True) -> list[dict]:
+def collect_issues(
+    reg: dict,
+    skip_blocked: bool = True,
+    states: tuple[str, ...] = ("open",),
+) -> list[dict]:
     blocked_label = reg.get("labels", {}).get("blocked", "blocked")
     found = []
+    seen: set[tuple[str, int | None]] = set()
     for project in pinned_projects(reg):
         if not issues_enabled(project):
             continue
-        for issue in issues_for(project["repo"]):
-            if skip_blocked and blocked_label in label_names(issue):
-                continue
-            found.append({**issue, "project": project["name"], "repo": project["repo"]})
+        for state in states:
+            for issue in issues_for(project["repo"], state):
+                key = (project["repo"], issue.get("number"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                closed = (issue.get("state") or "OPEN").upper() == "CLOSED"
+                if skip_blocked and not closed and blocked_label in label_names(issue):
+                    continue
+                found.append({**issue, "project": project["name"], "repo": project["repo"]})
     found.sort(key=rank)
     return found
 
@@ -743,6 +1041,36 @@ def graph_age_of(dest: Path | None) -> str:
     return ""
 
 
+def graph_freshness(dest: Path | None) -> dict:
+    empty = {"age": "", "commit": "", "head": "", "stale": True, "present": False}
+    if dest is None:
+        return empty
+    report = dest / "graphify-out" / "GRAPH_REPORT.md"
+    tree = git_tree_report(dest) if (dest / ".git").exists() else {"head": ""}
+    head = tree.get("head") or ""
+    if not report.is_file():
+        return {**empty, "head": _short_sha(head)}
+    try:
+        parsed = parse_graph_report(report.read_text())
+    except OSError:
+        parsed = parse_graph_report("")
+    fresh = parsed.get("fresh") or ""
+    stale = True
+    if fresh and head:
+        stale = not (head.startswith(fresh) or fresh.startswith(head[: min(7, len(head))]))
+    elif fresh or head:
+        stale = True
+    else:
+        stale = True
+    return {
+        "age": graph_age_of(dest),
+        "commit": fresh,
+        "head": _short_sha(head),
+        "stale": stale,
+        "present": True,
+    }
+
+
 def _issue_ready(issue: dict) -> bool:
     if (issue.get("column") or "") == "ready":
         return True
@@ -783,13 +1111,25 @@ def pin_research(project: dict, dest: Path | None, research_files: list[str], is
         gap = "есть"
     hint = git_worktree_hint(dest)
     graph = dest / "graphify-out" / "GRAPH_REPORT.md" if dest else None
-    return {
+    freshness = graph_freshness(dest)
+    caution = ""
+    if hint["dirty"] or hint["unpushed"] or freshness.get("stale"):
+        caution = "не плоди Issues"
+    row = {
         "name": project.get("name"),
         "repo": project.get("repo"),
         "cwd": str(dest) if dest else None,
         "docs": docs,
         "graphify": bool(graph and graph.is_file()),
-        "graph_age": graph_age_of(dest),
+        "graph_age": freshness.get("age") or graph_age_of(dest),
+        "graph_commit": freshness.get("commit") or "",
+        "graph_head": freshness.get("head") or "",
+        "graph_stale": bool(freshness.get("stale")),
+        "graphify_note": (
+            f"graph {freshness.get('age') or 'no'}"
+            + (f" stale vs HEAD {freshness.get('head')}" if freshness.get("stale") else "")
+        ),
+        "caution": caution,
         "spec_present": spec_present,
         "prd_present": prd_present,
         "gap": gap,
@@ -801,10 +1141,26 @@ def pin_research(project: dict, dest: Path | None, research_files: list[str], is
         "dirty": hint["dirty"],
         "unpushed": hint["unpushed"],
     }
+    if (project.get("name") or "") == "corp":
+        trees = two_trees_report()
+        row.update(
+            {
+                "live_path": trees["live_path"],
+                "writers_path": trees["writers_path"],
+                "live_sha": trees["live_sha"],
+                "writers_sha": trees["writers_sha"],
+                "live_git": _tree_git_label(trees["live"]),
+                "writers_git": _tree_git_label(trees["writers"]),
+                "trees_match": trees["trees_match"],
+            }
+        )
+    return row
 
 
 def research_report(reg: dict, issues: list[dict] | None = None) -> list[dict]:
     files = reg.get("research_files") or []
+    if issues is None:
+        issues = collect_issues(reg, skip_blocked=False, states=("open", "closed"))
     rows = []
     for project in pinned_projects(reg) or active_projects(reg):
         dest = project_dir(project)
@@ -926,8 +1282,12 @@ def cycle_payload(reg: dict) -> dict:
             "instruction": "run gh auth login",
         }
 
-    issues = collect_issues(reg)
-    ready, other = split_ready(reg, issues)
+    issues = collect_issues(reg, skip_blocked=False, states=("open", "closed"))
+    open_issues = [item for item in issues if (item.get("state") or "OPEN").upper() != "CLOSED"]
+    blocked_label = reg.get("labels", {}).get("blocked", "blocked")
+    open_unblocked = [item for item in open_issues if blocked_label not in label_names(item)]
+    ready, other = split_ready(reg, open_unblocked)
+    trees = two_trees_report()
     if ready:
         nxt = ready[0]
         dest = project_dir(project_by_name(reg, nxt["project"]))
@@ -942,17 +1302,26 @@ def cycle_payload(reg: dict) -> dict:
                 "cwd": str(dest) if dest else None,
             },
             "ready": ready,
+            "trees": trees,
         }
 
+    research = research_report(reg, issues)
+    graphify_needed = any(row.get("graph_stale") for row in research)
     return {
         "mode": "research",
         "next": None,
         "open_unblocked": other[:20],
-        "research": research_report(reg, issues),
+        "research": research,
+        "trees": trees,
+        "graphify_refresh": {
+            "needed": graphify_needed,
+            "note": "graphify did not refresh" if graphify_needed else "graphify fresh vs HEAD",
+        },
         "instruction": (
             "No ready Issues. Follow HARNESS.md research loop. "
-            "Compare SPEC/PRD to the board. File concrete Issues for gaps. "
-            "Do not mint a fake backlog. Do not auto-Approve drafts."
+            "Compare SPEC/PRD to the board. Write workshop drafts for gaps. "
+            "Do not file GitHub ready Issues. Do not mint a fake backlog. "
+            "Do not auto-Approve drafts."
         ),
     }
 
@@ -986,6 +1355,16 @@ def render(payload: dict) -> str:
         return "\n".join(lines) + "\n"
 
     lines += ["", "NEXT: research", "", payload.get("instruction", "")]
+    trees = payload.get("trees") or {}
+    if trees:
+        lines += [
+            "",
+            "TREES",
+            f"writers: {trees.get('writers_path') or 'missing'} {_short_sha(trees.get('writers_sha') or '')} {_tree_git_label(trees.get('writers') or {})}",
+            f"live: {trees.get('live_path') or 'missing'} {_short_sha(trees.get('live_sha') or '')} {_tree_git_label(trees.get('live') or {})}",
+        ]
+        if not trees.get("trees_match"):
+            lines.append("trees diverge")
     open_items = payload.get("open_unblocked") or []
     if open_items:
         lines += ["", "OPEN (not labeled ready)"]
@@ -1004,12 +1383,31 @@ def render(payload: dict) -> str:
             git_bits.append("unpushed")
         git = ", ".join(git_bits) if git_bits else "clean"
         cwd = row.get("cwd") or "not cloned"
-        lines.append(f"- {row.get('name')}: {cwd} | {spec} | {prd} | gap {gap} | {graph} | {git}")
+        graph_note = row.get("graphify_note") or graph
+        lines.append(f"- {row.get('name')}: {cwd} | {spec} | {prd} | gap {gap} | {graph_note} | {git}")
+        if row.get("live_path") or row.get("writers_path"):
+            writers = row.get("writers_path") or cwd
+            live = row.get("live_path") or ""
+            lines.append(
+                f"  writers: {writers} {_short_sha(row.get('writers_sha') or '')} {row.get('writers_git') or git}"
+            )
+            lines.append(
+                f"  live: {live} {_short_sha(row.get('live_sha') or '')} {row.get('live_git') or 'missing'}"
+            )
+            if not row.get("trees_match"):
+                lines.append("  trees diverge")
+        if row.get("caution"):
+            lines.append(f"  caution: {row['caution']}")
+        if row.get("graph_stale"):
+            lines.append("  graphify did not refresh")
         for bullet in row.get("unshipped") or []:
             lines.append(f"  unshipped: {bullet[:120]}")
         if not row.get("unshipped"):
             for item in row.get("open_non_ready") or []:
                 lines.append(f"  open not ready: {item[:120]}")
+    refresh = payload.get("graphify_refresh") or {}
+    if refresh.get("needed"):
+        lines += ["", f"graphify: {refresh.get('note') or 'graphify did not refresh'}"]
     return "\n".join(lines) + "\n"
 
 
@@ -1032,10 +1430,14 @@ def doctor_payload(isolation: dict | None = None) -> dict:
     load_env()
     live = live_corp_path()
     tree = git_tree_report(live)
+    writers = git_tree_report(writers_corp_path())
+    trees = two_trees_report()
     ts = tailscale_status()
     iso = isolation if isolation is not None else probe_isolation()
     db_mode = workshop_db_mode()
     uvicorn_sha = uvicorn_target_sha()
+    uvicorn = uvicorn_process_report()
+    freshness = graph_freshness(ROOT)
     checks = [
         ("git", have("git")),
         ("gh", have("gh")),
@@ -1055,6 +1457,7 @@ def doctor_payload(isolation: dict | None = None) -> dict:
         ("live /opt/corp at origin/main", tree["exists"] and bool(tree["origin_main"]) and not tree["behind"]),
         ("auth_policy", auth_policy_present()),
         ("workshop.db 0600", workshop_db_mode_ok()),
+        ("uvicorn serves live HEAD", bool(uvicorn.get("ok"))),
         ("tailscale serve", ts["serve"]),
         ("tailscale funnel off", not ts["funnel"]),
         ("agent identity isolated", bool(iso.get("isolated"))),
@@ -1063,12 +1466,25 @@ def doctor_payload(isolation: dict | None = None) -> dict:
         "corp": str(ROOT),
         "workspace": str(workspace()),
         "live": str(live),
+        "writers": str(writers_corp_path()),
         "live_exists": tree["exists"],
         "live_sha": tree["head"],
+        "writers_sha": writers.get("head") or "",
         "live_dirty": tree["dirty"] if tree["exists"] else True,
         "live_behind": tree["behind"] if tree["exists"] else True,
+        "writers_dirty": writers["dirty"] if writers.get("exists") else True,
+        "writers_behind": writers["behind"] if writers.get("exists") else True,
+        "trees_match": trees["trees_match"],
         "uvicorn_sha": uvicorn_sha,
+        "uvicorn": uvicorn,
         "workshop_db_mode": db_mode,
+        "workshop_db_path": str(workshop_service_db()),
+        "graphify_stale": bool(freshness.get("stale")),
+        "graphify_note": (
+            "graphify did not refresh"
+            if freshness.get("stale")
+            else "graphify fresh vs HEAD"
+        ),
         "isolation": iso.get("mode") or "transitional",
         "isolation_reason": iso.get("reason") or "; ".join(iso.get("blockers") or []),
         "isolation_blockers": iso.get("blockers") or [],
@@ -1081,16 +1497,26 @@ def doctor_lines(payload: dict | None = None) -> list[str]:
     iso = payload.get("isolation") or "transitional"
     reason = payload.get("isolation_reason") or ""
     iso_line = f"isolation: {iso}" + (f" ({reason})" if reason and iso != "isolated" else "")
-    return [
+    writers_sha = _short_sha(payload.get("writers_sha") or "")
+    live_sha = _short_sha(payload.get("live_sha") or "")
+    diverge = "" if payload.get("trees_match") else "trees diverge"
+    uvicorn = payload.get("uvicorn") or {}
+    lines = [
         f"corp: {payload.get('corp')}",
         f"workspace: {payload.get('workspace')}",
-        f"live: {payload.get('live') or 'missing'}",
+        f"writers: {payload.get('writers') or 'missing'} {writers_sha or '—'}",
+        f"live: {payload.get('live') or 'missing'} {live_sha or '—'}",
         f"live HEAD: {payload.get('live_sha') or '—'}",
         f"uvicorn should serve: {payload.get('uvicorn_sha') or '—'}",
-        f"workshop.db: {payload.get('workshop_db_mode') or 'missing'}",
+        f"uvicorn pid: {uvicorn.get('pid') or '—'} cwd {uvicorn.get('cwd') or '—'}",
+        f"workshop.db: {payload.get('workshop_db_mode') or 'missing'} ({payload.get('workshop_db_path') or ''})",
+        f"graphify: {payload.get('graphify_note') or ''}",
         iso_line,
-        *[f"{'ok' if row['ok'] else 'NO':2}  {row['name']}" for row in payload.get("checks") or []],
     ]
+    if diverge:
+        lines.append(diverge)
+    lines += [f"{'ok' if row['ok'] else 'NO':2}  {row['name']}" for row in payload.get("checks") or []]
+    return lines
 
 
 def doctor() -> None:
@@ -1738,8 +2164,8 @@ def project_seed_files(name: str, workspace_path: str | None = None) -> dict[str
             "- Not a company, billing surface, or multi-tenant app.\n"
             "- Not a fake backlog. File Issues only for concrete gaps in this spec.\n\n"
             "## First slice\n\n"
-            "After clone, `corp cycle` should enter research, see this stub, and let a\n"
-            "stranger file ready Issues against it. No hello-world Issue is minted.\n"
+            "After clone, pin the project in Workshop, replace this SPEC stub, and\n"
+            "write workshop drafts. Do not file ready Issues as the first action.\n"
         ),
         "memory/sessions/.gitkeep": "",
     }
@@ -1775,7 +2201,12 @@ def create_project(reg: dict, name: str) -> dict:
     run(["git", "commit", "-m", "corp: thin seed"], cwd=dest, check=False)
     run(["git", "push", "-u", "origin", "HEAD"], cwd=dest, check=False)
     ensure_seed_labels(repo)
-    return add_existing(reg, repo)
+    result = add_existing(reg, repo)
+    result["next"] = (
+        "Next: open Workshop, keep the pin, replace the SPEC stub, "
+        "write workshop drafts. Do not file ready Issues as the first action."
+    )
+    return result
 
 
 def project_stage(reg: dict, name: str) -> dict:
@@ -1888,6 +2319,8 @@ def drop_draft(draft_id: str) -> None:
 
 def approve_draft(draft_id: str) -> dict:
     draft = draft_by_id(draft_id)
+    if not pin_owns_repo(draft.get("repo") or ""):
+        die(f"{draft.get('repo') or 'draft'} is not pinned")
     labels = [draft.get("label") or "blocked"]
     if draft.get("kind") in {"design", "qa"}:
         labels.append(draft["kind"])
@@ -1997,7 +2430,8 @@ def orch_prompt(dest: Path, out: Path, spec_rels: list[str], open_lines: str, pr
         f"Also read: {spec}.\n"
         f"2) What is already shipped: code, README, graphify-out/GRAPH_REPORT.md, closed work.\n"
         f"3) Open GitHub issues already on the board (do not duplicate these):\n{open_lines}\n"
-        f"Propose NEW drafts only for PRD/SPEC work that is not shipped and not already an open issue. "
+        f"Propose NEW workshop drafts only for PRD/SPEC work that is not shipped and not already an open issue. "
+        f"Do not file GitHub ready Issues. Do not auto-Approve. "
         f"Each draft is a concrete follow-up against that spec. "
         f"{orch_workshop_extra(project)}"
         f"If there is no PRD/SPEC, output one draft titled 'написать SPEC'. "
@@ -2013,6 +2447,8 @@ def orch_prompt(dest: Path, out: Path, spec_rels: list[str], open_lines: str, pr
 
 
 def orchestrate(reg: dict, repo: str) -> dict:
+    if not pin_owns_repo(repo, reg):
+        die(f"{repo} is not pinned")
     project = project_by_repo(reg, repo)
     dest = project_dir(project)
     if dest is None:
@@ -2280,16 +2716,54 @@ def tg_notify_event(
     notify_safe(tg_card(ref, happened, nxt), buttons=markup or None)
 
 
+def workshop_public_url() -> str:
+    env = (os.environ.get("CORP_WORKSHOP_URL") or "").strip().rstrip("/")
+    if env:
+        return env
+    if not have("tailscale"):
+        return ""
+    proc = run(["tailscale", "status", "--json"], check=False, timeout=8)
+    try:
+        data = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        data = {}
+    dns = (((data.get("Self") or {}).get("DNSName") or "") if isinstance(data, dict) else "").strip().rstrip(".")
+    if dns:
+        return f"https://{dns}"
+    return ""
+
+
+def tg_workshop_issue_url(repo: str = "", number: int | None = None, ref: str = "") -> str:
+    base = workshop_public_url()
+    if not base:
+        return ""
+    issue = ref or (f"{repo}#{number}" if repo and number else "")
+    if not issue:
+        return base
+    return f"{base}/?issue={issue}"
+
+
 def tg_event_buttons(kind: str, url: str = "", ref: str = "") -> list:
     row = []
-    if url:
-        row.append({"text": "Открыть", "url": url})
-    if kind in {"fail", "incomplete", "hung"} and ref:
+    open_url = ""
+    if ref and "#" in str(ref):
+        try:
+            repo, number = parse_issue_ref(ref)
+            open_url = tg_workshop_issue_url(repo, number, ref)
+        except CorpError:
+            open_url = tg_workshop_issue_url(ref=ref)
+    if not open_url:
+        open_url = tg_workshop_issue_url(ref=ref) or url
+    if open_url:
+        row.append({"text": "Открыть", "url": open_url})
+    retry_kinds = {"fail", "incomplete", "hung", "waiting_error"}
+    if kind in retry_kinds and ref:
         row.append({"text": "Очередь+", "callback_data": f"q:{ref}"})
     if kind in {"start", "hung"}:
         row.append({"text": "Пауза", "callback_data": "c:pause"})
     if kind in {"to_qa", "ready_qa"} and ref:
-        row.append({"text": "QA", "callback_data": f"qa:{ref}"})
+        row.append({"text": "QA ок", "callback_data": f"qap:{ref}"})
+        row.append({"text": "QA нет", "callback_data": f"qaf:{ref}"})
     return [row] if row else []
 
 
@@ -2622,9 +3096,14 @@ def tg_cmd_queue(_arg: str = "") -> None:
     queue = data.get("queue") or []
     text = tg_queue_text(queue, paused=not data.get("queue_running"))
     buttons = []
-    failed = [item for item in queue if item.get("status") == "failed"]
-    if failed:
-        item = failed[0]
+    retryable = [
+        item
+        for item in queue
+        if item.get("status") == "failed"
+        or (item.get("status") == "waiting" and (item.get("last_error") or "").strip())
+    ]
+    if retryable:
+        item = retryable[0]
         key = issue_ref(item["repo"], item["issue"])
         buttons = [[{"text": "Очередь+", "callback_data": f"q:{key}"}, {"text": "Пауза", "callback_data": "c:pause"}]]
     notify_safe(text, buttons=buttons or None)
@@ -2721,9 +3200,21 @@ def handle_tg_callback(code: str) -> None:
         drafts = load_workshop().get("drafts") or []
         notify_safe(tg_drafts_text(drafts), buttons=tg_draft_buttons(drafts) or None)
         return
+    if code.startswith("qap:"):
+        repo, number = parse_issue_ref(code.split(":", 1)[1])
+        close_issue(load_registry(), repo, number)
+        return
+    if code.startswith("qaf:"):
+        repo, number = parse_issue_ref(code.split(":", 1)[1])
+        close_issue(load_registry(), repo, number, fail=True, note="QA не принял (Telegram)")
+        return
     if code.startswith("qa:"):
         repo, number = parse_issue_ref(code.split(":", 1)[1])
-        send_to_qa(load_registry(), repo, number)
+        open_url = tg_workshop_issue_url(repo, number)
+        notify_safe(
+            "Карточка на QA. Открой мастерскую или QA ок / QA нет — не enqueue.",
+            buttons=[[{"text": "Открыть", "url": open_url}]] if open_url else None,
+        )
         return
     if code.startswith("q:") or code.startswith("qx:"):
         repo, number = parse_issue_ref(code.split(":", 1)[1])
@@ -2953,7 +3444,7 @@ def board_payload(reg: dict) -> dict:
     drafts = draft_summaries(reg)
     payload = {
         "cards": cards,
-        "projects": research_report(reg),
+        "projects": research_report(reg, cards),
         "pins": pins,
         "drafts": drafts,
         "github_warning": "GitHub временно не отвечает. Обнови через пару секунд." if warnings else "",
@@ -3107,11 +3598,12 @@ def take_issue(reg: dict, repo: str, number: int) -> dict:
 def refresh_graph(dest: Path, repo: str, number: int) -> str:
     if not dest.is_dir():
         return "no checkout"
+    if not have("graphify"):
+        return "no graphify"
     run(["git", "pull", "--ff-only"], cwd=dest, check=False)
-    if have("graphify"):
-        proc = run(["graphify", "update", "."], cwd=dest, check=False)
-        if proc.returncode != 0:
-            run(["graphify", "."], cwd=dest, check=False)
+    proc = run(["graphify", "update", "."], cwd=dest, check=False)
+    if proc.returncode != 0:
+        run(["graphify", "."], cwd=dest, check=False)
     status = run(["git", "status", "--porcelain", "--", "graphify-out"], cwd=dest, check=False)
     if not (status.stdout or "").strip():
         return "graph unchanged"
@@ -3172,10 +3664,27 @@ def close_issue(
     if proc.returncode != 0:
         die((proc.stderr or proc.stdout).strip())
     graph = refresh_graph(dest, repo, number) if dest else "no checkout"
+    graphify_ok = graph in {"graph pushed", "graph unchanged"}
+    note_graph = f"graphify: {graph}"
+    try:
+        comment(repo, number, note_graph)
+    except CorpError:
+        pass
+    if not graphify_ok:
+        need_human(f"{repo}#{number} {note_graph}")
+        tg_notify_event("need_human", tg_short_ref(repo, number), note_graph, url=issue.get("url") or "")
     invalidate_board()
     maybe_orchestrate(reg, project["name"])
     record_event("qa_pass", tg_short_ref(repo, number), "QA прошёл")
-    return {"ok": True, "repo": repo, "issue": number, "graph": graph, "closed": True}
+    return {
+        "ok": True,
+        "repo": repo,
+        "issue": number,
+        "graph": graph,
+        "graphify_ok": graphify_ok,
+        "graphify_note": note_graph,
+        "closed": True,
+    }
 
 
 def send_to_qa(
@@ -3397,22 +3906,50 @@ def isolation_wrapper_argv(user: str | None = None) -> list[str]:
     return ["sudo", "-n", "-u", user or isolation_probe_user(), str(agent_wrapper_path()), "--probe"]
 
 
+def _path_is_file(path: Path) -> bool:
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
+def _path_exists(path: Path) -> bool:
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
+def _path_mode(path: Path) -> int | None:
+    try:
+        return path.stat().st_mode
+    except OSError:
+        return None
+
+
 def workspace_isolation_ok(dest_workspace: Path | None = None, config: Path | None = None) -> tuple[bool, list[str]]:
     ws = dest_workspace if dest_workspace is not None else workspace()
     cfg = config if config is not None else Path.home() / ".config" / "corp"
     blockers: list[str] = []
-    if not ws.is_dir():
-        return False, ["workspace missing"]
-    if ws.stat().st_mode & 0o004:
-        blockers.append("workspace is world-readable")
-    parent = ws.parent
-    if parent.is_dir() and not (parent.stat().st_mode & 0o001):
-        blockers.append("workspace parent is not traversable by other users")
-    if cfg.is_dir() and (cfg.stat().st_mode & 0o007):
-        blockers.append("control-plane config is open to other users")
-    dot_config = cfg.parent
-    if dot_config.is_dir() and dot_config.name == ".config" and (dot_config.stat().st_mode & 0o007):
-        blockers.append("~/.config is open to other users")
+    try:
+        if not ws.is_dir():
+            return False, ["workspace missing"]
+        mode = _path_mode(ws)
+        if mode is not None and mode & 0o004:
+            blockers.append("workspace is world-readable")
+        parent = ws.parent
+        parent_mode = _path_mode(parent) if parent.is_dir() else None
+        if parent_mode is not None and not (parent_mode & 0o001):
+            blockers.append("workspace parent is not traversable by other users")
+        cfg_mode = _path_mode(cfg) if cfg.is_dir() else None
+        if cfg_mode is not None and cfg_mode & 0o007:
+            blockers.append("control-plane config is open to other users")
+        dot_config = cfg.parent
+        dot_mode = _path_mode(dot_config) if dot_config.is_dir() else None
+        if dot_mode is not None and dot_config.name == ".config" and dot_mode & 0o007:
+            blockers.append("~/.config is open to other users")
+    except OSError as exc:
+        return False, [f"workspace probe denied: {exc}"]
     return not blockers, blockers
 
 
@@ -3422,13 +3959,40 @@ def probe_isolation(
     config: Path | None = None,
 ) -> dict:
     """Fail-closed isolation report. Uses the wrapper only — never `sudo -n -u $user true`."""
+    try:
+        return _probe_isolation_inner(run_cmd, dest_workspace, config)
+    except OSError as exc:
+        return {
+            "mode": "transitional",
+            "armed": bool(agent_user_name()),
+            "isolated": False,
+            "ready_to_arm": False,
+            "wrapper_ok": False,
+            "workspace_ok": False,
+            "secrets_denied": False,
+            "clis": {name: False for name in ISOLATION_CLIS},
+            "user": isolation_probe_user(),
+            "blockers": [f"isolation probe denied: {exc}", "CLIs not installed under that UID"],
+        }
+
+
+def _probe_isolation_inner(
+    run_cmd=None,
+    dest_workspace: Path | None = None,
+    config: Path | None = None,
+) -> dict:
     run_cmd = run_cmd or (lambda cmd: run(cmd, check=False))
     user = isolation_probe_user()
     wrapper = agent_wrapper_path()
     armed = bool(agent_user_name())
     blockers: list[str] = []
     wrapper_ok = False
-    if wrapper.is_file():
+    try:
+        wrapper_present = wrapper.is_file()
+    except OSError:
+        wrapper_present = False
+        blockers.append("wrapper not readable")
+    if wrapper_present:
         argv = isolation_wrapper_argv(user)
         if argv[-1] != "--probe" or "true" in argv:
             blockers.append("probe argv is not wrapper-only")
@@ -3437,19 +4001,29 @@ def probe_isolation(
             if not wrapper_ok:
                 blockers.append("wrapper probe failed")
     else:
-        blockers.append("wrapper not installed")
+        if "wrapper not readable" not in blockers:
+            blockers.append("wrapper not installed")
     ws_ok, ws_blockers = workspace_isolation_ok(dest_workspace, config)
     blockers.extend(ws_blockers)
     secrets_denied = True
     for path in isolation_secret_paths(config):
-        if path.exists() and (path.stat().st_mode & 0o077):
+        try:
+            if _path_exists(path):
+                mode = _path_mode(path)
+                if mode is not None and mode & 0o077:
+                    secrets_denied = False
+                    blockers.append(f"{path.name} is group/world accessible")
+        except OSError:
             secrets_denied = False
-            blockers.append(f"{path.name} is group/world accessible")
+            blockers.append(f"{path.name} not readable")
     home = agent_home_dir(user)
     clis = {}
     for name in ISOLATION_CLIS:
         path = home / ".local" / "bin" / name
-        clis[name] = path.is_file() and os.access(path, os.X_OK)
+        try:
+            clis[name] = path.is_file() and os.access(path, os.X_OK)
+        except OSError:
+            clis[name] = False
     if not (clis.get("claude") or clis.get("agent")):
         blockers.append("CLIs not installed under that UID")
     if not armed:
@@ -3942,7 +4516,8 @@ def reap_queue(
 
 def propose_draft(reg: dict, project_name: str, title: str, body: str, label: str = "ready") -> dict:
     project = project_by_name(reg, project_name)
-    if not is_pinned(project) or not project.get("repo"):
+    repo = project.get("repo") or ""
+    if not repo or not is_pinned(project) or not pin_owns_repo(repo, reg):
         die("выберите corp или clarity")
     if not (title or "").strip():
         die("нужен заголовок")
@@ -3977,6 +4552,13 @@ def queue_add(
         die(f"{repo}#{number} blocked")
     if "in-qa" in names and "qa-fail" not in names:
         die(f"{repo}#{number} на QA")
+    if "in-progress" in names:
+        die(f"{repo}#{number} in-progress")
+    if column_of(issue) in {"in-progress", "qa", "done"}:
+        die(f"{repo}#{number} {column_of(issue)}")
+    runner = runner_of(issue)
+    if runner not in {"", "queued"}:
+        die(f"{repo}#{number} already claimed ({runner})")
     project = project_by_repo(reg, repo)
     profile = profile_by_id(profile_id) if profile_id else {}
     kind = (kind or profile.get("kind") or "").strip()
@@ -4442,7 +5024,10 @@ def main() -> None:
     if args.command == "create-project":
         if not args.project:
             die("usage: corp create-project --project name")
-        print(json.dumps(create_project(reg, args.project), indent=2))
+        created = create_project(reg, args.project)
+        print(json.dumps(created, indent=2))
+        if created.get("next"):
+            print(created["next"], file=sys.stderr)
         return
     if args.command == "orchestrate":
         repo = args.repo

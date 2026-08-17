@@ -1069,6 +1069,186 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     app_src = (ROOT / "workshop" / "app.py").read_text()
     assert "/api/self/drop" in app_src and "/api/qa/start" in app_src
     assert "approve_drafts_checked" in app_src and "console_log_for_issue" in app_src
+    closed_only = [{"title": "Ship the billing path for invoices", "state": "CLOSED"}]
+    assert not any("billing" in item.lower() for item in corp.spec_gaps(spec_text, closed_only))
+    assert any("billing" in item.lower() for item in corp.spec_gaps(spec_text, []))
+    git_reg = {
+        "projects": [
+            {"name": "corp", "repo": "o/corp", "workshop": True, "status": "active"},
+            {"name": "LifeBalance", "repo": "o/lb", "workshop": False, "status": "active"},
+        ]
+    }
+    mirror = {
+        "pins": {"corp": True, "LifeBalance": False},
+        "projects": [dict(p) for p in git_reg["projects"]],
+    }
+    assert not corp.overlay_diverges(mirror, git_reg)
+    assert corp.overlay_diverges({"pins": {"corp": True, "LifeBalance": True}}, git_reg)
+    assert corp.overlay_diverges({"projects": [{"name": "ghost", "repo": "o/ghost", "workshop": True}]}, git_reg)
+    serve_like = "https://vmi3510874.tailad6484.ts.net (tailnet only)\n"
+    assert corp.funnel_enabled_from_text(serve_like) is False
+    assert corp.funnel_enabled_from_text("Funnel is enabled\nhttps://public.example") is True
+    assert corp.allow_funnel_on({"TCP": {}, "Web": {}}) is False
+    assert corp.allow_funnel_on({"AllowFunnel": {"443": True}}) is True
+    class _TS:
+        def __init__(self, out, code=0):
+            self.stdout = out
+            self.stderr = ""
+            self.returncode = code
+    old_run = corp.run
+    old_have = corp.have
+    try:
+        corp.have = lambda cmd: cmd == "tailscale" or old_have(cmd)
+        def ts_run(cmd, **k):
+            if list(cmd)[:3] == ["tailscale", "serve", "status"]:
+                return _TS('{"TCP":{},"Web":{"https://x.ts.net":{}}}')
+            if list(cmd)[:3] == ["tailscale", "funnel", "status"]:
+                return _TS(serve_like)
+            return old_run(cmd, **k)
+        corp.run = ts_run
+        ts = corp.tailscale_status()
+        assert ts["serve"] is True and ts["funnel"] is False
+        corp.have = lambda cmd: False
+        missing = corp.tailscale_status()
+        assert missing["serve"] is False and missing["funnel"] is True
+    finally:
+        corp.run = old_run
+        corp.have = old_have
+    real_is_file = Path.is_file
+    def boom_cli(self):
+        if self.name in corp.ISOLATION_CLIS:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_is_file(self)
+    Path.is_file = boom_cli
+    try:
+        denied = corp.probe_isolation(run_cmd=lambda cmd: _Proc(0), dest_workspace=Path(tempfile.mkdtemp()), config=Path(tempfile.mkdtemp()))
+        assert denied["mode"] == "transitional"
+        assert any("CLIs not installed" in b for b in denied["blockers"])
+        iso_denied = corp.isolation_status()
+        assert iso_denied["mode"] == "transitional" and iso_denied["ok"] is False
+    finally:
+        Path.is_file = real_is_file
+    old_get = corp.get_issue
+    old_add = corp.add_labels
+    old_comment = corp.comment
+    old_inv = corp.invalidate_board
+    try:
+        corp.add_labels = lambda *a, **k: None
+        corp.comment = lambda *a, **k: None
+        corp.invalidate_board = lambda: None
+        corp.get_issue = lambda repo, number: issue(["in-progress", "via:claude"])
+        try:
+            corp.queue_add(reg2, "andrewkazavchinskyy-cloud/corp", 9, "claude")
+            raise AssertionError("in-progress should die")
+        except corp.CorpError as exc:
+            assert "in-progress" in str(exc)
+        corp.get_issue = lambda repo, number: issue(["in-qa"])
+        try:
+            corp.queue_add(reg2, "andrewkazavchinskyy-cloud/corp", 9, "claude")
+            raise AssertionError("in-qa should die")
+        except corp.CorpError as exc:
+            assert "QA" in str(exc)
+    finally:
+        corp.get_issue = old_get
+        corp.add_labels = old_add
+        corp.comment = old_comment
+        corp.invalidate_board = old_inv
+    try:
+        corp.propose_draft(reg2, "over-under-dice", "x", "y")
+        raise AssertionError("unpinned name should die")
+    except corp.CorpError:
+        pass
+    old_draft = corp.draft_by_id
+    try:
+        corp.draft_by_id = lambda _id: {
+            "id": "x",
+            "repo": "andrewkazavchinskyy-cloud/LifeBalance",
+            "title": "nope",
+            "body": "",
+            "label": "ready",
+            "kind": "build",
+        }
+        try:
+            corp.approve_draft("x")
+            raise AssertionError("unpinned approve should die")
+        except corp.CorpError as exc:
+            assert "pin" in str(exc).lower() or "pinned" in str(exc)
+    finally:
+        corp.draft_by_id = old_draft
+    old_url = os.environ.get("CORP_WORKSHOP_URL")
+    os.environ["CORP_WORKSHOP_URL"] = "https://vmi3510874.tailad6484.ts.net"
+    try:
+        btns = corp.tg_event_buttons("to_qa", url="https://github.com/o/r/issues/1", ref="o/r#1")
+        flat = [b for row in btns for b in row]
+        assert any("?issue=" in (b.get("url") or "") for b in flat)
+        assert not any(str(b.get("callback_data") or "").startswith("qa:") for b in flat)
+        assert any(str(b.get("callback_data") or "").startswith("qap:") for b in flat)
+        sent = []
+        old_send = corp.send_to_qa
+        old_note = corp.notify_safe
+        try:
+            corp.send_to_qa = lambda *a, **k: sent.append(1)
+            corp.notify_safe = lambda *a, **k: None
+            corp.handle_tg_callback("qa:andrewkazavchinskyy-cloud/corp#1")
+            assert sent == []
+        finally:
+            corp.send_to_qa = old_send
+            corp.notify_safe = old_note
+    finally:
+        if old_url is None:
+            os.environ.pop("CORP_WORKSHOP_URL", None)
+        else:
+            os.environ["CORP_WORKSHOP_URL"] = old_url
+    assert corp.uvicorn_matches_live(
+        live_path=Path("/opt/corp"),
+        live_head="abc",
+        live_commit_time=100,
+        pid=9,
+        cwd="/opt/corp/workshop",
+        start_time=50,
+    )["ok"] is False
+    assert corp.uvicorn_matches_live(
+        live_path=Path("/opt/corp"),
+        live_head="abc",
+        live_commit_time=100,
+        pid=9,
+        cwd="/opt/corp/workshop",
+        start_time=150,
+    )["ok"] is True
+    old_home = os.environ.get("CORP_HOME")
+    service = Path(tempfile.mkdtemp(prefix="corp-svc-"))
+    svc_db = service / ".config" / "corp" / "workshop.db"
+    svc_db.parent.mkdir(parents=True)
+    svc_db.write_text("")
+    os.chmod(svc_db, 0o600)
+    os.environ["CORP_HOME"] = str(service)
+    try:
+        assert corp.workshop_db_mode_ok()
+        assert corp.workshop_service_db() == svc_db
+    finally:
+        if old_home is None:
+            os.environ.pop("CORP_HOME", None)
+        else:
+            os.environ["CORP_HOME"] = old_home
+    assert corp.log_line_matches_issue("andrewkazavchinskyy-cloud/corp#9 EXIT:0", "andrewkazavchinskyy-cloud/corp#9")
+    assert not corp.log_line_matches_issue("andrewkazavchinskyy-cloud/corp#90 EXIT:0", "andrewkazavchinskyy-cloud/corp#9")
+    seed = corp.project_seed_files("demo")
+    assert "file ready Issues as the first action" in seed["docs/SPEC.md"]
+    assert "workshop drafts" in seed["docs/SPEC.md"]
+    old_gh = corp.gh_ready
+    old_collect = corp.collect_issues
+    corp.gh_ready = lambda: True
+    corp.collect_issues = lambda *a, **k: []
+    try:
+        research = corp.cycle_payload({"org": "o", "projects": []})
+        assert research["mode"] == "research"
+        assert "workshop drafts" in research["instruction"]
+        assert "Do not file GitHub ready Issues" in research["instruction"]
+        assert "Do not auto-Approve" in research["instruction"]
+        assert "writers" in corp.render(research).lower() or "live" in corp.render(research)
+    finally:
+        corp.gh_ready = old_gh
+        corp.collect_issues = old_collect
     print("ok")
 
 

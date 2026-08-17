@@ -85,13 +85,12 @@ For each **active** project:
    `docs/roadmap.md`, `STATE.md`.
 2. Ask: what is already specified enough to implement? What is shipped vs the
    spec? What bugs or failing checks are open? What branches are unfinished?
-3. File GitHub Issues with label `ready` only for work that is concrete and
-   unblocked. Use `blocked` plus a reason if it is not.
-4. Stop after a small batch (a few Issues). Do not generate a fake backlog.
-   Do not auto-Approve workshop drafts.
+3. Write workshop drafts for concrete gaps. Do not file GitHub `ready`
+   Issues during research. Do not auto-Approve.
+4. Stop after a small batch (a few drafts). Do not generate a fake backlog.
 
 Do not implement during research unless the user said to take the first
-ready item immediately after filing it.
+ready item immediately after an operator Approve.
 
 ## Graphify
 
