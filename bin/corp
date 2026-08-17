@@ -45,6 +45,7 @@ TG_P0_MAX = 5
 TG_BOARD_MAX = 5
 TG_BOARD_PAGE = 6
 TG_MENU_MAX = 6
+TG_LONG_POLL = 25
 QUEUE_STALE_SEC = 90
 QUEUE_MAX_ATTEMPTS = 4
 QUEUE_HUNG_SEC = 45 * 60
@@ -2790,11 +2791,6 @@ def tg_save_status(process_key: str, message_id: int) -> None:
 
 def tg_status_body(data: dict | None = None) -> str:
     data = data or load_workshop()
-    iso = {}
-    try:
-        iso = probe_isolation()
-    except Exception:
-        iso = {"mode": "transitional"}
     return tg_pulse_card(
         queue_on=bool(data.get("queue_running")),
         writer=tg_writer_line(load_registry(), data),
@@ -2802,7 +2798,7 @@ def tg_status_body(data: dict | None = None) -> str:
         last_error=tg_last_queue_error(data),
         drafts=len(data.get("drafts") or []),
         server_ok=tg_server_ok(),
-        iso_mode=iso.get("mode") or "transitional",
+        iso_mode="transitional",
     )
 
 
@@ -4178,36 +4174,39 @@ def tg_menu_button_payload(url: str = "") -> dict:
     return {"type": "commands"}
 
 
-def telegram_tick() -> None:
+def telegram_tick(long_poll: bool = False) -> None:
     token, chat = tg_creds()
     if not token or not chat:
         return
     import urllib.request
 
     offset = int(load_workshop().get("tg_offset") or 0)
-    url = f"https://api.telegram.org/bot{token}/getUpdates?timeout=0&offset={offset}"
+    wait = TG_LONG_POLL if long_poll else 0
+    url = f"https://api.telegram.org/bot{token}/getUpdates?timeout={wait}&offset={offset}"
     try:
-        raw = urllib.request.urlopen(url, timeout=15).read()
+        raw = urllib.request.urlopen(url, timeout=wait + 10).read()
     except Exception:
         return
     payload = json.loads(raw.decode() or "{}")
+    if payload.get("ok") is False:
+        return
     new_offset = offset
     for upd in payload.get("result") or []:
         new_offset = int(upd.get("update_id") or 0) + 1
         cb = upd.get("callback_query") or {}
         msg = upd.get("message") or upd.get("edited_message") or {}
         if cb:
+            if cb.get("id"):
+                try:
+                    tg_post("answerCallbackQuery", {"callback_query_id": cb["id"]})
+                except (CorpError, SystemExit):
+                    pass
             msg_chat = str(((cb.get("message") or {}).get("chat") or {}).get("id") or "")
             if msg_chat == str(chat):
                 try:
                     handle_tg_callback(cb.get("data") or "")
                 except CorpError as exc:
                     tg_send(tg_err(exc))
-            if cb.get("id"):
-                try:
-                    tg_post("answerCallbackQuery", {"callback_query_id": cb["id"]})
-                except CorpError:
-                    pass
             continue
         msg_chat = str((msg.get("chat") or {}).get("id") or "")
         if msg_chat != str(chat):
@@ -4228,6 +4227,19 @@ def telegram_tick() -> None:
             tg_send(tg_err(exc))
     if new_offset != offset:
         set_tg_offset(new_offset)
+
+
+def telegram_loop() -> None:
+    try:
+        tg_post("deleteWebhook", {})
+    except (CorpError, SystemExit):
+        pass
+    while True:
+        try:
+            telegram_tick(long_poll=True)
+        except Exception as exc:
+            append_log(f"telegram: {exc}\n")
+            time.sleep(1)
 
 
 def tg_menu_buttons() -> list:
@@ -4411,7 +4423,6 @@ def tg_now_buttons(data: dict | None = None) -> list:
 
 
 def tg_cmd_start(arg: str = "") -> None:
-    tg_install_commands()
     dest = (arg or "").strip().lower()
     routes = {
         "now": tg_cmd_now,

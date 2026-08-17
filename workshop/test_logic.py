@@ -302,6 +302,15 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     start_src = inspect.getsource(corp.tg_cmd_start)
     assert start_src.count("tg_send") == 1 and start_src.count("notify_safe") == 0
     assert "Кнопки внизу" not in start_src
+    assert "tg_install_commands" not in start_src
+    tick_src = inspect.getsource(corp.telegram_tick)
+    assert "timeout={wait}" in tick_src
+    assert "answerCallbackQuery" in tick_src
+    assert tick_src.find("answerCallbackQuery") < tick_src.find("handle_tg_callback")
+    loop_src = inspect.getsource(corp.telegram_loop)
+    assert "telegram_tick(long_poll=True)" in loop_src
+    assert "deleteWebhook" in loop_src
+    assert "probe_isolation" not in inspect.getsource(corp.tg_status_body)
     menu = corp.tg_command_menu()
     assert len(menu) <= 6
     assert [row["command"] for row in menu] == ["start", "сейчас", "доска", "цикл", "пауза", "помощь"]
@@ -1261,6 +1270,8 @@ Nodes (33): active_projects(), board_payload() (+31 more)
         pass
     assert api_logic.assert_in_qa(corp, repo, 85, waiting) == waiting
     app_src = (ROOT / "workshop" / "app.py").read_text()
+    assert "corp.telegram_tick()" not in app_src
+    assert "threading.Thread(target=telegram_loop" in app_src
     assert "/api/self/drop" in app_src and "/api/qa/start" in app_src
     assert "/api/council" in app_src
     assert '@app.get("/tg")' in app_src and '@app.get("/mini")' in app_src
