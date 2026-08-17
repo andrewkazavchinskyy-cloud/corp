@@ -1,21 +1,21 @@
 # Graph Report - corp  (2026-08-17)
 
 ## Corpus Check
-- 25 files · ~64,349 words
+- 25 files · ~66,017 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 943 nodes · 2541 edges · 39 communities (34 shown, 5 thin omitted)
+- 966 nodes · 2595 edges · 43 communities (37 shown, 6 thin omitted)
 - Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 42 edges (avg confidence: 0.51)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `0b78c1d8`
+- Built from commit: `aa49855a`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
-- die
+- have
 - load_workshop
 - Harness
 - app.py
@@ -26,25 +26,29 @@
 - 2026-08-15
 - 2026-08-16
 - 2026-08-17
-- telegram_tick
-- pulse_loop
+- project_dir
+- launch_agent
 - memory/README.md
 - Corporation operating contract
 - Server
 - agent-isolation-smoke.sh
 - corp-agent-exec
 - provision-agent-identity.sh
-- handle_tg_callback
+- _probe_isolation_inner
 - sortable.min.js
-- run_issue
+- die
+- agent_argv
 - api_logic.py
 - corp
+- setTab
 - openSheet
 - renderGraphs
 - escapeHtml
 - council_after_writer
 - renderBoard
-- tg_short_ref
+- CorpError
+- main
+- tg_board_text
 - Corporation OS — SPEC
 - Handoff — first hour
 - renderAuto
@@ -53,7 +57,7 @@
 - VPS QA 2026-08-17
 
 ## God Nodes (most connected - your core abstractions)
-1. `2026-08-17` - 101 edges
+1. `2026-08-17` - 110 edges
 2. `2026-08-16` - 57 edges
 3. `escapeHtml()` - 31 edges
 4. `call()` - 29 edges
@@ -79,15 +83,15 @@
 ## Import Cycles
 - None detected.
 
-## Communities (39 total, 5 thin omitted)
+## Communities (43 total, 6 thin omitted)
 
-### Community 0 - "die"
-Cohesion: 0.05
-Nodes (79): active_projects(), add_existing(), allow_funnel_on(), archive_project(), assign_me(), bootstrap(), capture_pane(), _cli_identity() (+71 more)
+### Community 0 - "have"
+Cohesion: 0.13
+Nodes (24): allow_funnel_on(), bootstrap(), _cli_identity(), _cursor_mismatch_note(), ensure_path(), funnel_enabled_from_text(), gh_ready(), have() (+16 more)
 
 ### Community 2 - "load_workshop"
-Cohesion: 0.11
-Nodes (35): _clear_registry_overlay(), cmd_queue(), default_workshop(), draft_by_id(), draft_summaries(), drop_draft(), issue_ref(), load_catalog() (+27 more)
+Cohesion: 0.06
+Nodes (67): _clear_registry_overlay(), council_busy(), council_existing_titles(), council_start(), default_workshop(), draft_summaries(), drop_draft(), handle_tg_reply() (+59 more)
 
 ### Community 3 - "Harness"
 Cohesion: 0.22
@@ -99,15 +103,15 @@ Nodes (101): Connection, FileResponse, get, JSONResponse, middleware, on_event, 
 
 ### Community 5 - "app.js"
 Cohesion: 0.09
-Nodes (27): autoDraftChecked, autoUi, b64urlToBuf(), bufToB64url(), closeMore(), COL_HINT, COLS, graphsCache (+19 more)
+Nodes (25): autoDraftChecked, autoUi, b64urlToBuf(), bufToB64url(), COL_HINT, COLS, graphsCache, HOME_TABS (+17 more)
 
 ### Community 6 - "Workshop operating contract"
 Cohesion: 0.12
 Nodes (16): Access, Add existing, Autopilot, Create new, Design / QA, Filter, Graphs, Locks (+8 more)
 
 ### Community 7 - "Path"
-Cohesion: 0.06
-Nodes (69): agent_argv(), agent_home_dir(), agent_identity_ready(), agent_prompt(), agent_user_name(), agent_wrapper_path(), auth_policy_present(), bullet_covered() (+61 more)
+Cohesion: 0.11
+Nodes (39): agent_prompt(), auth_policy_present(), council_deploy_trees(), doctor(), doctor_lines(), doctor_payload(), git_head_commit_time(), git_registry_candidates() (+31 more)
 
 ### Community 8 - "Agent isolation (corp#41)"
 Cohesion: 0.25
@@ -123,11 +127,15 @@ Nodes (57): 2026-08-16, Decisions, Decisions, Decisions, Decisions, Decisions, D
 
 ### Community 11 - "2026-08-17"
 Cohesion: 0.02
-Nodes (100): 2026-08-17, Assumptions, Decisions, Decisions, Decisions, Decisions, Decisions, Decisions (+92 more)
+Nodes (109): 2026-08-17, Assumptions, Decisions, Decisions, Decisions, Decisions, Decisions, Decisions (+101 more)
 
-### Community 12 - "telegram_tick"
+### Community 12 - "project_dir"
+Cohesion: 0.16
+Nodes (18): active_projects(), collect_issues(), cycle_payload(), expand(), graph_detail(), graphs_index(), is_free_ready(), is_pinned() (+10 more)
+
+### Community 13 - "launch_agent"
 Cohesion: 0.19
-Nodes (14): notify(), telegram_tick(), tg_command_menu(), tg_creds(), tg_edit_status(), tg_install_commands(), tg_install_menu_button(), tg_menu_button_payload() (+6 more)
+Nodes (17): capture_pane(), council_scope(), launch_agent(), orch_alive(), orch_session(), orch_status(), parse_exit_code(), pinned_projects() (+9 more)
 
 ### Community 16 - "Corporation operating contract"
 Cohesion: 0.29
@@ -141,17 +149,21 @@ Nodes (7): Agents, Deploy live additively, Server, Telegram, Two trees, Who does
 Cohesion: 0.83
 Nodes (3): bad(), pass(), agent-isolation-smoke.sh script
 
-### Community 21 - "handle_tg_callback"
+### Community 21 - "_probe_isolation_inner"
 Cohesion: 0.20
-Nodes (25): council_busy(), handle_tg_callback(), handle_tg_reply(), handle_tg_text(), notify_safe(), tg_ask_qa_note(), tg_cmd_abort(), tg_cmd_board() (+17 more)
+Nodes (16): agent_home_dir(), agent_identity_ready(), agent_user_name(), agent_wrapper_path(), isolation_probe_user(), isolation_secret_paths(), isolation_status(), isolation_wrapper_argv() (+8 more)
 
 ### Community 22 - "sortable.min.js"
 Cohesion: 0.12
 Nodes (25): a(), b(), Bt(), D(), e(), f(), g(), h() (+17 more)
 
-### Community 23 - "run_issue"
-Cohesion: 0.15
-Nodes (40): add_labels(), board_payload(), claim(), close_action(), close_issue(), collect_issues(), column_of(), comment() (+32 more)
+### Community 23 - "die"
+Cohesion: 0.06
+Nodes (111): add_existing(), add_labels(), approve_draft(), approve_drafts(), archive_project(), assign_me(), board_payload(), can_promote_to_qa() (+103 more)
+
+### Community 24 - "agent_argv"
+Cohesion: 0.24
+Nodes (10): agent_argv(), config_dir(), council_analyze_prompt(), council_role_brief(), council_role_items(), council_run_role_sync(), council_spawn_role(), parse_json_array() (+2 more)
 
 ### Community 25 - "api_logic.py"
 Cohesion: 0.12
@@ -159,31 +171,35 @@ Nodes (24): BaseException, assert_in_qa(), console_log_for_issue(), contour_fiel
 
 ### Community 26 - "corp"
 Cohesion: 0.07
-Nodes (43): append_log(), can_promote_to_qa(), config_dir(), council_is_dup(), council_norm_title(), council_pick_items(), council_role_items(), council_scope() (+35 more)
+Nodes (38): bullet_covered(), council_is_dup(), council_norm_title(), council_pick_items(), github_issues_disabled(), github_transient(), issues_for(), _issues_via_graphql() (+30 more)
+
+### Community 27 - "setTab"
+Cohesion: 0.38
+Nodes (7): autoKicker(), closeMore(), moreTab(), paintDockMore(), setSettingsRoom(), setTab(), toggleMore()
 
 ### Community 28 - "openSheet"
-Cohesion: 0.15
-Nodes (23): applyIssueLink(), autoStatusHtml(), bindBoardSortable(), bindSheetAct(), bindSheetHouse(), closeSheet(), colWord(), findCardByIssueParam() (+15 more)
+Cohesion: 0.16
+Nodes (21): applyIssueLink(), autoStatusHtml(), bindSheetAct(), findCardByIssueParam(), githubLink(), hideSheet(), humanizeError(), humanReason() (+13 more)
 
 ### Community 29 - "renderGraphs"
 Cohesion: 0.22
 Nodes (16): bindGraphDetail(), bindGraphJumps(), bindGraphSearch(), findGroup(), flash(), graphDetailHtml(), graphGalaxyHtml(), graphJumps() (+8 more)
 
 ### Community 30 - "escapeHtml"
-Cohesion: 0.18
-Nodes (19): badge(), catalogKind(), contourTreesHtml(), doctorCheckLabel(), doctorChecksHtml(), doctorMeta(), draftCard(), escapeHtml() (+11 more)
+Cohesion: 0.22
+Nodes (16): catalogKind(), contourTreesHtml(), doctorCheckLabel(), doctorChecksHtml(), doctorMeta(), escapeHtml(), fillProfiles(), kindStatus() (+8 more)
 
 ### Community 31 - "council_after_writer"
-Cohesion: 0.09
-Nodes (30): council_abort(), council_after_writer(), council_enqueue_refs(), council_existing_titles(), council_ff_merge_main(), council_finish_analyze(), council_issue_body(), council_launch_analyzers() (+22 more)
+Cohesion: 0.14
+Nodes (20): append_log(), council_abort(), council_after_writer(), council_enqueue_refs(), council_ff_merge_main(), council_finish_analyze(), council_issue_body(), council_launch_analyzers() (+12 more)
 
 ### Community 32 - "renderBoard"
-Cohesion: 0.22
-Nodes (16): cardClass(), cardHtml(), cardMatches(), cookieGet(), cookieSet(), currentFilter(), draftMatches(), goNext() (+8 more)
+Cohesion: 0.24
+Nodes (14): badge(), cardClass(), cardHtml(), cardMatches(), cookieGet(), currentFilter(), draftMatches(), matchesQuery() (+6 more)
 
-### Community 35 - "tg_short_ref"
-Cohesion: 0.10
-Nodes (28): approve_draft(), approve_drafts(), draft_issue_body(), load_events(), need_human(), redact_secrets(), sanitize_workshop(), tg_board_buttons() (+20 more)
+### Community 35 - "tg_board_text"
+Cohesion: 0.18
+Nodes (15): tg_board_buttons(), tg_board_counts(), tg_board_filter(), tg_board_find(), tg_board_open(), tg_board_page_bounds(), tg_board_pick(), tg_board_pin_names() (+7 more)
 
 ### Community 36 - "Corporation OS — SPEC"
 Cohesion: 0.20
@@ -194,36 +210,36 @@ Cohesion: 0.25
 Nodes (8): 1. Tailscale, 2. Passkey, 3. SSH, 4. Two trees, 5. First job = sandbox, not P0, Backup (not git), Handoff — first hour, If you are stuck
 
 ### Community 40 - "renderAuto"
-Cohesion: 0.14
-Nodes (30): api(), approveDraftIds(), autoKicker(), autoProject(), bindAutoQueue(), bindDraftBatch(), bindDraftList(), draftBatchBar() (+22 more)
+Cohesion: 0.13
+Nodes (26): approveDraftIds(), autoProject(), bindDraftBatch(), bindDraftList(), cookieSet(), draftBatchBar(), draftCard(), eventKindRu() (+18 more)
 
 ### Community 41 - "refresh"
-Cohesion: 0.29
-Nodes (8): autoTyping(), boot(), liveWritingCard(), refresh(), setupTokenFromUrl(), showApp(), showGate(), vpsRunner()
+Cohesion: 0.23
+Nodes (14): api(), autoTyping(), bindAutoQueue(), bindBoardSortable(), bindSheetHouse(), boot(), closeSheet(), colWord() (+6 more)
 
 ### Community 44 - "corp"
 Cohesion: 0.67
 Nodes (3): corp, Документы, Команды
 
 ## Knowledge Gaps
-- **235 isolated node(s):** `provision-agent-identity.sh script`, `titles`, `COLS`, `COL_HINT`, `HOME_TABS` (+230 more)
+- **244 isolated node(s):** `provision-agent-identity.sh script`, `titles`, `COLS`, `COL_HINT`, `HOME_TABS` (+239 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **5 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **6 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `api_project()` connect `app.py` to `load_workshop`?**
-  _High betweenness centrality (0.110) - this node is a cross-community bridge._
+  _High betweenness centrality (0.109) - this node is a cross-community bridge._
 - **Why does `2026-08-17` connect `2026-08-17` to `VPS QA 2026-08-17`?**
-  _High betweenness centrality (0.012) - this node is a cross-community bridge._
+  _High betweenness centrality (0.013) - this node is a cross-community bridge._
 - **What connects `provision-agent-identity.sh script`, `titles`, `COLS` to the rest of the system?**
-  _235 weakly-connected nodes found - possible documentation gaps or missing edges._
-- **Should `die` be split into smaller, more focused modules?**
-  _Cohesion score 0.05348101265822785 - nodes in this community are weakly interconnected._
+  _244 weakly-connected nodes found - possible documentation gaps or missing edges._
+- **Should `have` be split into smaller, more focused modules?**
+  _Cohesion score 0.13043478260869565 - nodes in this community are weakly interconnected._
 - **Should `load_workshop` be split into smaller, more focused modules?**
-  _Cohesion score 0.11260504201680673 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.06377204884667571 - nodes in this community are weakly interconnected._
 - **Should `app.py` be split into smaller, more focused modules?**
   _Cohesion score 0.058442794593565585 - nodes in this community are weakly interconnected._
 - **Should `app.js` be split into smaller, more focused modules?**
-  _Cohesion score 0.08735632183908046 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.08994708994708994 - nodes in this community are weakly interconnected._
