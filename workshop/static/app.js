@@ -446,11 +446,7 @@ function renderBoard() {
           if (column === "done" && from !== "qa") {
             await write("/api/move", { issue, column: "qa" }, "на QA");
           } else if (column === "done") {
-            if (!confirm("Закрыть без повторного QA?")) {
-              refresh();
-              return;
-            }
-            await write("/api/close", { issue }, "закрыто");
+            await write("/api/close", { issue }, "QA прошёл");
           } else {
             await write("/api/move", { issue, column }, `в ${column}`);
           }
@@ -498,7 +494,7 @@ function sheetExits(card, extra = "") {
     .map(([id, label]) => `<button type="button" class="btn" data-col="${id}">${label}</button>`)
     .join("");
   const close = card.column === "qa"
-    ? `<button type="button" class="btn danger" id="sheet-close">Закрыть без QA</button>`
+    ? `<button type="button" class="btn" id="sheet-qa-pass">QA прошёл</button><button type="button" class="btn danger" id="sheet-qa-fail">QA не принял</button>`
     : "";
   return `${extra}${moves}${githubLink(card)}${close}`;
 }
@@ -512,11 +508,19 @@ function bindSheetExits() {
       } catch (_) { /* strip */ }
     };
   });
-  if ($("sheet-close")) {
-    $("sheet-close").onclick = async () => {
-      if (!confirm("Закрыть ишью на GitHub?")) return;
+  if ($("sheet-qa-pass")) {
+    $("sheet-qa-pass").onclick = async () => {
       try {
-        await write("/api/close", { issue: sheetIssue }, "закрыто");
+        await write("/api/close", { issue: sheetIssue }, "QA прошёл");
+        closeSheet();
+      } catch (_) { /* strip */ }
+    };
+  }
+  if ($("sheet-qa-fail")) {
+    $("sheet-qa-fail").onclick = async () => {
+      if (!confirm("Вернуть в ready с qa-fail?")) return;
+      try {
+        await write("/api/close", { issue: sheetIssue, fail: true }, "QA не принял");
         closeSheet();
       } catch (_) { /* strip */ }
     };
@@ -578,7 +582,7 @@ function openSheet(issue) {
     }
     if ($("sheet-abort")) {
       $("sheet-abort").onclick = async () => {
-        if (!confirm("Остановить агента и вернуть карточку в ready?")) return;
+        if (!confirm("Остановить QA-агента? Карточка останется на QA.")) return;
         try { await write("/api/queue/abort", { issue: sheetIssue }, "откатил"); closeSheet(); } catch (_) { /* strip */ }
       };
     }

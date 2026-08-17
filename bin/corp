@@ -334,6 +334,8 @@ def is_free_ready(issue: dict, reg: dict) -> bool:
         return False
     if "in-progress" in names or "self" in names or "queued" in names:
         return False
+    if "in-qa" in names and "qa-fail" not in names:
+        return False
     return True
 
 
@@ -1956,7 +1958,14 @@ def assign_me(repo: str, number: int) -> None:
     )
 
 
-def issue_eligibility(reg: dict, repo: str, number: int, issue: dict | None = None, cards: list | None = None) -> str:
+def issue_eligibility(
+    reg: dict,
+    repo: str,
+    number: int,
+    issue: dict | None = None,
+    cards: list | None = None,
+    allow_in_qa: bool = False,
+) -> str:
     issue = issue or get_issue(repo, number)
     if (issue.get("state") or "").upper() == "CLOSED":
         return f"{repo}#{number} закрыта"
@@ -1965,6 +1974,8 @@ def issue_eligibility(reg: dict, repo: str, number: int, issue: dict | None = No
         return f"{repo}#{number} blocked"
     if "self" in names:
         return f"{repo}#{number} claimed as self"
+    if "in-qa" in names and "qa-fail" not in names and not allow_in_qa:
+        return f"{repo}#{number} на QA"
     runner = runner_of(issue)
     if column_of(issue) in {"in-progress", "qa"} and runner not in {"", "queued"}:
         return f"{repo}#{number} already claimed ({runner})"
@@ -1978,9 +1989,15 @@ def issue_eligibility(reg: dict, repo: str, number: int, issue: dict | None = No
     return ""
 
 
-def require_eligible(reg: dict, repo: str, number: int, issue: dict | None = None) -> dict:
+def require_eligible(
+    reg: dict,
+    repo: str,
+    number: int,
+    issue: dict | None = None,
+    allow_in_qa: bool = False,
+) -> dict:
     issue = issue or get_issue(repo, number)
-    reason = issue_eligibility(reg, repo, number, issue)
+    reason = issue_eligibility(reg, repo, number, issue, allow_in_qa=allow_in_qa)
     if reason:
         die(reason)
     return issue
@@ -2225,7 +2242,43 @@ def refresh_graph(dest: Path, repo: str, number: int) -> str:
     return "graph pushed" if push.returncode == 0 else "graph committed, push failed"
 
 
-def close_issue(reg: dict, repo: str, number: int) -> dict:
+def close_action(issue: dict, force: bool = False, fail: bool = False) -> str:
+    names = label_names(issue)
+    in_qa = "in-qa" in names and "qa-fail" not in names
+    if fail:
+        return "reject" if in_qa else "not-qa"
+    if in_qa or force:
+        return "close"
+    return "send-to-qa"
+
+
+def reject_qa(reg: dict, repo: str, number: int, note: str = "") -> dict:
+    issue = get_issue(repo, number)
+    if (issue.get("state") or "").upper() == "CLOSED":
+        die(f"{repo}#{number} закрыта")
+    remove_labels(repo, number, ["in-qa", "in-progress", "queued", "self", *VIA.values()])
+    add_labels(repo, number, ["ready", "qa-fail"])
+    comment(repo, number, (note or "").strip() or "QA не принял.")
+    invalidate_board()
+    return {"ok": True, "repo": repo, "issue": number, "column": "ready", "qa_fail": True}
+
+
+def close_issue(
+    reg: dict,
+    repo: str,
+    number: int,
+    force: bool = False,
+    fail: bool = False,
+    note: str = "",
+) -> dict:
+    issue = get_issue(repo, number)
+    action = close_action(issue, force=force, fail=fail)
+    if action == "not-qa":
+        die(f"{repo}#{number} не на QA")
+    if action == "reject":
+        return reject_qa(reg, repo, number, note)
+    if action == "send-to-qa":
+        return send_to_qa(reg, repo, number, enqueue=False)
     project = project_by_repo(reg, repo)
     dest = project_dir(project)
     proc = run(["gh", "issue", "close", str(number), "-R", repo], check=False)
@@ -2234,13 +2287,26 @@ def close_issue(reg: dict, repo: str, number: int) -> dict:
     graph = refresh_graph(dest, repo, number) if dest else "no checkout"
     invalidate_board()
     maybe_orchestrate(reg, project["name"])
-    return {"ok": True, "repo": repo, "issue": number, "graph": graph}
+    return {"ok": True, "repo": repo, "issue": number, "graph": graph, "closed": True}
 
 
-def send_to_qa(reg: dict, repo: str, number: int, enqueue: bool = True) -> dict:
+def send_to_qa(
+    reg: dict,
+    repo: str,
+    number: int,
+    enqueue: bool = False,
+    cards: list | None = None,
+) -> dict:
     issue = get_issue(repo, number)
     if (issue.get("state") or "").upper() == "CLOSED":
         die(f"{repo}#{number} is closed")
+    project = project_by_repo(reg, repo)
+    if cards is not None:
+        blocked = write_block_reason(cards, project["name"], number)
+    else:
+        blocked = pin_write_block(reg, project["name"], except_issue=number)
+    if blocked:
+        die(blocked)
     remove_labels(repo, number, ["ready", "qa-fail", "in-progress", "self", *VIA.values()])
     add_labels(repo, number, ["in-qa"])
     invalidate_board()
@@ -2264,7 +2330,7 @@ def move_issue(reg: dict, repo: str, number: int, column: str) -> dict:
     if column not in {"backlog", "ready", "in-progress", "qa", "done"}:
         die("column must be backlog|ready|in-progress|qa|done")
     if column in {"done", "qa"}:
-        return send_to_qa(reg, repo, number)
+        return send_to_qa(reg, repo, number, enqueue=False)
     issue = get_issue(repo, number)
     if (issue.get("state") or "").upper() == "CLOSED":
         run(["gh", "issue", "reopen", str(number), "-R", repo], check=False)
@@ -2451,11 +2517,52 @@ def wrap_isolated(cmd: list[str], dest: Path) -> list[str]:
     return ["env", "-i"] + [f"{k}={v}" for k, v in sorted(env.items())] + cmd
 
 
-def wait_tmux(project: str) -> int:
+def parse_exit_code(text: str, prefix: str = "") -> int | None:
+    lines = [line.rstrip() for line in (text or "").splitlines() if line.strip()]
+    if prefix:
+        tagged = [line for line in lines if line.startswith(prefix)]
+        if tagged:
+            lines = tagged
+    for line in reversed(lines):
+        match = re.search(r"EXIT:(\d+)\s*$", line)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def read_tmux_exit(log_text: str, pane_text: str = "", prefix: str = "") -> int:
+    code = parse_exit_code(log_text, prefix)
+    if code is not None:
+        return code
+    code = parse_exit_code(pane_text, prefix)
+    if code is not None:
+        return code
+    return 1
+
+
+def tmux_agent_script(dest: Path, pipe: str, prefix: str = "") -> str:
+    log = shlex.quote(str(RUN_LOG))
+    tag = shlex.quote(prefix) if prefix else ""
+    return (
+        f"set -o pipefail; cd {shlex.quote(str(dest))} && {pipe} | tee -a {log}; "
+        f"echo {tag} EXIT:$? | tee -a {log}"
+    )
+
+
+def can_promote_to_qa(code: int, issue: dict) -> bool:
+    if int(code) != 0:
+        return False
+    return (issue.get("state") or "OPEN").upper() != "CLOSED"
+
+
+def wait_tmux(project: str, prefix: str = "") -> int:
     session = tmux_session(project)
+    pane = ""
     while run(["tmux", "has-session", "-t", session], check=False).returncode == 0:
+        pane = capture_pane(session)
         time.sleep(3)
-    return 0
+    log_text = RUN_LOG.read_text() if RUN_LOG.is_file() else ""
+    return read_tmux_exit(log_text, pane, prefix)
 
 
 def launch_agent(kind: str, cmd: list[str], dest: Path, project: str, prefix: str = "") -> int:
@@ -2472,14 +2579,11 @@ def launch_agent(kind: str, cmd: list[str], dest: Path, project: str, prefix: st
                 f" | while IFS= read -r line || [ -n \"$line\" ]; do "
                 f"printf '%s %s\\n' {shlex.quote(prefix)} \"$line\"; done"
             )
-        script = (
-            f"cd {shlex.quote(str(dest))} && {pipe} | tee -a {shlex.quote(str(RUN_LOG))}; "
-            f"echo {shlex.quote(prefix) if prefix else ''} EXIT:$? | tee -a {shlex.quote(str(RUN_LOG))}"
-        )
+        script = tmux_agent_script(dest, pipe, prefix)
         proc = subprocess.run(["tmux", "new-session", "-d", "-s", session, "bash", "-lc", script])
         if proc.returncode != 0:
             return proc.returncode
-        return wait_tmux(project)
+        return wait_tmux(project, prefix)
     proc = subprocess.run(cmd, cwd=dest)
     return proc.returncode
 
@@ -2525,7 +2629,15 @@ def run_issue(
     dest = project_dir(project)
     if dest is None or not dest.is_dir():
         die(f"project not cloned: {project['name']}. Run ./bin/corp bootstrap")
-    issue = require_eligible(reg, repo, number)
+    issue = get_issue(repo, number)
+    names = label_names(issue)
+    issue = require_eligible(
+        reg,
+        repo,
+        number,
+        issue,
+        allow_in_qa="in-qa" in names and "qa-fail" not in names,
+    )
     names = label_names(issue)
     if tmux_alive(project["name"]):
         die(f"VPS already running {project['name']}")
@@ -2555,9 +2667,8 @@ def run_issue(
     if role in {"build", "design"}:
         if closed:
             run(["gh", "issue", "reopen", str(number), "-R", repo], check=False)
-            closed = False
-        if code != 0:
-            reason = f"{role} упал · exit {code}"
+        if not can_promote_to_qa(code, latest):
+            reason = f"{role} упал · exit {code}" if code != 0 else f"{role} закрыл ишью — не на QA"
             release_runner(repo, number)
             notify_safe(f"{repo}#{number} · {kind} · {reason}\n{latest.get('url')}")
             return {
@@ -2694,9 +2805,21 @@ def queue_action_buttons(repo: str, number: int) -> list:
     ]]
 
 
-def release_runner(repo: str, number: int) -> None:
-    remove_labels(repo, number, ["in-progress", "queued", "self", *VIA.values()])
-    add_labels(repo, number, ["ready"])
+def release_labels(names: set[str] | list[str]) -> tuple[list[str], list[str]]:
+    names = set(names)
+    remove = ["in-progress", "queued", "self", *VIA.values()]
+    add: list[str] = []
+    if not ("in-qa" in names and "qa-fail" not in names):
+        add.append("ready")
+    return remove, add
+
+
+def release_runner(repo: str, number: int, issue: dict | None = None) -> None:
+    issue = issue if issue is not None else get_issue(repo, number)
+    remove, add = release_labels(label_names(issue))
+    remove_labels(repo, number, remove)
+    if add:
+        add_labels(repo, number, add)
     invalidate_board()
 
 
@@ -2810,8 +2933,11 @@ def queue_add(
         die(reason)
     if (issue.get("state") or "").upper() == "CLOSED":
         die(reason or f"{repo}#{number} закрыта")
-    if "blocked" in label_names(issue):
+    names = label_names(issue)
+    if "blocked" in names:
         die(f"{repo}#{number} blocked")
+    if "in-qa" in names and "qa-fail" not in names:
+        die(f"{repo}#{number} на QA")
     project = project_by_repo(reg, repo)
     profile = profile_by_id(profile_id) if profile_id else {}
     kind = (kind or profile.get("kind") or "").strip()
@@ -3010,6 +3136,10 @@ def queue_retry(repo: str, number: int) -> dict:
             release_runner(repo, number)
         except Exception:
             pass
+        latest = get_issue(repo, number)
+        names = label_names(latest)
+        if "in-qa" in names and "qa-fail" not in names:
+            die(f"{repo}#{number} на QA")
         add_labels(repo, number, ["ready", "queued"])
         found["status"] = "waiting"
         found["last_error"] = ""
@@ -3144,6 +3274,8 @@ def main() -> None:
     parser.add_argument("--model")
     parser.add_argument("--effort")
     parser.add_argument("--fast", action="store_true")
+    parser.add_argument("--force", action="store_true", help="close even if the card is not in QA")
+    parser.add_argument("--fail", action="store_true", help="QA reject: ready + qa-fail")
     parser.add_argument("message", nargs="?", help="text for notify, or queue action")
     args = parser.parse_args()
     load_env()
@@ -3181,10 +3313,17 @@ def main() -> None:
         return
     if args.command == "close":
         if not args.issue:
-            die("usage: corp close --issue owner/repo#n")
+            die("usage: corp close --issue owner/repo#n [--force|--fail]")
         repo, number = parse_issue_ref(args.issue)
-        result = close_issue(reg, repo, number)
-        print(json.dumps(result, indent=2) if args.json else f"closed {repo}#{number} {result['graph']}")
+        result = close_issue(reg, repo, number, force=args.force, fail=args.fail)
+        if args.json:
+            print(json.dumps(result, indent=2))
+        elif result.get("qa_fail"):
+            print(f"{repo}#{number} QA не принял")
+        elif result.get("column") == "qa":
+            print(f"{repo}#{number} -> qa (нужен --force чтобы закрыть без QA)")
+        else:
+            print(f"closed {repo}#{number} {result.get('graph') or ''}")
         return
     if args.command == "board":
         print(json.dumps(board_payload(reg), indent=2))
