@@ -115,9 +115,12 @@ def main() -> None:
     assert corp.next_move(blocked, [], "corp")["kind"] == "orch"
     tmp = Path("/tmp/corp-setup-token-test")
     tmp.write_text("abc123\n")
+    created = tmp.stat().st_mtime
     assert corp.setup_token_ok("abc123", tmp)
     assert not corp.setup_token_ok("nope", tmp)
     assert not corp.setup_token_ok("", tmp)
+    assert corp.setup_token_ok("abc123", tmp, now=created + 60)
+    assert not corp.setup_token_ok("abc123", tmp, now=created + corp.SETUP_TOKEN_TTL_SEC + 1)
     tmp.unlink()
     kept = corp.merge_catalog_row({"models": ["grok-4.6"], "installed": True}, {"kind": "grok", "installed": True, "models": []})
     assert kept["models"] == ["grok-4.6"] and kept["stale"]
@@ -463,6 +466,22 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert not auth.session_valid(now - auth.SESSION_TTL_SEC - 1, now)
     assert auth.challenge_valid(now - 60, now)
     assert not auth.challenge_valid(now - auth.CHALLENGE_TTL_SEC - 1, now)
+    assert auth.SETUP_TOKEN_TTL_SEC == corp.SETUP_TOKEN_TTL_SEC == 30 * 60
+    assert auth.setup_token_valid(now - 60, now)
+    assert not auth.setup_token_valid(now - auth.SETUP_TOKEN_TTL_SEC - 1, now)
+    with tempfile.TemporaryDirectory() as raw:
+        token_file = Path(raw) / "workshop-setup-token"
+        token_file.write_text("secret\n")
+        os.utime(token_file, (now - 60, now - 60))
+        assert auth.setup_token_file_valid(token_file, now)
+        os.utime(token_file, (now - auth.SETUP_TOKEN_TTL_SEC - 5, now - auth.SETUP_TOKEN_TTL_SEC - 5))
+        assert not auth.setup_token_file_valid(token_file, now)
+    index_html = (ROOT / "workshop" / "static" / "index.html").read_text()
+    assert 'name="referrer"' in index_html and "no-referrer" in index_html
+    assert "history.replaceState" in (ROOT / "workshop" / "static" / "app.js").read_text()
+    app_src = (ROOT / "workshop" / "app.py").read_text()
+    assert "Referrer-Policy" in app_src
+    assert 'kind == "reg-recover"' in app_src and "revoke_sessions()" in app_src
     assert auth.trusted_scheme("http", "https", True) == "https"
     assert auth.trusted_scheme("http", "https", False) == "http"
     assert auth.origin_allowed("https://corp.example.ts.net", "corp.example.ts.net", "https")

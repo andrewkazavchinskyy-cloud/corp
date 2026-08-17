@@ -168,11 +168,19 @@ async function write(path, body, okMsg) {
 }
 
 function setupTokenFromUrl() {
-  const q = new URLSearchParams(location.search).get("token");
-  if (q) return q;
-  const raw = location.hash.slice(1);
-  const query = raw.includes("?") ? raw.slice(raw.indexOf("?") + 1) : raw;
-  return new URLSearchParams(query).get("token") || "";
+  const url = new URL(location.href);
+  const fromQuery = url.searchParams.get("token");
+  let token = fromQuery || "";
+  if (!token) {
+    const raw = location.hash.slice(1);
+    const query = raw.includes("?") ? raw.slice(raw.indexOf("?") + 1) : raw;
+    token = new URLSearchParams(query).get("token") || "";
+  }
+  if (url.searchParams.has("token")) {
+    url.searchParams.delete("token");
+    history.replaceState(history.state, "", url.pathname + url.search + url.hash);
+  }
+  return token;
 }
 
 function showApp() {

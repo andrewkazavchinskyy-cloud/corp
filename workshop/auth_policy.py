@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 SESSION_TTL_SEC = 7 * 24 * 3600
 CHALLENGE_TTL_SEC = 5 * 60
+SETUP_TOKEN_TTL_SEC = 30 * 60
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
@@ -98,6 +99,17 @@ def session_valid(created: float, now: float, ttl: int = SESSION_TTL_SEC) -> boo
 
 def challenge_valid(created: float, now: float, ttl: int = CHALLENGE_TTL_SEC) -> bool:
     return within_ttl(created, now, ttl)
+
+
+def setup_token_valid(created: float, now: float, ttl: int = SETUP_TOKEN_TTL_SEC) -> bool:
+    return within_ttl(created, now, ttl)
+
+
+def setup_token_file_valid(path, now: float, ttl: int = SETUP_TOKEN_TTL_SEC) -> bool:
+    try:
+        return setup_token_valid(path.stat().st_mtime, now, ttl)
+    except OSError:
+        return False
 
 
 def prune_auth_tables(
