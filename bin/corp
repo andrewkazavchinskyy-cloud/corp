@@ -43,6 +43,7 @@ RETRY_COOLDOWN_SEC = 600
 CONFIG_DIR = Path.home() / ".config" / "corp"
 WORKSHOP_JSON = Path(os.environ["CORP_WORKSHOP_JSON"]) if os.environ.get("CORP_WORKSHOP_JSON") else CONFIG_DIR / "workshop.json"
 TOKEN_PATH = CONFIG_DIR / "workshop-setup-token"
+SETUP_TOKEN_TTL_SEC = 30 * 60
 RUN_LOG = CONFIG_DIR / "run.log"
 CONTROL_PLANE_SECRET_KEYS = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
 AGENT_WRAPPER_DEFAULT = "/usr/local/sbin/corp-agent-exec"
@@ -3489,13 +3490,26 @@ def queue_status() -> dict:
     return data
 
 
-def setup_token_ok(token: str, path: Path | None = None) -> bool:
+def setup_token_ok(
+    token: str,
+    path: Path | None = None,
+    now: float | None = None,
+    ttl: int | None = None,
+) -> bool:
     given = (token or "").strip()
     store = path or TOKEN_PATH
     expected = store.read_text().strip() if store.is_file() else ""
     if not expected or not given or len(given) != len(expected):
         return False
-    return secrets.compare_digest(given, expected)
+    if not secrets.compare_digest(given, expected):
+        return False
+    try:
+        created = store.stat().st_mtime
+    except OSError:
+        return False
+    stamp = time.time() if now is None else now
+    limit = SETUP_TOKEN_TTL_SEC if ttl is None else ttl
+    return 0 <= (stamp - created) <= limit
 
 
 def workshop_token() -> str:
@@ -3504,7 +3518,10 @@ def workshop_token() -> str:
     TOKEN_PATH.write_text(token + "\n")
     os.chmod(TOKEN_PATH, 0o600)
     print(token)
-    print("First register or recover: https://<tailscale-host>/?token=" + token, file=sys.stderr)
+    print(
+        "First register or recover (30 min): https://<tailscale-host>/?token=" + token,
+        file=sys.stderr,
+    )
     return token
 
 

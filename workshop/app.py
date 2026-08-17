@@ -39,6 +39,7 @@ from auth_policy import (
     origin_allowed,
     prune_auth_tables,
     session_valid,
+    setup_token_file_valid,
     take_challenge,
     trusted_scheme,
 )
@@ -141,6 +142,18 @@ def revoke_sessions() -> None:
         conn.commit()
 
 
+def accept_setup_token(token: str) -> bool:
+    if not TOKEN_PATH.is_file():
+        return False
+    if not setup_token_file_valid(TOKEN_PATH, time.time()):
+        try:
+            TOKEN_PATH.unlink()
+        except OSError:
+            pass
+        return False
+    return corp.setup_token_ok(token)
+
+
 def consume_challenge(token: str, kinds: tuple[str, ...]) -> tuple[bytes, str] | None:
     now = time.time()
     with db() as conn:
@@ -199,12 +212,15 @@ async def gate(request: Request, call_next):
             check_origin(request)
         except HTTPException as exc:
             return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
-    return await call_next(request)
+    response = await call_next(request)
+    if path == "/" or path.endswith("/index.html"):
+        response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 
 @app.get("/")
 def index() -> FileResponse:
-    return FileResponse(STATIC / "index.html")
+    return FileResponse(STATIC / "index.html", headers={"Referrer-Policy": "no-referrer"})
 
 
 @app.get("/api/auth/status")
@@ -218,10 +234,10 @@ async def register_options(request: Request) -> JSONResponse:
     token = (body.get("token") or "").strip()
     recover = False
     if cred_count() == 0:
-        if not corp.setup_token_ok(token):
+        if not accept_setup_token(token):
             raise HTTPException(403, "setup token required")
     elif not session_ok(request):
-        if not corp.setup_token_ok(token):
+        if not accept_setup_token(token):
             raise HTTPException(401, "passkey or recover token required")
         recover = True
     rp_id, _ = host_parts(request)
