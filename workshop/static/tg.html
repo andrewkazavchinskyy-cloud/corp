@@ -28,7 +28,7 @@
       padding: calc(16px + var(--safe-top)) 16px calc(24px + var(--safe-bot));
     }
     h1 { font-size: 22px; font-weight: 650; margin: 0 0 6px; }
-    .hint { color: var(--hint); margin: 0 0 18px; }
+    .hint { color: var(--hint); margin: 0 0 16px; }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     .job {
       display: block; width: 100%; text-align: left;
@@ -44,6 +44,7 @@
     }
     .card p { margin: 0 0 6px; }
     .card p:last-child { margin: 0; }
+    .next { color: var(--hint); margin-top: 8px; }
     .note { color: var(--hint); font-size: 13px; margin-top: 16px; }
   </style>
 </head>
@@ -52,10 +53,10 @@
   <p class="hint" id="kicker">Четыре дела. Нажми одно — откроется чат с ботом.</p>
   <div class="card" id="pulse" hidden></div>
   <div class="grid">
-    <button class="job" type="button" data-start="now"><b>Сейчас</b><span>очередь и что дальше</span></button>
-    <button class="job" type="button" data-start="board"><b>Доска</b><span>до пяти карточек</span></button>
+    <button class="job" type="button" data-start="now"><b>Сейчас</b><span>очередь и кто пишет</span></button>
+    <button class="job" type="button" data-start="board"><b>Доска</b><span>карточки</span></button>
     <button class="job" type="button" data-start="cycle"><b>Цикл</b><span>QA, PM, Дизайн</span></button>
-    <button class="job" type="button" data-start="more"><b>Ещё</b><span>пауза и мастерская</span></button>
+    <button class="job" type="button" data-start="more"><b>Ещё</b><span>пауза и черновики</span></button>
   </div>
   <p class="note" id="auth-note">Вход через Telegram, не passkey. Funnel выключен — только Tailscale.</p>
   <script>
@@ -85,6 +86,13 @@
       if (data) headers["X-Telegram-Init-Data"] = data;
       return fetch(url, { credentials: "same-origin", headers: headers });
     }
+    function esc(s) {
+      return String(s || "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+    }
+    function shortRef(item) {
+      const repo = (item.repo || "").split("/").pop() || "?";
+      return item.issue ? repo + "#" + item.issue : repo;
+    }
     function openJob(start) {
       const dest = start || "now";
       if (tg && bot) {
@@ -104,19 +112,37 @@
       } catch (_) { /* shell */ }
       try {
         const status = await tgFetch("/api/auth/status").then((r) => r.json());
-        if (!status.ok) return;
+        if (!status.ok) {
+          document.getElementById("kicker").textContent = "Нет сессии. Открой дело в чате — или зайди с Tailscale.";
+          return;
+        }
         const board = await tgFetch("/api/board").then((r) => r.json());
         const queue = await tgFetch("/api/queue").then((r) => r.json());
         const cards = (board.cards || []).filter((c) => (c.state || "OPEN").toUpperCase() !== "CLOSED" && c.column !== "done");
         const running = (queue.queue || []).filter((i) => i.status === "running");
+        const err = ((queue.queue || []).find((i) => i.last_error) || {}).last_error || "";
+        const council = queue.council || {};
+        const busy = ["analyze", "queue", "review"].indexOf(council.status || "") >= 0;
+        const cycle = busy ? (council.pulse || council.status || "идёт") : "не идёт";
+        const ready = cards.filter((c) => c.column === "ready").length;
+        const moving = cards.filter((c) => c.column === "in-progress").length;
+        const qa = cards.filter((c) => c.column === "qa").length;
+        let nxt = "нажми дело — откроется чат.";
+        if (err) nxt = "повтори упавшую карточку в чате.";
+        else if (busy) nxt = "жди цикл или открой прогресс в чате.";
+        else if (queue.queue_running) nxt = "жди карточку или открой доску.";
         const pulse = document.getElementById("pulse");
         pulse.hidden = false;
         pulse.innerHTML =
           "<p><b>Сейчас</b></p>" +
           "<p>Очередь: " + (queue.queue_running ? "идёт" : "пауза") + "</p>" +
-          "<p>Пишет: " + (running[0] ? ((running[0].repo || "").split("/").pop() + "#" + running[0].issue) : "тихо") + "</p>" +
-          "<p>Открыто: " + cards.length + "</p>";
-        document.getElementById("kicker").textContent = "Сессия есть. Карточки ниже — или нажми дело.";
+          "<p>Пишет: " + (running[0] ? esc(shortRef(running[0])) : "тихо") + "</p>" +
+          "<p>Цикл: " + esc(cycle) + "</p>" +
+          (err ? "<p>Ошибка: " + esc(err) + "</p>" : "") +
+          "<p>Доска: готово " + ready + " · ход " + moving + " · QA " + qa + "</p>" +
+          (cards.length ? "" : "<p>на доске пусто — смени фильтр или открой цикл</p>") +
+          "<p class=\"next\">Дальше: " + nxt + "</p>";
+        document.getElementById("kicker").textContent = "Сессия есть. Карточка ниже — или нажми дело.";
       } catch (_) { /* read-only shell */ }
     }
     boot();

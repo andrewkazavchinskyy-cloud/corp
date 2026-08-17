@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import importlib.machinery
 import importlib.util
+import inspect
 import json
 import os
 import sqlite3
@@ -184,8 +185,12 @@ def main() -> None:
     assert corp.is_sandbox_card(issue(["sandbox"]))
     assert not corp.is_sandbox_card(issue(["ready"]))
     human = corp.tg_need_human_buttons("andrewkazavchinskyy-cloud/corp#56", url="https://example/card")
-    assert [btn["text"] for btn in human[0]][:2] == ["Пауза", "Повторить"]
-    assert human[0][2]["text"] == "Открыть карточку"
+    assert [btn["text"] for btn in human[0]][:3] == ["Пауза", "Повторить", "Доска"]
+    assert not any(btn.get("text") == "Открыть карточку" for btn in human[0])
+    assert all(len((btn.get("callback_data") or "").encode()) <= 64 for btn in human[0] if "callback_data" in btn)
+    need = corp.tg_need_human_text("corp#56", "нет модели")
+    assert need.startswith("<b>Нужно тебя</b>") and "corp#56" in need and "нет модели" in need
+    assert "Дальше:" in need
     assert corp.parse_json_array('noise [{"title":"x"}] tail') == [{"title": "x"}]
     lines = corp.orch_open_lines(
         [
@@ -286,8 +291,17 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert corp.tg_parse_command("/abort") == ("abort", "")
     assert corp.tg_parse_command("/help") == ("help", "")
     help_text = corp.tg_help_text()
+    assert help_text.startswith("<b>Помощь</b>")
     assert "Сейчас" in help_text and "Доска" in help_text and "Цикл" in help_text
     assert "/status /queue" not in help_text
+    home_text, home_kb = corp.tg_home_payload()
+    assert home_text.startswith("<b>Мастерская</b>")
+    assert all(name in home_text for name in ("Сейчас", "Доска", "Цикл", "Ещё"))
+    assert "Дальше:" in home_text
+    assert home_kb == corp.tg_reply_keyboard()
+    start_src = inspect.getsource(corp.tg_cmd_start)
+    assert start_src.count("tg_send") == 1 and start_src.count("notify_safe") == 0
+    assert "Кнопки внизу" not in start_src
     menu = corp.tg_command_menu()
     assert len(menu) <= 6
     assert [row["command"] for row in menu] == ["start", "сейчас", "доска", "цикл", "пауза", "помощь"]
@@ -302,6 +316,8 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     yes_no = corp.tg_confirm_buttons("!y")
     assert [btn["text"] for btn in yes_no[0]] == ["Да", "Нет"]
     assert "вызов" not in corp.tg_confirm_text("council").lower()
+    confirm = corp.tg_confirm_text("council")
+    assert confirm.startswith("<b>Цикл</b>") and "Дальше:" in confirm and "Да" in [b["text"] for b in corp.tg_confirm_buttons("!y")[0]]
     assert corp.tg_iso_line("transitional") == "Изоляция ещё настраивается. Мастерская работает."
     assert "авария" not in corp.tg_iso_line("transitional").lower()
     assert corp.tg_menu_button_payload("https://vmi3510874.tailad6484.ts.net/tg")["type"] == "web_app"
@@ -311,11 +327,16 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert "\n" not in corp.tg_card("corp#56", "упал", "Очередь+")
     assert "http" not in corp.tg_card("corp#56", "старт", "claude")
     status = corp.tg_status_text(queue_on=False, writer="тихо", server_ok=True, drafts=2)
-    assert status.startswith("Сейчас\n")
+    assert status.startswith("<b>Сейчас</b>")
     assert "Очередь: пауза" in status and "Пишет: тихо" in status
+    assert "Цикл: не идёт" in status
     assert "Черновики: 2" in status
-    assert "Изоляция ещё настраивается" in status
+    assert "Изоляция" not in status
     assert "Дальше:" in status
+    assert corp.tg_html("a <b>x</b> & y") == "a &lt;b&gt;x&lt;/b&gt; &amp; y"
+    dirty_title = corp.tg_screen("Доска", ["fix <b>bold</b> & copy"], "открой")
+    assert "&lt;b&gt;bold&lt;/b&gt; &amp; copy" in dirty_title
+    assert "fix <b>bold</b>" not in dirty_title
     dirty = corp.tg_pulse_card(
         queue_on=False,
         writer="тихо",
@@ -359,16 +380,18 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     board = corp.tg_board_text(board_cards)
     assert board.startswith("<b>Доска</b>")
     assert "Готово 2 · Ход 1 · QA 1" in board
-    assert "<b>corp#2</b>" in board and "<b>corp#4</b>" in board
+    assert "corp#2" in board and "corp#4" in board
     assert "corp#5" not in board
     assert board.count("wall of text") <= 3
+    assert "в corp пусто — смени фильтр или открой цикл" in corp.tg_board_text([], project="corp")
+    assert "на доске пусто — смени фильтр или открой цикл" in corp.tg_board_text([])
     picked = corp.tg_board_pick(board_cards)
     assert len(picked) <= 5
     assert picked[0]["column"] == "qa"
     assert [c["number"] for c in corp.tg_board_filter(board_cards, "clarity")] == [3]
     assert {c["number"] for c in corp.tg_board_filter(board_cards, "corp")} == {1, 2, 4, 6}
     assert 5 not in [c["number"] for c in corp.tg_board_filter(board_cards, "")]
-    assert corp.tg_board_text(board_cards, project="clarity").startswith("<b>Доска</b> · <b>clarity</b>")
+    assert corp.tg_board_text(board_cards, project="clarity").startswith("<b>Доска · clarity</b>")
     assert "Готово 0 · Ход 1 · QA 0" in corp.tg_board_text(board_cards, project="clarity")
     assert corp.tg_html("a <b>x</b> & y") == "a &lt;b&gt;x&lt;/b&gt; &amp; y"
     dirty_board = corp.tg_board_text(
@@ -417,22 +440,41 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert any(c.startswith("t:") for c in take_cbs) and any(c.startswith("u:") for c in take_cbs)
     assert not any(c.startswith(("qap:", "qaf:", "m:")) for c in take_cbs)
     card_view = corp.tg_board_text(board_cards, open_ref="corp#4")
-    assert card_view.startswith("<b>Доска</b> · <b>corp#4</b>")
+    assert card_view.startswith("<b>Доска · corp#4</b>")
     assert "QA" in card_view
     drafts_text = corp.tg_drafts_text(
         [{"id": "d1", "project": "corp", "title": "First"}, {"id": "d2", "project": "clarity", "title": "Second"}]
     )
-    assert drafts_text == "Черновики: 2\ncorp · First"
+    assert drafts_text == "Черновики: 2\ncorp · First\nclarity · Second"
     assert corp.tg_draft_buttons([{"id": "d1"}, {"id": "d2"}]) == [
-        [{"text": "Принять черновик", "callback_data": "a:d1"}, {"text": "Пропустить черновик", "callback_data": "s:d1"}]
+        [{"text": "Принять", "callback_data": "a:d1"}, {"text": "Пропустить", "callback_data": "s:d1"}]
     ]
+    more = corp.tg_more_text({
+        "queue_running": False,
+        "queue": [],
+        "drafts": [{"id": "d1", "project": "corp", "title": "First"}],
+        "council": {},
+    })
+    assert more.startswith("<b>Ещё</b>") and "corp · First" in more and "Дальше:" in more
+    more_cbs = [b["callback_data"] for row in corp.tg_more_buttons({
+        "queue_running": False,
+        "queue": [{"status": "waiting", "repo": "o/corp", "issue": 1}],
+        "drafts": [{"id": "d1"}],
+        "council": {},
+    }) for b in row if "callback_data" in b]
+    assert all(len(c.encode()) <= 64 for c in more_cbs)
+    assert "?g" in more_cbs and "a:d1" in more_cbs
     assert corp.tg_pulse_text("o/corp", 56, 15, "same", "same") is None
     assert corp.tg_pulse_text("o/corp", 56, 15, "new", "") is None
     assert corp.tg_pulse_text("o/corp", 56, 45, "new", "old") == "corp#56 · 45 мин · пишет"
     ev = corp.tg_event_buttons("start", url="https://github.com/o/corp/issues/56", ref="o/corp#56")
-    assert [btn["text"] for btn in ev[0]] == ["Открыть карточку", "Поставить на паузу"]
+    ev_txt = [btn["text"] for btn in ev[0]]
+    assert "Пауза" in ev_txt and "Открыть карточку" not in ev_txt
     fail_btns = corp.tg_event_buttons("fail", url="https://example", ref="o/corp#56")
-    assert [btn["text"] for btn in fail_btns[0]] == ["Открыть карточку", "Повторить карточку"]
+    fail_txt = [btn["text"] for btn in fail_btns[0]]
+    assert "Повторить" in fail_txt and "Открыть карточку" not in fail_txt
+    shop_btns = corp.tg_event_buttons("fail", url="https://vmi.tailad6484.ts.net/?issue=o/corp#56", ref="o/corp#56")
+    assert "Мастерская" in [btn["text"] for btn in shop_btns[0]] and "Повторить" in [btn["text"] for btn in shop_btns[0]]
     corp.tg_reset_dedup()
     assert corp.tg_should_send("start:corp#56", now=100)
     assert not corp.tg_should_send("start:corp#56", now=110)
@@ -1232,6 +1274,8 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert "preview.html" not in tg_html
     assert "tg.initData" in tg_html and "tgFetch" in tg_html
     assert "passkey" in tg_html.lower()
+    assert "Дальше:" in tg_html and "очередь и кто пишет" in tg_html
+    assert "на доске пусто" in tg_html
     assert "Команда" in (ROOT / "workshop" / "static" / "app.js").read_text()
     assert "approve_drafts_checked" in app_src and "console_log_for_issue" in app_src
     closed_only = [{"title": "Ship the billing path for invoices", "state": "CLOSED"}]
@@ -1379,7 +1423,7 @@ Nodes (33): active_projects(), board_payload() (+31 more)
             assert any("не в колонке QA" in str(n) for n in notes)
             notes.clear()
             corp.handle_tg_callback("?y")
-            assert any("Запустить цикл" in str(n) for n in notes)
+            assert any("подтверди запуск" in str(n) for n in notes)
             assert any(
                 btn.get("text") == "Да"
                 for row in (corp.tg_confirm_buttons("!y") or [])
@@ -1476,7 +1520,8 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert "force" not in corp.council_ff_merge_main.__code__.co_names
     assert "tmux" in corp.council_abort.__code__.co_names or "killed" in corp.council_abort.__code__.co_varnames
     pulse = corp.tg_council_text({"status": "analyze", "project": "corp", "filed": []})
-    assert "Цикл" in pulse and "смотрит мастерскую" in pulse and "QA" in pulse
+    assert pulse.startswith("<b>Цикл</b>") and "смотрит мастерскую" in pulse and "QA" in pulse
+    assert "Дальше:" in pulse
     council_tmp = Path(tempfile.mkdtemp(prefix="corp-council-")) / "workshop.json"
     notes = []
     launched = []
