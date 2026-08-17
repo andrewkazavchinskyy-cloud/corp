@@ -45,6 +45,9 @@ not the board.
 
 ## Pins vs registry
 
+- **Registry rule:** git `registry.json` is canonical. `workshop.json`
+  overlay is emergency-only and must surface as uncommitted registry.
+  Overlay must not delete git projects or silently drop pins.
 - **Registry** lists every project (`status: active` or `paused`).
 - **Pin** is `workshop: true` on a registry row. Start: **corp**, **clarity**.
 - Board, `cycle`, Автоном, and orchestrator **ignore unpinned** repos.

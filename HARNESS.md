@@ -40,6 +40,17 @@ loop itself.
 existing checkouts, and installs Graphify when `uv` is available. It does not
 start daemons.
 
+Workspace for product checkouts is `$CORP_WORKSPACE` if set, else the parent
+of this clone when that folder is named `Github`, `Developer`, `repos`,
+`src`, or `code`, else `corp/projects/`. Find corp by clone URL
+(`gh repo clone andrewkazavchinskyy-cloud/corp`), not an iCloud path.
+
+**Registry rule:** git `registry.json` is canonical. `workshop.json`
+`registry` overlay is emergency-only (git file not writable). Overlay may
+add local-only projects and explicit pins. It must not delete git projects
+or silently drop pins. Workshop Settings/Map show `uncommitted registry`
+while the overlay is live.
+
 ## Cycle
 
 ```bash
@@ -52,7 +63,10 @@ Priority:
 
 1. Open Issues with label `ready` and without `blocked`, across active repos.
 2. Sort `P0`, then `P1`, then `P2`, then recency.
-3. If none, print a research report instead of inventing work.
+3. If none, print a research report instead of inventing work. Per pin:
+   SPEC/PRD present?, gap `нет` / `частично` / `есть`, top unshipped SPEC
+   bullets (or file presence + open non-ready issues), dirty/unpushed,
+   graph age. Do not auto-Approve. Do not mint a fake backlog.
 
 An agent must not skip a `ready` Issue to start a nicer idea.
 
@@ -62,13 +76,16 @@ Use when `cycle` returns `mode: research`.
 
 For each **active** project:
 
-1. Read `graphify-out/GRAPH_REPORT.md` if present, else `README.md` and any
-   `docs/PRD.md`, `docs/SPEC.md`, `docs/SHIP.md`, `docs/roadmap.md`, `STATE.md`.
+1. Read the `cycle` research rows (SPEC/PRD, unshipped bullets, git hint,
+   graph age). Then `graphify-out/GRAPH_REPORT.md` if present, else
+   `README.md` and any `docs/PRD.md`, `docs/SPEC.md`, `docs/SHIP.md`,
+   `docs/roadmap.md`, `STATE.md`.
 2. Ask: what is already specified enough to implement? What is shipped vs the
    spec? What bugs or failing checks are open? What branches are unfinished?
 3. File GitHub Issues with label `ready` only for work that is concrete and
    unblocked. Use `blocked` plus a reason if it is not.
 4. Stop after a small batch (a few Issues). Do not generate a fake backlog.
+   Do not auto-Approve workshop drafts.
 
 Do not implement during research unless the user said to take the first
 ready item immediately after filing it.

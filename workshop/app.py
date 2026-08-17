@@ -405,6 +405,7 @@ def api_map() -> dict:
         if corp.orch_alive(project["name"]):
             orch.append(project["name"])
     workshop = corp.load_workshop()
+    status = corp.registry_status()
     return {
         "doctor": corp.doctor_payload(),
         "projects": corp.research_report(reg),
@@ -412,6 +413,8 @@ def api_map() -> dict:
         "orch": orch,
         "queue_running": workshop.get("queue_running"),
         "queue": workshop.get("queue"),
+        "uncommitted_registry": status["uncommitted_registry"],
+        "registry_source": "overlay" if status["uncommitted_registry"] else "git",
     }
 
 
@@ -438,6 +441,9 @@ def api_settings(probe: bool = False) -> dict:
     data["catalog"] = corp.load_catalog()
     data["pins"] = [{"name": p["name"], "repo": p.get("repo")} for p in corp.pinned_projects(corp.load_registry())]
     data["slots"] = {p["name"]: corp.slots_for(p["name"]) for p in corp.pinned_projects(corp.load_registry())}
+    status = corp.registry_status()
+    data["uncommitted_registry"] = status["uncommitted_registry"]
+    data["registry_source"] = "overlay" if status["uncommitted_registry"] else "git"
     return data
 
 

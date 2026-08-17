@@ -18,9 +18,13 @@ Never write iCloud from the VPS.
 
 ## Create new
 
-Private, `main`. README + short AGENTS.md pointing at corp. Labels:
-ready, blocked, in-progress, self, queued, P0–P2, via:*, design, qa.
-No first issue. Graphify after first close. Pin immediately.
+Private, `main`. Seed a stranger can run: `docs/SPEC.md` stub (goal,
+non-goals, first slice), `AGENTS.md` that finds corp by clone URL
+(`gh repo clone andrewkazavchinskyy-cloud/corp`, not iCloud paths),
+optional `memory/sessions/`. Workspace path is documented
+(`$CORP_WORKSPACE` or the checkout folder). Labels: ready, blocked,
+in-progress, self, queued, P0–P2, via:*, design, qa. No first issue.
+Graphify after first close. Pin immediately.
 
 ## Remove
 
@@ -59,9 +63,11 @@ Per pin: Orchestrator, Build, Design, QA. Design/QA default to Build.
 
 ## Project tab
 
-Derived stage only (SPEC?, open/ready/P0, in-progress, graph age).
-Button «Разобрать», live research log, detailed drafts, Approve/Skip.
-Map stays infra.
+Derived stage plus a research snapshot without live orch: SPEC/PRD
+present?, gap нет/частично/есть, top unshipped SPEC bullets (or file
+presence + open non-ready), dirty/unpushed, graph age. Button
+«Разобрать», live research log, detailed drafts, Approve/Skip. Do not
+auto-Approve. Map stays infra. Overlay warning: uncommitted registry.
 
 ## Graphs
 
