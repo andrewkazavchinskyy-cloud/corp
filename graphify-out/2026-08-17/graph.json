@@ -12,21 +12,9 @@
       "_callable_class": true,
       "_origin": "ast",
       "id": "bin_corp_corperror",
-      "community": 12,
-      "community_name": "CorpError",
-      "norm_label": "corperror"
-    },
-    {
-      "label": "active_projects()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L642",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_active_projects",
       "community": 0,
       "community_name": "die",
-      "norm_label": "active_projects()"
+      "norm_label": "corperror"
     },
     {
       "label": "add_existing()",
@@ -41,30 +29,6 @@
       "norm_label": "add_existing()"
     },
     {
-      "label": "approve_draft()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2344",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_approve_draft",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "approve_draft()"
-    },
-    {
-      "label": "approve_drafts()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2390",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_approve_drafts",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "approve_drafts()"
-    },
-    {
       "label": "archive_project()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -75,18 +39,6 @@
       "community": 0,
       "community_name": "die",
       "norm_label": "archive_project()"
-    },
-    {
-      "label": "bootstrap()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L706",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_bootstrap",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "bootstrap()"
     },
     {
       "label": "_clone_to_workspace()",
@@ -101,52 +53,16 @@
       "norm_label": "_clone_to_workspace()"
     },
     {
-      "label": "cmd_queue()",
+      "label": ".__init__()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L5988",
+      "source_location": "L90",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_cmd_queue",
+      "id": "bin_corp_corperror_init",
       "community": 0,
       "community_name": "die",
-      "norm_label": "cmd_queue()"
-    },
-    {
-      "label": "council_scope()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3064",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_council_scope",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "council_scope()"
-    },
-    {
-      "label": "council_start()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3388",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_council_start",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "council_start()"
-    },
-    {
-      "label": "create_issue_rest()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3268",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_create_issue_rest",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "create_issue_rest()"
+      "norm_label": ".__init__()"
     },
     {
       "label": "create_project()",
@@ -173,28 +89,16 @@
       "norm_label": "die()"
     },
     {
-      "label": "draft_issue_body()",
+      "label": "ensure_path()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L2312",
+      "source_location": "L99",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_draft_issue_body",
+      "id": "bin_corp_ensure_path",
       "community": 0,
       "community_name": "die",
-      "norm_label": "draft_issue_body()"
-    },
-    {
-      "label": "ensure_label()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L4373",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_ensure_label",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "ensure_label()"
+      "norm_label": "ensure_path()"
     },
     {
       "label": "ensure_seed_labels()",
@@ -209,42 +113,6 @@
       "norm_label": "ensure_seed_labels()"
     },
     {
-      "label": "expand()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L281",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_expand",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "expand()"
-    },
-    {
-      "label": "graph_detail()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L1256",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_graph_detail",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "graph_detail()"
-    },
-    {
-      "label": "graphs_index()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L1232",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_graphs_index",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "graphs_index()"
-    },
-    {
       "label": "hide_project()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -257,28 +125,16 @@
       "norm_label": "hide_project()"
     },
     {
-      "label": "is_pinned()",
+      "label": "load_env()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L650",
+      "source_location": "L105",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_is_pinned",
+      "id": "bin_corp_load_env",
       "community": 0,
       "community_name": "die",
-      "norm_label": "is_pinned()"
-    },
-    {
-      "label": "load_registry()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L250",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_load_registry",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "load_registry()"
+      "norm_label": "load_env()"
     },
     {
       "label": "main()",
@@ -291,30 +147,6 @@
       "community": 0,
       "community_name": "die",
       "norm_label": "main()"
-    },
-    {
-      "label": "merge_registry()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L209",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_merge_registry",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "merge_registry()"
-    },
-    {
-      "label": "new_draft()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2281",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_new_draft",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "new_draft()"
     },
     {
       "label": "org_name()",
@@ -341,18 +173,6 @@
       "norm_label": "org_repos()"
     },
     {
-      "label": "parse_graph_report()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L1184",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_parse_graph_report",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "parse_graph_report()"
-    },
-    {
       "label": "parse_issue_ref()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -375,18 +195,6 @@
       "community": 0,
       "community_name": "die",
       "norm_label": "pick_agent()"
-    },
-    {
-      "label": "pin_owns_repo()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L5766",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_pin_owns_repo",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "pin_owns_repo()"
     },
     {
       "label": "profile_by_id()",
@@ -413,30 +221,6 @@
       "norm_label": "project_by_name()"
     },
     {
-      "label": "project_dir()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L285",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_project_dir",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "project_dir()"
-    },
-    {
-      "label": "project_seed_files()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2160",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_project_seed_files",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "project_seed_files()"
-    },
-    {
       "label": "project_stage()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -447,42 +231,6 @@
       "community": 0,
       "community_name": "die",
       "norm_label": "project_stage()"
-    },
-    {
-      "label": "propose_draft()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L5650",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_propose_draft",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "propose_draft()"
-    },
-    {
-      "label": "pull_projects()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L750",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_pull_projects",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "pull_projects()"
-    },
-    {
-      "label": "run()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L296",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_run",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "run()"
     },
     {
       "label": "run_next()",
@@ -497,6 +245,30 @@
       "norm_label": "run_next()"
     },
     {
+      "label": "save_registry()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L673",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_save_registry",
+      "community": 0,
+      "community_name": "die",
+      "norm_label": "save_registry()"
+    },
+    {
+      "label": "session_notes()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2696",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_session_notes",
+      "community": 0,
+      "community_name": "die",
+      "norm_label": "session_notes()"
+    },
+    {
       "label": "set_pin()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -507,30 +279,6 @@
       "community": 0,
       "community_name": "die",
       "norm_label": "set_pin()"
-    },
-    {
-      "label": "status()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L1428",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_status",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "status()"
-    },
-    {
-      "label": "tg_cmd_council_yes()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L4127",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_cmd_council_yes",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "tg_cmd_council_yes()"
     },
     {
       "label": "tg_parse_issue_arg()",
@@ -557,16 +305,16 @@
       "norm_label": "unarchive_project()"
     },
     {
-      "label": "workspace()",
+      "label": "workshop_token()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L271",
+      "source_location": "L5975",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_workspace",
+      "id": "bin_corp_workshop_token",
       "community": 0,
       "community_name": "die",
-      "norm_label": "workspace()"
+      "norm_label": "workshop_token()"
     },
     {
       "label": "write_next()",
@@ -581,6 +329,186 @@
       "norm_label": "write_next()"
     },
     {
+      "label": "active_projects()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L642",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_active_projects",
+      "community": 12,
+      "community_name": "project_dir",
+      "norm_label": "active_projects()"
+    },
+    {
+      "label": "cycle_payload()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L1284",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_cycle_payload",
+      "community": 12,
+      "community_name": "project_dir",
+      "norm_label": "cycle_payload()"
+    },
+    {
+      "label": "expand()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L281",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_expand",
+      "community": 12,
+      "community_name": "project_dir",
+      "norm_label": "expand()"
+    },
+    {
+      "label": "graph_detail()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L1256",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_graph_detail",
+      "community": 12,
+      "community_name": "project_dir",
+      "norm_label": "graph_detail()"
+    },
+    {
+      "label": "graphs_index()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L1232",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_graphs_index",
+      "community": 12,
+      "community_name": "project_dir",
+      "norm_label": "graphs_index()"
+    },
+    {
+      "label": "is_free_ready()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L935",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_is_free_ready",
+      "community": 12,
+      "community_name": "project_dir",
+      "norm_label": "is_free_ready()"
+    },
+    {
+      "label": "is_pinned()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L650",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_is_pinned",
+      "community": 12,
+      "community_name": "project_dir",
+      "norm_label": "is_pinned()"
+    },
+    {
+      "label": "parse_graph_report()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L1184",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_parse_graph_report",
+      "community": 12,
+      "community_name": "project_dir",
+      "norm_label": "parse_graph_report()"
+    },
+    {
+      "label": "project_dir()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L285",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_project_dir",
+      "community": 12,
+      "community_name": "project_dir",
+      "norm_label": "project_dir()"
+    },
+    {
+      "label": "project_seed_files()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2160",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_project_seed_files",
+      "community": 12,
+      "community_name": "project_dir",
+      "norm_label": "project_seed_files()"
+    },
+    {
+      "label": "pull_projects()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L750",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_pull_projects",
+      "community": 12,
+      "community_name": "project_dir",
+      "norm_label": "pull_projects()"
+    },
+    {
+      "label": "research_report()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L1168",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_research_report",
+      "community": 12,
+      "community_name": "project_dir",
+      "norm_label": "research_report()"
+    },
+    {
+      "label": "split_ready()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L947",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_split_ready",
+      "community": 12,
+      "community_name": "project_dir",
+      "norm_label": "split_ready()"
+    },
+    {
+      "label": "status()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L1428",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_status",
+      "community": 12,
+      "community_name": "project_dir",
+      "norm_label": "status()"
+    },
+    {
+      "label": "workspace()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L271",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_workspace",
+      "community": 12,
+      "community_name": "project_dir",
+      "norm_label": "workspace()"
+    },
+    {
       "label": "write_project_seed()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -588,45 +516,9 @@
       "_callable": true,
       "_origin": "ast",
       "id": "bin_corp_write_project_seed",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "write_project_seed()"
-    },
-    {
-      "label": ".__init__()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L90",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_corperror_init",
       "community": 12,
-      "community_name": "CorpError",
-      "norm_label": ".__init__()"
-    },
-    {
-      "label": "agent_argv()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L4920",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_agent_argv",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "agent_argv()"
-    },
-    {
-      "label": "append_log()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L5004",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_append_log",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "append_log()"
+      "community_name": "project_dir",
+      "norm_label": "write_project_seed()"
     },
     {
       "label": "capture_pane()",
@@ -637,164 +529,20 @@
       "_origin": "ast",
       "id": "bin_corp_capture_pane",
       "community": 13,
-      "community_name": "orchestrate",
+      "community_name": "launch_agent",
       "norm_label": "capture_pane()"
     },
     {
-      "label": "config_dir()",
+      "label": "council_scope()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L1600",
+      "source_location": "L3064",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_config_dir",
+      "id": "bin_corp_council_scope",
       "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "config_dir()"
-    },
-    {
-      "label": "council_analyze_prompt()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3219",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_council_analyze_prompt",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "council_analyze_prompt()"
-    },
-    {
-      "label": "council_existing_titles()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3127",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_council_existing_titles",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "council_existing_titles()"
-    },
-    {
-      "label": "council_launch_analyzers()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3338",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_council_launch_analyzers",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "council_launch_analyzers()"
-    },
-    {
-      "label": "council_role_brief()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3201",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_council_role_brief",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "council_role_brief()"
-    },
-    {
-      "label": "council_role_items()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3433",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_council_role_items",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "council_role_items()"
-    },
-    {
-      "label": "council_run_role_sync()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3331",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_council_run_role_sync",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "council_run_role_sync()"
-    },
-    {
-      "label": "council_spawn_role()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3313",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_council_spawn_role",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "council_spawn_role()"
-    },
-    {
-      "label": "council_writer_kind()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3119",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_council_writer_kind",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "council_writer_kind()"
-    },
-    {
-      "label": "default_slot()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L1605",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_default_slot",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "default_slot()"
-    },
-    {
-      "label": "gh_ready()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L310",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_gh_ready",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "gh_ready()"
-    },
-    {
-      "label": "have()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L305",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_have",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "have()"
-    },
-    {
-      "label": "kind_cli_ok()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L1768",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_kind_cli_ok",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "kind_cli_ok()"
+      "community_name": "launch_agent",
+      "norm_label": "council_scope()"
     },
     {
       "label": "launch_agent()",
@@ -805,20 +553,8 @@
       "_origin": "ast",
       "id": "bin_corp_launch_agent",
       "community": 13,
-      "community_name": "orchestrate",
+      "community_name": "launch_agent",
       "norm_label": "launch_agent()"
-    },
-    {
-      "label": "maybe_orchestrate()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2564",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_maybe_orchestrate",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "maybe_orchestrate()"
     },
     {
       "label": "orch_alive()",
@@ -829,20 +565,8 @@
       "_origin": "ast",
       "id": "bin_corp_orch_alive",
       "community": 13,
-      "community_name": "orchestrate",
+      "community_name": "launch_agent",
       "norm_label": "orch_alive()"
-    },
-    {
-      "label": "orch_open_lines()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2423",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_orch_open_lines",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "orch_open_lines()"
     },
     {
       "label": "orch_session()",
@@ -853,20 +577,8 @@
       "_origin": "ast",
       "id": "bin_corp_orch_session",
       "community": 13,
-      "community_name": "orchestrate",
+      "community_name": "launch_agent",
       "norm_label": "orch_session()"
-    },
-    {
-      "label": "orch_spec_rels()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2413",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_orch_spec_rels",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "orch_spec_rels()"
     },
     {
       "label": "orch_status()",
@@ -877,68 +589,20 @@
       "_origin": "ast",
       "id": "bin_corp_orch_status",
       "community": 13,
-      "community_name": "orchestrate",
+      "community_name": "launch_agent",
       "norm_label": "orch_status()"
     },
     {
-      "label": "orchestrate()",
+      "label": "pinned_projects()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L2473",
+      "source_location": "L654",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_orchestrate",
+      "id": "bin_corp_pinned_projects",
       "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "orchestrate()"
-    },
-    {
-      "label": "parse_json_array()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2583",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_parse_json_array",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "parse_json_array()"
-    },
-    {
-      "label": "refresh_graph()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L4729",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_refresh_graph",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "refresh_graph()"
-    },
-    {
-      "label": "set_orch_state()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L4656",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_set_orch_state",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "set_orch_state()"
-    },
-    {
-      "label": "slots_for()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L1680",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_slots_for",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "slots_for()"
+      "community_name": "launch_agent",
+      "norm_label": "pinned_projects()"
     },
     {
       "label": "tg_agent_rows()",
@@ -949,7 +613,7 @@
       "_origin": "ast",
       "id": "bin_corp_tg_agent_rows",
       "community": 13,
-      "community_name": "orchestrate",
+      "community_name": "launch_agent",
       "norm_label": "tg_agent_rows()"
     },
     {
@@ -961,20 +625,8 @@
       "_origin": "ast",
       "id": "bin_corp_tg_live_names",
       "community": 13,
-      "community_name": "orchestrate",
+      "community_name": "launch_agent",
       "norm_label": "tg_live_names()"
-    },
-    {
-      "label": "tg_ru_count()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2613",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_ru_count",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "tg_ru_count()"
     },
     {
       "label": "tg_writer_line()",
@@ -985,7 +637,7 @@
       "_origin": "ast",
       "id": "bin_corp_tg_writer_line",
       "community": 13,
-      "community_name": "orchestrate",
+      "community_name": "launch_agent",
       "norm_label": "tg_writer_line()"
     },
     {
@@ -997,7 +649,7 @@
       "_origin": "ast",
       "id": "bin_corp_tmux_agent_script",
       "community": 13,
-      "community_name": "orchestrate",
+      "community_name": "launch_agent",
       "norm_label": "tmux_agent_script()"
     },
     {
@@ -1009,20 +661,8 @@
       "_origin": "ast",
       "id": "bin_corp_tmux_alive",
       "community": 13,
-      "community_name": "orchestrate",
+      "community_name": "launch_agent",
       "norm_label": "tmux_alive()"
-    },
-    {
-      "label": "tmux_has()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L4625",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tmux_has",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "tmux_has()"
     },
     {
       "label": "tmux_kill()",
@@ -1033,20 +673,8 @@
       "_origin": "ast",
       "id": "bin_corp_tmux_kill",
       "community": 13,
-      "community_name": "orchestrate",
+      "community_name": "launch_agent",
       "norm_label": "tmux_kill()"
-    },
-    {
-      "label": "tmux_kill_session()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3367",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tmux_kill_session",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "tmux_kill_session()"
     },
     {
       "label": "tmux_session()",
@@ -1057,7 +685,7 @@
       "_origin": "ast",
       "id": "bin_corp_tmux_session",
       "community": 13,
-      "community_name": "orchestrate",
+      "community_name": "launch_agent",
       "norm_label": "tmux_session()"
     },
     {
@@ -1069,32 +697,8 @@
       "_origin": "ast",
       "id": "bin_corp_wait_tmux",
       "community": 13,
-      "community_name": "orchestrate",
+      "community_name": "launch_agent",
       "norm_label": "wait_tmux()"
-    },
-    {
-      "label": "workshop_token()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L5975",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_workshop_token",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "workshop_token()"
-    },
-    {
-      "label": "workshop_unit_active()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L411",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_workshop_unit_active",
-      "community": 13,
-      "community_name": "orchestrate",
-      "norm_label": "workshop_unit_active()"
     },
     {
       "label": "_clear_registry_overlay()",
@@ -1109,16 +713,16 @@
       "norm_label": "_clear_registry_overlay()"
     },
     {
-      "label": "_cursor_mismatch_note()",
+      "label": "cmd_queue()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L1762",
+      "source_location": "L5988",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_cursor_mismatch_note",
+      "id": "bin_corp_cmd_queue",
       "community": 2,
       "community_name": "load_workshop",
-      "norm_label": "_cursor_mismatch_note()"
+      "norm_label": "cmd_queue()"
     },
     {
       "label": "default_workshop()",
@@ -1205,6 +809,18 @@
       "norm_label": "merge_catalog_row()"
     },
     {
+      "label": "new_draft()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2281",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_new_draft",
+      "community": 2,
+      "community_name": "load_workshop",
+      "norm_label": "new_draft()"
+    },
+    {
       "label": "probe_catalog()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -1253,6 +869,18 @@
       "norm_label": "queue_item()"
     },
     {
+      "label": "queue_rm()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L5736",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_queue_rm",
+      "community": 2,
+      "community_name": "load_workshop",
+      "norm_label": "queue_rm()"
+    },
+    {
       "label": "queue_set_running()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -1277,28 +905,16 @@
       "norm_label": "run_autopilot_e2e()"
     },
     {
-      "label": "sanitize_catalog()",
+      "label": "sanitize_workshop()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L1959",
+      "source_location": "L634",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_sanitize_catalog",
+      "id": "bin_corp_sanitize_workshop",
       "community": 2,
       "community_name": "load_workshop",
-      "norm_label": "sanitize_catalog()"
-    },
-    {
-      "label": "save_registry()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L673",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_save_registry",
-      "community": 2,
-      "community_name": "load_workshop",
-      "norm_label": "save_registry()"
+      "norm_label": "sanitize_workshop()"
     },
     {
       "label": "save_slots()",
@@ -1325,6 +941,18 @@
       "norm_label": "save_workshop()"
     },
     {
+      "label": "set_orch_state()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L4656",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_set_orch_state",
+      "community": 2,
+      "community_name": "load_workshop",
+      "norm_label": "set_orch_state()"
+    },
+    {
       "label": "set_tg_offset()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -1349,18 +977,6 @@
       "norm_label": "skip_draft()"
     },
     {
-      "label": "tg_card()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2631",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_card",
-      "community": 2,
-      "community_name": "load_workshop",
-      "norm_label": "tg_card()"
-    },
-    {
       "label": "tg_cmd_pause()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -1373,28 +989,28 @@
       "norm_label": "tg_cmd_pause()"
     },
     {
-      "label": "tg_pending_reply()",
+      "label": "tg_now_buttons()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L3620",
+      "source_location": "L3926",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_tg_pending_reply",
+      "id": "bin_corp_tg_now_buttons",
       "community": 2,
       "community_name": "load_workshop",
-      "norm_label": "tg_pending_reply()"
+      "norm_label": "tg_now_buttons()"
     },
     {
-      "label": "workshop_json_override()",
+      "label": "tg_retryable_item()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L5801",
+      "source_location": "L3907",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_workshop_json_override",
+      "id": "bin_corp_tg_retryable_item",
       "community": 2,
       "community_name": "load_workshop",
-      "norm_label": "workshop_json_override()"
+      "norm_label": "tg_retryable_item()"
     },
     {
       "label": "workshop_lock()",
@@ -1421,6 +1037,18 @@
       "norm_label": "_write_registry_overlay()"
     },
     {
+      "label": "close_action()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L4754",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_close_action",
+      "community": 21,
+      "community_name": "handle_tg_callback",
+      "norm_label": "close_action()"
+    },
+    {
       "label": "council_busy()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -1445,18 +1073,6 @@
       "norm_label": "handle_tg_callback()"
     },
     {
-      "label": "handle_tg_reply()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L4139",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_handle_tg_reply",
-      "community": 21,
-      "community_name": "handle_tg_callback",
-      "norm_label": "handle_tg_reply()"
-    },
-    {
       "label": "handle_tg_text()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -1467,18 +1083,6 @@
       "community": 21,
       "community_name": "handle_tg_callback",
       "norm_label": "handle_tg_text()"
-    },
-    {
-      "label": "issue_ref()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L4350",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_issue_ref",
-      "community": 21,
-      "community_name": "handle_tg_callback",
-      "norm_label": "issue_ref()"
     },
     {
       "label": "notify_safe()",
@@ -1493,42 +1097,6 @@
       "norm_label": "notify_safe()"
     },
     {
-      "label": "pulse_loop()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2032",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_pulse_loop",
-      "community": 21,
-      "community_name": "handle_tg_callback",
-      "norm_label": "pulse_loop()"
-    },
-    {
-      "label": "telegram_tick()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3710",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_telegram_tick",
-      "community": 21,
-      "community_name": "handle_tg_callback",
-      "norm_label": "telegram_tick()"
-    },
-    {
-      "label": "tg_ask_qa_note()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L4131",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_ask_qa_note",
-      "community": 21,
-      "community_name": "handle_tg_callback",
-      "norm_label": "tg_ask_qa_note()"
-    },
-    {
       "label": "tg_board_buttons()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -1541,40 +1109,16 @@
       "norm_label": "tg_board_buttons()"
     },
     {
-      "label": "tg_board_pick()",
+      "label": "tg_card_labels()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L2935",
+      "source_location": "L2914",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_tg_board_pick",
+      "id": "bin_corp_tg_card_labels",
       "community": 21,
       "community_name": "handle_tg_callback",
-      "norm_label": "tg_board_pick()"
-    },
-    {
-      "label": "tg_board_text()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2944",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_board_text",
-      "community": 21,
-      "community_name": "handle_tg_callback",
-      "norm_label": "tg_board_text()"
-    },
-    {
-      "label": "tg_clip()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2608",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_clip",
-      "community": 21,
-      "community_name": "handle_tg_callback",
-      "norm_label": "tg_clip()"
+      "norm_label": "tg_card_labels()"
     },
     {
       "label": "tg_cmd_abort()",
@@ -1611,6 +1155,18 @@
       "community": 21,
       "community_name": "handle_tg_callback",
       "norm_label": "tg_cmd_council()"
+    },
+    {
+      "label": "tg_cmd_drafts()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L4024",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_cmd_drafts",
+      "community": 21,
+      "community_name": "handle_tg_callback",
+      "norm_label": "tg_cmd_drafts()"
     },
     {
       "label": "tg_cmd_go()",
@@ -1659,18 +1215,6 @@
       "community": 21,
       "community_name": "handle_tg_callback",
       "norm_label": "tg_cmd_more()"
-    },
-    {
-      "label": "tg_cmd_retry()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L4078",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_cmd_retry",
-      "community": 21,
-      "community_name": "handle_tg_callback",
-      "norm_label": "tg_cmd_retry()"
     },
     {
       "label": "tg_cmd_start()",
@@ -1733,16 +1277,16 @@
       "norm_label": "tg_draft_buttons()"
     },
     {
-      "label": "tg_drafts_text()",
+      "label": "tg_help_text()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L3001",
+      "source_location": "L3145",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_tg_drafts_text",
+      "id": "bin_corp_tg_help_text",
       "community": 21,
       "community_name": "handle_tg_callback",
-      "norm_label": "tg_drafts_text()"
+      "norm_label": "tg_help_text()"
     },
     {
       "label": "tg_home_buttons()",
@@ -1757,124 +1301,52 @@
       "norm_label": "tg_home_buttons()"
     },
     {
-      "label": "tg_norm_slash()",
+      "label": "tg_home_text()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L3796",
+      "source_location": "L3650",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_tg_norm_slash",
+      "id": "bin_corp_tg_home_text",
       "community": 21,
       "community_name": "handle_tg_callback",
-      "norm_label": "tg_norm_slash()"
+      "norm_label": "tg_home_text()"
     },
     {
-      "label": "tg_now_buttons()",
+      "label": "tg_issue_in_qa()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L3926",
+      "source_location": "L4158",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_tg_now_buttons",
+      "id": "bin_corp_tg_issue_in_qa",
       "community": 21,
       "community_name": "handle_tg_callback",
-      "norm_label": "tg_now_buttons()"
+      "norm_label": "tg_issue_in_qa()"
     },
     {
-      "label": "tg_parse_command()",
+      "label": "tg_menu_buttons()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L3826",
+      "source_location": "L3762",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_tg_parse_command",
+      "id": "bin_corp_tg_menu_buttons",
       "community": 21,
       "community_name": "handle_tg_callback",
-      "norm_label": "tg_parse_command()"
+      "norm_label": "tg_menu_buttons()"
     },
     {
-      "label": "tg_pulse_text()",
+      "label": "tg_reply_keyboard()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L3009",
+      "source_location": "L3766",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_tg_pulse_text",
+      "id": "bin_corp_tg_reply_keyboard",
       "community": 21,
       "community_name": "handle_tg_callback",
-      "norm_label": "tg_pulse_text()"
-    },
-    {
-      "label": "tg_queue_text()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2867",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_queue_text",
-      "community": 21,
-      "community_name": "handle_tg_callback",
-      "norm_label": "tg_queue_text()"
-    },
-    {
-      "label": "tg_retryable_item()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3907",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_retryable_item",
-      "community": 21,
-      "community_name": "handle_tg_callback",
-      "norm_label": "tg_retryable_item()"
-    },
-    {
-      "label": "tg_set_pending()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3625",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_set_pending",
-      "community": 21,
-      "community_name": "handle_tg_callback",
-      "norm_label": "tg_set_pending()"
-    },
-    {
-      "label": "tg_short_ref()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2624",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_short_ref",
-      "community": 21,
-      "community_name": "handle_tg_callback",
-      "norm_label": "tg_short_ref()"
-    },
-    {
-      "label": "tg_workshop_issue_url()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2760",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_workshop_issue_url",
-      "community": 21,
-      "community_name": "handle_tg_callback",
-      "norm_label": "tg_workshop_issue_url()"
-    },
-    {
-      "label": "workshop_public_url()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2743",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_workshop_public_url",
-      "community": 21,
-      "community_name": "handle_tg_callback",
-      "norm_label": "workshop_public_url()"
+      "norm_label": "tg_reply_keyboard()"
     },
     {
       "label": "a()",
@@ -2329,20 +1801,8 @@
       "_origin": "ast",
       "id": "bin_corp_add_labels",
       "community": 23,
-      "community_name": "run_issue",
+      "community_name": "queue_add",
       "norm_label": "add_labels()"
-    },
-    {
-      "label": "agent_prompt()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L4896",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_agent_prompt",
-      "community": 23,
-      "community_name": "run_issue",
-      "norm_label": "agent_prompt()"
     },
     {
       "label": "assign_me()",
@@ -2353,20 +1813,8 @@
       "_origin": "ast",
       "id": "bin_corp_assign_me",
       "community": 23,
-      "community_name": "run_issue",
+      "community_name": "queue_add",
       "norm_label": "assign_me()"
-    },
-    {
-      "label": "can_promote_to_qa()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L5235",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_can_promote_to_qa",
-      "community": 23,
-      "community_name": "run_issue",
-      "norm_label": "can_promote_to_qa()"
     },
     {
       "label": "claim()",
@@ -2377,32 +1825,8 @@
       "_origin": "ast",
       "id": "bin_corp_claim",
       "community": 23,
-      "community_name": "run_issue",
+      "community_name": "queue_add",
       "norm_label": "claim()"
-    },
-    {
-      "label": "close_action()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L4754",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_close_action",
-      "community": 23,
-      "community_name": "run_issue",
-      "norm_label": "close_action()"
-    },
-    {
-      "label": "close_issue()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L4775",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_close_issue",
-      "community": 23,
-      "community_name": "run_issue",
-      "norm_label": "close_issue()"
     },
     {
       "label": "comment()",
@@ -2413,20 +1837,20 @@
       "_origin": "ast",
       "id": "bin_corp_comment",
       "community": 23,
-      "community_name": "run_issue",
+      "community_name": "queue_add",
       "norm_label": "comment()"
     },
     {
-      "label": "council_should_auto_qa()",
+      "label": "drop_self()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L3264",
+      "source_location": "L4702",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_council_should_auto_qa",
+      "id": "bin_corp_drop_self",
       "community": 23,
-      "community_name": "run_issue",
-      "norm_label": "council_should_auto_qa()"
+      "community_name": "queue_add",
+      "norm_label": "drop_self()"
     },
     {
       "label": "get_issue()",
@@ -2437,7 +1861,7 @@
       "_origin": "ast",
       "id": "bin_corp_get_issue",
       "community": 23,
-      "community_name": "run_issue",
+      "community_name": "queue_add",
       "norm_label": "get_issue()"
     },
     {
@@ -2449,7 +1873,7 @@
       "_origin": "ast",
       "id": "bin_corp_gh_ok",
       "community": 23,
-      "community_name": "run_issue",
+      "community_name": "queue_add",
       "norm_label": "_gh_ok()"
     },
     {
@@ -2461,7 +1885,7 @@
       "_origin": "ast",
       "id": "bin_corp_invalidate_board",
       "community": 23,
-      "community_name": "run_issue",
+      "community_name": "queue_add",
       "norm_label": "invalidate_board()"
     },
     {
@@ -2473,20 +1897,20 @@
       "_origin": "ast",
       "id": "bin_corp_move_issue",
       "community": 23,
-      "community_name": "run_issue",
+      "community_name": "queue_add",
       "norm_label": "move_issue()"
     },
     {
-      "label": "need_human()",
+      "label": "queue_add()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L1595",
+      "source_location": "L5667",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_need_human",
+      "id": "bin_corp_queue_add",
       "community": 23,
-      "community_name": "run_issue",
-      "norm_label": "need_human()"
+      "community_name": "queue_add",
+      "norm_label": "queue_add()"
     },
     {
       "label": "queue_retry()",
@@ -2497,32 +1921,8 @@
       "_origin": "ast",
       "id": "bin_corp_queue_retry",
       "community": 23,
-      "community_name": "run_issue",
+      "community_name": "queue_add",
       "norm_label": "queue_retry()"
-    },
-    {
-      "label": "queue_rm()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L5736",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_queue_rm",
-      "community": 23,
-      "community_name": "run_issue",
-      "norm_label": "queue_rm()"
-    },
-    {
-      "label": "record_event()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2645",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_record_event",
-      "community": 23,
-      "community_name": "run_issue",
-      "norm_label": "record_event()"
     },
     {
       "label": "reject_qa()",
@@ -2533,7 +1933,7 @@
       "_origin": "ast",
       "id": "bin_corp_reject_qa",
       "community": 23,
-      "community_name": "run_issue",
+      "community_name": "queue_add",
       "norm_label": "reject_qa()"
     },
     {
@@ -2545,7 +1945,7 @@
       "_origin": "ast",
       "id": "bin_corp_release_labels",
       "community": 23,
-      "community_name": "run_issue",
+      "community_name": "queue_add",
       "norm_label": "release_labels()"
     },
     {
@@ -2557,7 +1957,7 @@
       "_origin": "ast",
       "id": "bin_corp_release_runner",
       "community": 23,
-      "community_name": "run_issue",
+      "community_name": "queue_add",
       "norm_label": "release_runner()"
     },
     {
@@ -2569,7 +1969,7 @@
       "_origin": "ast",
       "id": "bin_corp_remove_labels",
       "community": 23,
-      "community_name": "run_issue",
+      "community_name": "queue_add",
       "norm_label": "remove_labels()"
     },
     {
@@ -2581,32 +1981,8 @@
       "_origin": "ast",
       "id": "bin_corp_require_eligible",
       "community": 23,
-      "community_name": "run_issue",
+      "community_name": "queue_add",
       "norm_label": "require_eligible()"
-    },
-    {
-      "label": "_role_prompt()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L5279",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_role_prompt",
-      "community": 23,
-      "community_name": "run_issue",
-      "norm_label": "_role_prompt()"
-    },
-    {
-      "label": "run_issue()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L5305",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_run_issue",
-      "community": 23,
-      "community_name": "run_issue",
-      "norm_label": "run_issue()"
     },
     {
       "label": "send_to_qa()",
@@ -2617,7 +1993,7 @@
       "_origin": "ast",
       "id": "bin_corp_send_to_qa",
       "community": 23,
-      "community_name": "run_issue",
+      "community_name": "queue_add",
       "norm_label": "send_to_qa()"
     },
     {
@@ -2629,56 +2005,8 @@
       "_origin": "ast",
       "id": "bin_corp_take_issue",
       "community": 23,
-      "community_name": "run_issue",
+      "community_name": "queue_add",
       "norm_label": "take_issue()"
-    },
-    {
-      "label": "tg_event_buttons()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2770",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_event_buttons",
-      "community": 23,
-      "community_name": "run_issue",
-      "norm_label": "tg_event_buttons()"
-    },
-    {
-      "label": "tg_issue_in_qa()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L4158",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_issue_in_qa",
-      "community": 23,
-      "community_name": "run_issue",
-      "norm_label": "tg_issue_in_qa()"
-    },
-    {
-      "label": "tg_notify_event()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2725",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_notify_event",
-      "community": 23,
-      "community_name": "run_issue",
-      "norm_label": "tg_notify_event()"
-    },
-    {
-      "label": "tg_should_send()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2635",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_should_send",
-      "community": 23,
-      "community_name": "run_issue",
-      "norm_label": "tg_should_send()"
     },
     {
       "label": "board_payload()",
@@ -2689,7 +2017,7 @@
       "_origin": "ast",
       "id": "bin_corp_board_payload",
       "community": 24,
-      "community_name": "queue_add",
+      "community_name": "board_payload",
       "norm_label": "board_payload()"
     },
     {
@@ -2701,7 +2029,7 @@
       "_origin": "ast",
       "id": "bin_corp_collect_issues",
       "community": 24,
-      "community_name": "queue_add",
+      "community_name": "board_payload",
       "norm_label": "collect_issues()"
     },
     {
@@ -2713,32 +2041,8 @@
       "_origin": "ast",
       "id": "bin_corp_column_of",
       "community": 24,
-      "community_name": "queue_add",
+      "community_name": "board_payload",
       "norm_label": "column_of()"
-    },
-    {
-      "label": "cycle_payload()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L1284",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_cycle_payload",
-      "community": 24,
-      "community_name": "queue_add",
-      "norm_label": "cycle_payload()"
-    },
-    {
-      "label": "drop_self()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L4702",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_drop_self",
-      "community": 24,
-      "community_name": "queue_add",
-      "norm_label": "drop_self()"
     },
     {
       "label": "github_issues_disabled()",
@@ -2749,7 +2053,7 @@
       "_origin": "ast",
       "id": "bin_corp_github_issues_disabled",
       "community": 24,
-      "community_name": "queue_add",
+      "community_name": "board_payload",
       "norm_label": "github_issues_disabled()"
     },
     {
@@ -2761,20 +2065,8 @@
       "_origin": "ast",
       "id": "bin_corp_github_transient",
       "community": 24,
-      "community_name": "queue_add",
+      "community_name": "board_payload",
       "norm_label": "github_transient()"
-    },
-    {
-      "label": "is_free_ready()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L935",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_is_free_ready",
-      "community": 24,
-      "community_name": "queue_add",
-      "norm_label": "is_free_ready()"
     },
     {
       "label": "issue_eligibility()",
@@ -2785,20 +2077,8 @@
       "_origin": "ast",
       "id": "bin_corp_issue_eligibility",
       "community": 24,
-      "community_name": "queue_add",
+      "community_name": "board_payload",
       "norm_label": "issue_eligibility()"
-    },
-    {
-      "label": "_issue_ready()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L1082",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_issue_ready",
-      "community": 24,
-      "community_name": "queue_add",
-      "norm_label": "_issue_ready()"
     },
     {
       "label": "issues_enabled()",
@@ -2809,7 +2089,7 @@
       "_origin": "ast",
       "id": "bin_corp_issues_enabled",
       "community": 24,
-      "community_name": "queue_add",
+      "community_name": "board_payload",
       "norm_label": "issues_enabled()"
     },
     {
@@ -2821,7 +2101,7 @@
       "_origin": "ast",
       "id": "bin_corp_issues_for",
       "community": 24,
-      "community_name": "queue_add",
+      "community_name": "board_payload",
       "norm_label": "issues_for()"
     },
     {
@@ -2833,7 +2113,7 @@
       "_origin": "ast",
       "id": "bin_corp_issues_via_graphql",
       "community": 24,
-      "community_name": "queue_add",
+      "community_name": "board_payload",
       "norm_label": "_issues_via_graphql()"
     },
     {
@@ -2845,7 +2125,7 @@
       "_origin": "ast",
       "id": "bin_corp_issues_via_rest",
       "community": 24,
-      "community_name": "queue_add",
+      "community_name": "board_payload",
       "norm_label": "_issues_via_rest()"
     },
     {
@@ -2857,7 +2137,7 @@
       "_origin": "ast",
       "id": "bin_corp_label_names",
       "community": 24,
-      "community_name": "queue_add",
+      "community_name": "board_payload",
       "norm_label": "label_names()"
     },
     {
@@ -2869,7 +2149,7 @@
       "_origin": "ast",
       "id": "bin_corp_normalize_rest_issue",
       "community": 24,
-      "community_name": "queue_add",
+      "community_name": "board_payload",
       "norm_label": "_normalize_rest_issue()"
     },
     {
@@ -2881,7 +2161,7 @@
       "_origin": "ast",
       "id": "bin_corp_parse_issue_list",
       "community": 24,
-      "community_name": "queue_add",
+      "community_name": "board_payload",
       "norm_label": "_parse_issue_list()"
     },
     {
@@ -2893,56 +2173,20 @@
       "_origin": "ast",
       "id": "bin_corp_pin_write_block",
       "community": 24,
-      "community_name": "queue_add",
+      "community_name": "board_payload",
       "norm_label": "pin_write_block()"
     },
     {
-      "label": "pinned_projects()",
+      "label": "queue_decision()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L654",
+      "source_location": "L5537",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_pinned_projects",
+      "id": "bin_corp_queue_decision",
       "community": 24,
-      "community_name": "queue_add",
-      "norm_label": "pinned_projects()"
-    },
-    {
-      "label": "project_by_repo()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L903",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_project_by_repo",
-      "community": 24,
-      "community_name": "queue_add",
-      "norm_label": "project_by_repo()"
-    },
-    {
-      "label": "queue_add()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L5667",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_queue_add",
-      "community": 24,
-      "community_name": "queue_add",
-      "norm_label": "queue_add()"
-    },
-    {
-      "label": "queue_status()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L5937",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_queue_status",
-      "community": 24,
-      "community_name": "queue_add",
-      "norm_label": "queue_status()"
+      "community_name": "board_payload",
+      "norm_label": "queue_decision()"
     },
     {
       "label": "rank()",
@@ -2953,20 +2197,20 @@
       "_origin": "ast",
       "id": "bin_corp_rank",
       "community": 24,
-      "community_name": "queue_add",
+      "community_name": "board_payload",
       "norm_label": "rank()"
     },
     {
-      "label": "research_report()",
+      "label": "reap_queue()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L1168",
+      "source_location": "L5582",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_research_report",
+      "id": "bin_corp_reap_queue",
       "community": 24,
-      "community_name": "queue_add",
-      "norm_label": "research_report()"
+      "community_name": "board_payload",
+      "norm_label": "reap_queue()"
     },
     {
       "label": "runner_of()",
@@ -2977,7 +2221,7 @@
       "_origin": "ast",
       "id": "bin_corp_runner_of",
       "community": 24,
-      "community_name": "queue_add",
+      "community_name": "board_payload",
       "norm_label": "runner_of()"
     },
     {
@@ -2989,20 +2233,32 @@
       "_origin": "ast",
       "id": "bin_corp_slot_for_issue",
       "community": 24,
-      "community_name": "queue_add",
+      "community_name": "board_payload",
       "norm_label": "slot_for_issue()"
     },
     {
-      "label": "split_ready()",
+      "label": "tg_board_open()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L947",
+      "source_location": "L2924",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_split_ready",
+      "id": "bin_corp_tg_board_open",
       "community": 24,
-      "community_name": "queue_add",
-      "norm_label": "split_ready()"
+      "community_name": "board_payload",
+      "norm_label": "tg_board_open()"
+    },
+    {
+      "label": "tg_board_pick()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2935",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_board_pick",
+      "community": 24,
+      "community_name": "board_payload",
+      "norm_label": "tg_board_pick()"
     },
     {
       "label": "vps_owns_project()",
@@ -3013,7 +2269,7 @@
       "_origin": "ast",
       "id": "bin_corp_vps_owns_project",
       "community": 24,
-      "community_name": "queue_add",
+      "community_name": "board_payload",
       "norm_label": "vps_owns_project()"
     },
     {
@@ -3025,7 +2281,7 @@
       "_origin": "ast",
       "id": "bin_corp_write_block_reason",
       "community": 24,
-      "community_name": "queue_add",
+      "community_name": "board_payload",
       "norm_label": "write_block_reason()"
     },
     {
@@ -3329,6 +2585,114 @@
       "norm_label": "workshop_move()"
     },
     {
+      "label": "bullet_covered()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L1010",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_bullet_covered",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "bullet_covered()"
+    },
+    {
+      "label": "council_is_dup()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L3078",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_council_is_dup",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "council_is_dup()"
+    },
+    {
+      "label": "council_norm_title()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L3074",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_council_norm_title",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "council_norm_title()"
+    },
+    {
+      "label": "council_pick_items()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L3091",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_council_pick_items",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "council_pick_items()"
+    },
+    {
+      "label": "council_role_items()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L3433",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_council_role_items",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "council_role_items()"
+    },
+    {
+      "label": "default_slot()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L1605",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_default_slot",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "default_slot()"
+    },
+    {
+      "label": "git_worktree_hint()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L1036",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_git_worktree_hint",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "git_worktree_hint()"
+    },
+    {
+      "label": "graph_age_of()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L1045",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_graph_age_of",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "graph_age_of()"
+    },
+    {
+      "label": "_issue_ready()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L1082",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_issue_ready",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "_issue_ready()"
+    },
+    {
       "label": "next_move()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -3339,6 +2703,102 @@
       "community": 26,
       "community_name": "corp",
       "norm_label": "next_move()"
+    },
+    {
+      "label": "_norm_words()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L1005",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_norm_words",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "_norm_words()"
+    },
+    {
+      "label": "orch_open_lines()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2423",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_orch_open_lines",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "orch_open_lines()"
+    },
+    {
+      "label": "orch_prompt()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2446",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_orch_prompt",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "orch_prompt()"
+    },
+    {
+      "label": "orch_spec_rels()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2413",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_orch_spec_rels",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "orch_spec_rels()"
+    },
+    {
+      "label": "orch_workshop_extra()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2434",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_orch_workshop_extra",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "orch_workshop_extra()"
+    },
+    {
+      "label": "orchestrate()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2473",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_orchestrate",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "orchestrate()"
+    },
+    {
+      "label": "overlay_active()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L161",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_overlay_active",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "overlay_active()"
+    },
+    {
+      "label": "overlay_diverges()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L128",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_overlay_diverges",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "overlay_diverges()"
     },
     {
       "label": "parse_exit_code()",
@@ -3353,6 +2813,54 @@
       "norm_label": "parse_exit_code()"
     },
     {
+      "label": "parse_json_array()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2583",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_parse_json_array",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "parse_json_array()"
+    },
+    {
+      "label": "pin_owns_repo()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L5766",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_pin_owns_repo",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "pin_owns_repo()"
+    },
+    {
+      "label": "pin_research()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L1091",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_pin_research",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "pin_research()"
+    },
+    {
+      "label": "propose_draft()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L5650",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_propose_draft",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "propose_draft()"
+    },
+    {
       "label": "pulse_label()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -3363,30 +2871,6 @@
       "community": 26,
       "community_name": "corp",
       "norm_label": "pulse_label()"
-    },
-    {
-      "label": "queue_action_buttons()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L5511",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_queue_action_buttons",
-      "community": 26,
-      "community_name": "corp",
-      "norm_label": "queue_action_buttons()"
-    },
-    {
-      "label": "queue_decision()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L5537",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_queue_decision",
-      "community": 26,
-      "community_name": "corp",
-      "norm_label": "queue_decision()"
     },
     {
       "label": "queue_job_outcome()",
@@ -3413,16 +2897,64 @@
       "norm_label": "read_tmux_exit()"
     },
     {
-      "label": "reap_queue()",
+      "label": "_registry_overlay()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L5582",
+      "source_location": "L119",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_reap_queue",
+      "id": "bin_corp_registry_overlay",
       "community": 26,
       "community_name": "corp",
-      "norm_label": "reap_queue()"
+      "norm_label": "_registry_overlay()"
+    },
+    {
+      "label": "registry_status()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L178",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_registry_status",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "registry_status()"
+    },
+    {
+      "label": "slots_for()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L1680",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_slots_for",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "slots_for()"
+    },
+    {
+      "label": "spec_bullets()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L982",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_spec_bullets",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "spec_bullets()"
+    },
+    {
+      "label": "spec_gaps()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L1026",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_spec_gaps",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "spec_gaps()"
     },
     {
       "label": "text_matches()",
@@ -3449,78 +2981,6 @@
       "norm_label": "tg_agents_text()"
     },
     {
-      "label": "tg_board_open()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2924",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_board_open",
-      "community": 26,
-      "community_name": "corp",
-      "norm_label": "tg_board_open()"
-    },
-    {
-      "label": "tg_card_labels()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2914",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_card_labels",
-      "community": 26,
-      "community_name": "corp",
-      "norm_label": "tg_card_labels()"
-    },
-    {
-      "label": "tg_cmd_drafts()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L4024",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_cmd_drafts",
-      "community": 26,
-      "community_name": "corp",
-      "norm_label": "tg_cmd_drafts()"
-    },
-    {
-      "label": "tg_col_ru()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2801",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_col_ru",
-      "community": 26,
-      "community_name": "corp",
-      "norm_label": "tg_col_ru()"
-    },
-    {
-      "label": "tg_help_text()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3145",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_help_text",
-      "community": 26,
-      "community_name": "corp",
-      "norm_label": "tg_help_text()"
-    },
-    {
-      "label": "tg_home_text()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3650",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_home_text",
-      "community": 26,
-      "community_name": "corp",
-      "norm_label": "tg_home_text()"
-    },
-    {
       "label": "tg_host_lines()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -3533,16 +2993,28 @@
       "norm_label": "tg_host_lines()"
     },
     {
-      "label": "tg_menu_buttons()",
+      "label": "tg_install_menu_button()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L3762",
+      "source_location": "L3782",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_tg_menu_buttons",
+      "id": "bin_corp_tg_install_menu_button",
       "community": 26,
       "community_name": "corp",
-      "norm_label": "tg_menu_buttons()"
+      "norm_label": "tg_install_menu_button()"
+    },
+    {
+      "label": "tg_menu_button_payload()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L3703",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_menu_button_payload",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "tg_menu_button_payload()"
     },
     {
       "label": "tg_needs_confirm()",
@@ -3557,18 +3029,6 @@
       "norm_label": "tg_needs_confirm()"
     },
     {
-      "label": "tg_reply_keyboard()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3766",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_reply_keyboard",
-      "community": 26,
-      "community_name": "corp",
-      "norm_label": "tg_reply_keyboard()"
-    },
-    {
       "label": "tg_reset_dedup()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -3579,6 +3039,18 @@
       "community": 26,
       "community_name": "corp",
       "norm_label": "tg_reset_dedup()"
+    },
+    {
+      "label": "tg_ru_count()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2613",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_ru_count",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "tg_ru_count()"
     },
     {
       "label": "tg_server_text()",
@@ -3593,6 +3065,18 @@
       "norm_label": "tg_server_text()"
     },
     {
+      "label": "tg_web_app_url()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L3693",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_web_app_url",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "tg_web_app_url()"
+    },
+    {
       "label": "tg_workshop_up()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -3603,6 +3087,18 @@
       "community": 26,
       "community_name": "corp",
       "norm_label": "tg_workshop_up()"
+    },
+    {
+      "label": "_tree_git_label()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L365",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tree_git_label",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "_tree_git_label()"
     },
     {
       "label": "api()",
@@ -4505,6 +4001,54 @@
       "norm_label": "renderslots()"
     },
     {
+      "label": "agent_prompt()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L4896",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_agent_prompt",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "agent_prompt()"
+    },
+    {
+      "label": "append_log()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L5004",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_append_log",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "append_log()"
+    },
+    {
+      "label": "can_promote_to_qa()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L5235",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_can_promote_to_qa",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "can_promote_to_qa()"
+    },
+    {
+      "label": "close_issue()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L4775",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_close_issue",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "close_issue()"
+    },
+    {
       "label": "council_abort()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -4513,7 +4057,7 @@
       "_origin": "ast",
       "id": "bin_corp_council_abort",
       "community": 31,
-      "community_name": "council_after_writer",
+      "community_name": "run_issue",
       "norm_label": "council_abort()"
     },
     {
@@ -4525,7 +4069,7 @@
       "_origin": "ast",
       "id": "bin_corp_council_after_writer",
       "community": 31,
-      "community_name": "council_after_writer",
+      "community_name": "run_issue",
       "norm_label": "council_after_writer()"
     },
     {
@@ -4537,8 +4081,20 @@
       "_origin": "ast",
       "id": "bin_corp_council_enqueue_refs",
       "community": 31,
-      "community_name": "council_after_writer",
+      "community_name": "run_issue",
       "norm_label": "council_enqueue_refs()"
+    },
+    {
+      "label": "council_existing_titles()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L3127",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_council_existing_titles",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "council_existing_titles()"
     },
     {
       "label": "council_ff_merge_main()",
@@ -4549,7 +4105,7 @@
       "_origin": "ast",
       "id": "bin_corp_council_ff_merge_main",
       "community": 31,
-      "community_name": "council_after_writer",
+      "community_name": "run_issue",
       "norm_label": "council_ff_merge_main()"
     },
     {
@@ -4561,7 +4117,7 @@
       "_origin": "ast",
       "id": "bin_corp_council_finish_analyze",
       "community": 31,
-      "community_name": "council_after_writer",
+      "community_name": "run_issue",
       "norm_label": "council_finish_analyze()"
     },
     {
@@ -4573,8 +4129,20 @@
       "_origin": "ast",
       "id": "bin_corp_council_issue_body",
       "community": 31,
-      "community_name": "council_after_writer",
+      "community_name": "run_issue",
       "norm_label": "council_issue_body()"
+    },
+    {
+      "label": "council_launch_analyzers()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L3338",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_council_launch_analyzers",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "council_launch_analyzers()"
     },
     {
       "label": "council_load()",
@@ -4585,7 +4153,7 @@
       "_origin": "ast",
       "id": "bin_corp_council_load",
       "community": 31,
-      "community_name": "council_after_writer",
+      "community_name": "run_issue",
       "norm_label": "council_load()"
     },
     {
@@ -4597,7 +4165,7 @@
       "_origin": "ast",
       "id": "bin_corp_council_mark_phase",
       "community": 31,
-      "community_name": "council_after_writer",
+      "community_name": "run_issue",
       "norm_label": "council_mark_phase()"
     },
     {
@@ -4609,7 +4177,7 @@
       "_origin": "ast",
       "id": "bin_corp_council_qa_verdict",
       "community": 31,
-      "community_name": "council_after_writer",
+      "community_name": "run_issue",
       "norm_label": "council_qa_verdict()"
     },
     {
@@ -4621,7 +4189,7 @@
       "_origin": "ast",
       "id": "bin_corp_council_review_prompt",
       "community": 31,
-      "community_name": "council_after_writer",
+      "community_name": "run_issue",
       "norm_label": "council_review_prompt()"
     },
     {
@@ -4633,7 +4201,7 @@
       "_origin": "ast",
       "id": "bin_corp_council_save",
       "community": 31,
-      "community_name": "council_after_writer",
+      "community_name": "run_issue",
       "norm_label": "council_save()"
     },
     {
@@ -4645,8 +4213,32 @@
       "_origin": "ast",
       "id": "bin_corp_council_session",
       "community": 31,
-      "community_name": "council_after_writer",
+      "community_name": "run_issue",
       "norm_label": "council_session()"
+    },
+    {
+      "label": "council_should_auto_qa()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L3264",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_council_should_auto_qa",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "council_should_auto_qa()"
+    },
+    {
+      "label": "council_start()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L3388",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_council_start",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "council_start()"
     },
     {
       "label": "council_tick()",
@@ -4657,7 +4249,7 @@
       "_origin": "ast",
       "id": "bin_corp_council_tick",
       "community": 31,
-      "community_name": "council_after_writer",
+      "community_name": "run_issue",
       "norm_label": "council_tick()"
     },
     {
@@ -4669,8 +4261,152 @@
       "_origin": "ast",
       "id": "bin_corp_council_tmux_map",
       "community": 31,
-      "community_name": "council_after_writer",
+      "community_name": "run_issue",
       "norm_label": "council_tmux_map()"
+    },
+    {
+      "label": "council_writer_kind()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L3119",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_council_writer_kind",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "council_writer_kind()"
+    },
+    {
+      "label": "issue_ref()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L4350",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_issue_ref",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "issue_ref()"
+    },
+    {
+      "label": "last_log_lines()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2014",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_last_log_lines",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "last_log_lines()"
+    },
+    {
+      "label": "log_line_matches_issue()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L1999",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_log_line_matches_issue",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "log_line_matches_issue()"
+    },
+    {
+      "label": "maybe_orchestrate()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2564",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_maybe_orchestrate",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "maybe_orchestrate()"
+    },
+    {
+      "label": "project_by_repo()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L903",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_project_by_repo",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "project_by_repo()"
+    },
+    {
+      "label": "pulse_loop()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2032",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_pulse_loop",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "pulse_loop()"
+    },
+    {
+      "label": "queue_action_buttons()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L5511",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_queue_action_buttons",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "queue_action_buttons()"
+    },
+    {
+      "label": "record_event()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2645",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_record_event",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "record_event()"
+    },
+    {
+      "label": "_role_prompt()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L5279",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_role_prompt",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "_role_prompt()"
+    },
+    {
+      "label": "run_issue()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L5305",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_run_issue",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "run_issue()"
+    },
+    {
+      "label": "tg_cmd_retry()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L4078",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_cmd_retry",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "tg_cmd_retry()"
     },
     {
       "label": "tg_council_text()",
@@ -4681,8 +4417,32 @@
       "_origin": "ast",
       "id": "bin_corp_tg_council_text",
       "community": 31,
-      "community_name": "council_after_writer",
+      "community_name": "run_issue",
       "norm_label": "tg_council_text()"
+    },
+    {
+      "label": "tg_notify_event()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2725",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_notify_event",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "tg_notify_event()"
+    },
+    {
+      "label": "tg_should_send()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2635",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_should_send",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "tg_should_send()"
     },
     {
       "label": "badge()",
@@ -4997,6 +4757,30 @@
       "norm_label": "snapauto()"
     },
     {
+      "label": "allow_funnel_on()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L595",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_allow_funnel_on",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "allow_funnel_on()"
+    },
+    {
+      "label": "bootstrap()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L706",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_bootstrap",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "bootstrap()"
+    },
+    {
       "label": "_cli_identity()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -5005,8 +4789,80 @@
       "_origin": "ast",
       "id": "bin_corp_cli_identity",
       "community": 34,
-      "community_name": "probe_kind",
+      "community_name": "run",
       "norm_label": "_cli_identity()"
+    },
+    {
+      "label": "create_issue_rest()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L3268",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_create_issue_rest",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "create_issue_rest()"
+    },
+    {
+      "label": "_cursor_mismatch_note()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L1762",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_cursor_mismatch_note",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "_cursor_mismatch_note()"
+    },
+    {
+      "label": "ensure_label()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L4373",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_ensure_label",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "ensure_label()"
+    },
+    {
+      "label": "funnel_enabled_from_text()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L576",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_funnel_enabled_from_text",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "funnel_enabled_from_text()"
+    },
+    {
+      "label": "gh_ready()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L310",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_gh_ready",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "gh_ready()"
+    },
+    {
+      "label": "have()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L305",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_have",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "have()"
     },
     {
       "label": "_help_text()",
@@ -5017,8 +4873,20 @@
       "_origin": "ast",
       "id": "bin_corp_help_text",
       "community": 34,
-      "community_name": "probe_kind",
+      "community_name": "run",
       "norm_label": "_help_text()"
+    },
+    {
+      "label": "kind_cli_ok()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L1768",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_kind_cli_ok",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "kind_cli_ok()"
     },
     {
       "label": "_looks_like_model()",
@@ -5029,7 +4897,7 @@
       "_origin": "ast",
       "id": "bin_corp_looks_like_model",
       "community": 34,
-      "community_name": "probe_kind",
+      "community_name": "run",
       "norm_label": "_looks_like_model()"
     },
     {
@@ -5041,7 +4909,7 @@
       "_origin": "ast",
       "id": "bin_corp_models_from_json",
       "community": 34,
-      "community_name": "probe_kind",
+      "community_name": "run",
       "norm_label": "_models_from_json()"
     },
     {
@@ -5053,7 +4921,7 @@
       "_origin": "ast",
       "id": "bin_corp_parse_efforts",
       "community": 34,
-      "community_name": "probe_kind",
+      "community_name": "run",
       "norm_label": "_parse_efforts()"
     },
     {
@@ -5065,7 +4933,7 @@
       "_origin": "ast",
       "id": "bin_corp_parse_models",
       "community": 34,
-      "community_name": "probe_kind",
+      "community_name": "run",
       "norm_label": "_parse_models()"
     },
     {
@@ -5077,7 +4945,7 @@
       "_origin": "ast",
       "id": "bin_corp_probe_cli_identity",
       "community": 34,
-      "community_name": "probe_kind",
+      "community_name": "run",
       "norm_label": "_probe_cli_identity()"
     },
     {
@@ -5089,8 +4957,20 @@
       "_origin": "ast",
       "id": "bin_corp_probe_kind",
       "community": 34,
-      "community_name": "probe_kind",
+      "community_name": "run",
       "norm_label": "probe_kind()"
+    },
+    {
+      "label": "refresh_graph()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L4729",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_refresh_graph",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "refresh_graph()"
     },
     {
       "label": "_resolved_binary()",
@@ -5101,8 +4981,20 @@
       "_origin": "ast",
       "id": "bin_corp_resolved_binary",
       "community": 34,
-      "community_name": "probe_kind",
+      "community_name": "run",
       "norm_label": "_resolved_binary()"
+    },
+    {
+      "label": "run()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L296",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_run",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "run()"
     },
     {
       "label": "_same_resolved()",
@@ -5113,32 +5005,140 @@
       "_origin": "ast",
       "id": "bin_corp_same_resolved",
       "community": 34,
-      "community_name": "probe_kind",
+      "community_name": "run",
       "norm_label": "_same_resolved()"
     },
     {
-      "label": "ensure_path()",
+      "label": "sanitize_catalog()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L99",
+      "source_location": "L1959",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_ensure_path",
-      "community": 35,
-      "community_name": "notify",
-      "norm_label": "ensure_path()"
+      "id": "bin_corp_sanitize_catalog",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "sanitize_catalog()"
     },
     {
-      "label": "load_env()",
+      "label": "tailscale_status()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L105",
+      "source_location": "L602",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_load_env",
+      "id": "bin_corp_tailscale_status",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "tailscale_status()"
+    },
+    {
+      "label": "tg_event_buttons()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2770",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_event_buttons",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "tg_event_buttons()"
+    },
+    {
+      "label": "tg_workshop_issue_url()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2760",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_workshop_issue_url",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "tg_workshop_issue_url()"
+    },
+    {
+      "label": "tmux_has()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L4625",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tmux_has",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "tmux_has()"
+    },
+    {
+      "label": "tmux_kill_session()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L3367",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tmux_kill_session",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "tmux_kill_session()"
+    },
+    {
+      "label": "workshop_public_url()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2743",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_workshop_public_url",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "workshop_public_url()"
+    },
+    {
+      "label": "workshop_unit_active()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L411",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_workshop_unit_active",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "workshop_unit_active()"
+    },
+    {
+      "label": "workshop_unit_props()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L418",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_workshop_unit_props",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "workshop_unit_props()"
+    },
+    {
+      "label": "handle_tg_reply()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L4139",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_handle_tg_reply",
       "community": 35,
-      "community_name": "notify",
-      "norm_label": "load_env()"
+      "community_name": "tg_short_ref",
+      "norm_label": "handle_tg_reply()"
+    },
+    {
+      "label": "need_human()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L1595",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_need_human",
+      "community": 35,
+      "community_name": "tg_short_ref",
+      "norm_label": "need_human()"
     },
     {
       "label": "notify()",
@@ -5149,8 +5149,92 @@
       "_origin": "ast",
       "id": "bin_corp_notify",
       "community": 35,
-      "community_name": "notify",
+      "community_name": "tg_short_ref",
       "norm_label": "notify()"
+    },
+    {
+      "label": "redact_secrets()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L316",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_redact_secrets",
+      "community": 35,
+      "community_name": "tg_short_ref",
+      "norm_label": "redact_secrets()"
+    },
+    {
+      "label": "telegram_tick()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L3710",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_telegram_tick",
+      "community": 35,
+      "community_name": "tg_short_ref",
+      "norm_label": "telegram_tick()"
+    },
+    {
+      "label": "tg_ask_qa_note()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L4131",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_ask_qa_note",
+      "community": 35,
+      "community_name": "tg_short_ref",
+      "norm_label": "tg_ask_qa_note()"
+    },
+    {
+      "label": "tg_board_text()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2944",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_board_text",
+      "community": 35,
+      "community_name": "tg_short_ref",
+      "norm_label": "tg_board_text()"
+    },
+    {
+      "label": "tg_card()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2631",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_card",
+      "community": 35,
+      "community_name": "tg_short_ref",
+      "norm_label": "tg_card()"
+    },
+    {
+      "label": "tg_clip()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2608",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_clip",
+      "community": 35,
+      "community_name": "tg_short_ref",
+      "norm_label": "tg_clip()"
+    },
+    {
+      "label": "tg_col_ru()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2801",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_col_ru",
+      "community": 35,
+      "community_name": "tg_short_ref",
+      "norm_label": "tg_col_ru()"
     },
     {
       "label": "tg_command_menu()",
@@ -5161,7 +5245,7 @@
       "_origin": "ast",
       "id": "bin_corp_tg_command_menu",
       "community": 35,
-      "community_name": "notify",
+      "community_name": "tg_short_ref",
       "norm_label": "tg_command_menu()"
     },
     {
@@ -5173,8 +5257,20 @@
       "_origin": "ast",
       "id": "bin_corp_tg_creds",
       "community": 35,
-      "community_name": "notify",
+      "community_name": "tg_short_ref",
       "norm_label": "tg_creds()"
+    },
+    {
+      "label": "tg_drafts_text()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L3001",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_drafts_text",
+      "community": 35,
+      "community_name": "tg_short_ref",
+      "norm_label": "tg_drafts_text()"
     },
     {
       "label": "tg_install_commands()",
@@ -5185,32 +5281,56 @@
       "_origin": "ast",
       "id": "bin_corp_tg_install_commands",
       "community": 35,
-      "community_name": "notify",
+      "community_name": "tg_short_ref",
       "norm_label": "tg_install_commands()"
     },
     {
-      "label": "tg_install_menu_button()",
+      "label": "tg_iso_line()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L3782",
+      "source_location": "L2811",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_tg_install_menu_button",
+      "id": "bin_corp_tg_iso_line",
       "community": 35,
-      "community_name": "notify",
-      "norm_label": "tg_install_menu_button()"
+      "community_name": "tg_short_ref",
+      "norm_label": "tg_iso_line()"
     },
     {
-      "label": "tg_menu_button_payload()",
+      "label": "tg_norm_slash()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L3703",
+      "source_location": "L3796",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_tg_menu_button_payload",
+      "id": "bin_corp_tg_norm_slash",
       "community": 35,
-      "community_name": "notify",
-      "norm_label": "tg_menu_button_payload()"
+      "community_name": "tg_short_ref",
+      "norm_label": "tg_norm_slash()"
+    },
+    {
+      "label": "tg_parse_command()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L3826",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_parse_command",
+      "community": 35,
+      "community_name": "tg_short_ref",
+      "norm_label": "tg_parse_command()"
+    },
+    {
+      "label": "tg_pending_reply()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L3620",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_pending_reply",
+      "community": 35,
+      "community_name": "tg_short_ref",
+      "norm_label": "tg_pending_reply()"
     },
     {
       "label": "tg_post()",
@@ -5221,104 +5341,8 @@
       "_origin": "ast",
       "id": "bin_corp_tg_post",
       "community": 35,
-      "community_name": "notify",
+      "community_name": "tg_short_ref",
       "norm_label": "tg_post()"
-    },
-    {
-      "label": "tg_web_app_url()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3693",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_web_app_url",
-      "community": 35,
-      "community_name": "notify",
-      "norm_label": "tg_web_app_url()"
-    },
-    {
-      "label": "last_log_lines()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2014",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_last_log_lines",
-      "community": 37,
-      "community_name": "redact_secrets",
-      "norm_label": "last_log_lines()"
-    },
-    {
-      "label": "load_events()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2670",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_load_events",
-      "community": 37,
-      "community_name": "redact_secrets",
-      "norm_label": "load_events()"
-    },
-    {
-      "label": "log_line_matches_issue()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L1999",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_log_line_matches_issue",
-      "community": 37,
-      "community_name": "redact_secrets",
-      "norm_label": "log_line_matches_issue()"
-    },
-    {
-      "label": "redact_secrets()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L316",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_redact_secrets",
-      "community": 37,
-      "community_name": "redact_secrets",
-      "norm_label": "redact_secrets()"
-    },
-    {
-      "label": "sanitize_workshop()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L634",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_sanitize_workshop",
-      "community": 37,
-      "community_name": "redact_secrets",
-      "norm_label": "sanitize_workshop()"
-    },
-    {
-      "label": "session_notes()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2696",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_session_notes",
-      "community": 37,
-      "community_name": "redact_secrets",
-      "norm_label": "session_notes()"
-    },
-    {
-      "label": "tg_iso_line()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2811",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tg_iso_line",
-      "community": 37,
-      "community_name": "redact_secrets",
-      "norm_label": "tg_iso_line()"
     },
     {
       "label": "tg_pulse_card()",
@@ -5328,9 +5352,57 @@
       "_callable": true,
       "_origin": "ast",
       "id": "bin_corp_tg_pulse_card",
-      "community": 37,
-      "community_name": "redact_secrets",
+      "community": 35,
+      "community_name": "tg_short_ref",
       "norm_label": "tg_pulse_card()"
+    },
+    {
+      "label": "tg_pulse_text()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L3009",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_pulse_text",
+      "community": 35,
+      "community_name": "tg_short_ref",
+      "norm_label": "tg_pulse_text()"
+    },
+    {
+      "label": "tg_queue_text()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2867",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_queue_text",
+      "community": 35,
+      "community_name": "tg_short_ref",
+      "norm_label": "tg_queue_text()"
+    },
+    {
+      "label": "tg_set_pending()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L3625",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_set_pending",
+      "community": 35,
+      "community_name": "tg_short_ref",
+      "norm_label": "tg_set_pending()"
+    },
+    {
+      "label": "tg_short_ref()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2624",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_short_ref",
+      "community": 35,
+      "community_name": "tg_short_ref",
+      "norm_label": "tg_short_ref()"
     },
     {
       "label": "tg_status_text()",
@@ -5340,9 +5412,93 @@
       "_callable": true,
       "_origin": "ast",
       "id": "bin_corp_tg_status_text",
-      "community": 37,
-      "community_name": "redact_secrets",
+      "community": 35,
+      "community_name": "tg_short_ref",
       "norm_label": "tg_status_text()"
+    },
+    {
+      "label": "approve_draft()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2344",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_approve_draft",
+      "community": 37,
+      "community_name": "approve_draft",
+      "norm_label": "approve_draft()"
+    },
+    {
+      "label": "approve_drafts()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2390",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_approve_drafts",
+      "community": 37,
+      "community_name": "approve_draft",
+      "norm_label": "approve_drafts()"
+    },
+    {
+      "label": "draft_issue_body()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L2312",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_draft_issue_body",
+      "community": 37,
+      "community_name": "approve_draft",
+      "norm_label": "draft_issue_body()"
+    },
+    {
+      "label": "load_registry()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L250",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_load_registry",
+      "community": 37,
+      "community_name": "approve_draft",
+      "norm_label": "load_registry()"
+    },
+    {
+      "label": "merge_registry()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L209",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_merge_registry",
+      "community": 37,
+      "community_name": "approve_draft",
+      "norm_label": "merge_registry()"
+    },
+    {
+      "label": "queue_status()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L5937",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_queue_status",
+      "community": 37,
+      "community_name": "approve_draft",
+      "norm_label": "queue_status()"
+    },
+    {
+      "label": "tg_cmd_council_yes()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L4127",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_tg_cmd_council_yes",
+      "community": 37,
+      "community_name": "approve_draft",
+      "norm_label": "tg_cmd_council_yes()"
     },
     {
       "label": "tg_cmd_doctor()",
@@ -6629,124 +6785,100 @@
       "norm_label": "togglemore()"
     },
     {
-      "label": "overlay_active()",
+      "label": "agent_argv()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L161",
+      "source_location": "L4920",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_overlay_active",
+      "id": "bin_corp_agent_argv",
       "community": 41,
-      "community_name": "overlay_diverges",
-      "norm_label": "overlay_active()"
+      "community_name": "agent_argv",
+      "norm_label": "agent_argv()"
     },
     {
-      "label": "overlay_diverges()",
+      "label": "config_dir()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L128",
+      "source_location": "L1600",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_overlay_diverges",
+      "id": "bin_corp_config_dir",
       "community": 41,
-      "community_name": "overlay_diverges",
-      "norm_label": "overlay_diverges()"
+      "community_name": "agent_argv",
+      "norm_label": "config_dir()"
     },
     {
-      "label": "_registry_overlay()",
+      "label": "council_analyze_prompt()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L119",
+      "source_location": "L3219",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_registry_overlay",
+      "id": "bin_corp_council_analyze_prompt",
       "community": 41,
-      "community_name": "overlay_diverges",
-      "norm_label": "_registry_overlay()"
+      "community_name": "agent_argv",
+      "norm_label": "council_analyze_prompt()"
     },
     {
-      "label": "registry_status()",
+      "label": "council_role_brief()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L178",
+      "source_location": "L3201",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_registry_status",
+      "id": "bin_corp_council_role_brief",
       "community": 41,
-      "community_name": "overlay_diverges",
-      "norm_label": "registry_status()"
+      "community_name": "agent_argv",
+      "norm_label": "council_role_brief()"
     },
     {
-      "label": "allow_funnel_on()",
+      "label": "council_run_role_sync()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L595",
+      "source_location": "L3331",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_allow_funnel_on",
+      "id": "bin_corp_council_run_role_sync",
+      "community": 41,
+      "community_name": "agent_argv",
+      "norm_label": "council_run_role_sync()"
+    },
+    {
+      "label": "council_spawn_role()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L3313",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_council_spawn_role",
+      "community": 41,
+      "community_name": "agent_argv",
+      "norm_label": "council_spawn_role()"
+    },
+    {
+      "label": "issue()",
+      "file_type": "code",
+      "source_file": "workshop/test_logic.py",
+      "source_location": "L22",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "workshop_test_logic_issue",
       "community": 42,
-      "community_name": "tailscale_status",
-      "norm_label": "allow_funnel_on()"
+      "community_name": "main",
+      "norm_label": "issue()"
     },
     {
-      "label": "funnel_enabled_from_text()",
+      "label": "main()",
       "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L576",
+      "source_file": "workshop/test_logic.py",
+      "source_location": "L26",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_funnel_enabled_from_text",
+      "id": "workshop_test_logic_main",
       "community": 42,
-      "community_name": "tailscale_status",
-      "norm_label": "funnel_enabled_from_text()"
-    },
-    {
-      "label": "tailscale_status()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L602",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tailscale_status",
-      "community": 42,
-      "community_name": "tailscale_status",
-      "norm_label": "tailscale_status()"
-    },
-    {
-      "label": "council_is_dup()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3078",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_council_is_dup",
-      "community": 43,
-      "community_name": "council_is_dup",
-      "norm_label": "council_is_dup()"
-    },
-    {
-      "label": "council_norm_title()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3074",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_council_norm_title",
-      "community": 43,
-      "community_name": "council_is_dup",
-      "norm_label": "council_norm_title()"
-    },
-    {
-      "label": "council_pick_items()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L3091",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_council_pick_items",
-      "community": 43,
-      "community_name": "council_is_dup",
-      "norm_label": "council_pick_items()"
+      "community_name": "main",
+      "norm_label": "main()"
     },
     {
       "label": "applyIssueLink()",
@@ -6965,18 +7097,6 @@
       "norm_label": "auth_policy_present()"
     },
     {
-      "label": "bullet_covered()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L1010",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_bullet_covered",
-      "community": 7,
-      "community_name": "Path",
-      "norm_label": "bullet_covered()"
-    },
-    {
       "label": "council_deploy_trees()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -7059,30 +7179,6 @@
       "community": 7,
       "community_name": "Path",
       "norm_label": "git_tree_report()"
-    },
-    {
-      "label": "git_worktree_hint()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L1036",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_git_worktree_hint",
-      "community": 7,
-      "community_name": "Path",
-      "norm_label": "git_worktree_hint()"
-    },
-    {
-      "label": "graph_age_of()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L1045",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_graph_age_of",
-      "community": 7,
-      "community_name": "Path",
-      "norm_label": "graph_age_of()"
     },
     {
       "label": "graph_freshness()",
@@ -7169,40 +7265,16 @@
       "norm_label": "live_or_root()"
     },
     {
-      "label": "_norm_words()",
+      "label": "load_events()",
       "file_type": "code",
       "source_file": "bin/corp",
-      "source_location": "L1005",
+      "source_location": "L2670",
       "_callable": true,
       "_origin": "ast",
-      "id": "bin_corp_norm_words",
+      "id": "bin_corp_load_events",
       "community": 7,
       "community_name": "Path",
-      "norm_label": "_norm_words()"
-    },
-    {
-      "label": "orch_prompt()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2446",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_orch_prompt",
-      "community": 7,
-      "community_name": "Path",
-      "norm_label": "orch_prompt()"
-    },
-    {
-      "label": "orch_workshop_extra()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L2434",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_orch_workshop_extra",
-      "community": 7,
-      "community_name": "Path",
-      "norm_label": "orch_workshop_extra()"
+      "norm_label": "load_events()"
     },
     {
       "label": "_path_exists()",
@@ -7239,18 +7311,6 @@
       "community": 7,
       "community_name": "Path",
       "norm_label": "_path_mode()"
-    },
-    {
-      "label": "pin_research()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L1091",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_pin_research",
-      "community": 7,
-      "community_name": "Path",
-      "norm_label": "pin_research()"
     },
     {
       "label": "probe_isolation()",
@@ -7337,30 +7397,6 @@
       "norm_label": "_short_sha()"
     },
     {
-      "label": "spec_bullets()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L982",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_spec_bullets",
-      "community": 7,
-      "community_name": "Path",
-      "norm_label": "spec_bullets()"
-    },
-    {
-      "label": "spec_gaps()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L1026",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_spec_gaps",
-      "community": 7,
-      "community_name": "Path",
-      "norm_label": "spec_gaps()"
-    },
-    {
       "label": "transitional_env()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -7371,18 +7407,6 @@
       "community": 7,
       "community_name": "Path",
       "norm_label": "transitional_env()"
-    },
-    {
-      "label": "_tree_git_label()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L365",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_tree_git_label",
-      "community": 7,
-      "community_name": "Path",
-      "norm_label": "_tree_git_label()"
     },
     {
       "label": "two_trees_report()",
@@ -7457,6 +7481,18 @@
       "norm_label": "workshop_db_mode_ok()"
     },
     {
+      "label": "workshop_json_override()",
+      "file_type": "code",
+      "source_file": "bin/corp",
+      "source_location": "L5801",
+      "_callable": true,
+      "_origin": "ast",
+      "id": "bin_corp_workshop_json_override",
+      "community": 7,
+      "community_name": "Path",
+      "norm_label": "workshop_json_override()"
+    },
+    {
       "label": "workshop_service_db()",
       "file_type": "code",
       "source_file": "bin/corp",
@@ -7479,18 +7515,6 @@
       "community": 7,
       "community_name": "Path",
       "norm_label": "workshop_service_home()"
-    },
-    {
-      "label": "workshop_unit_props()",
-      "file_type": "code",
-      "source_file": "bin/corp",
-      "source_location": "L418",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "bin_corp_workshop_unit_props",
-      "community": 7,
-      "community_name": "Path",
-      "norm_label": "workshop_unit_props()"
     },
     {
       "label": "workspace_isolation_ok()",
@@ -7529,50 +7553,15 @@
       "norm_label": "writers_corp_path()"
     },
     {
-      "label": "issue()",
-      "file_type": "code",
-      "source_file": "workshop/test_logic.py",
-      "source_location": "L22",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "workshop_test_logic_issue",
-      "community": 7,
-      "community_name": "Path",
-      "norm_label": "issue()"
-    },
-    {
-      "label": "main()",
-      "file_type": "code",
-      "source_file": "workshop/test_logic.py",
-      "source_location": "L26",
-      "_callable": true,
-      "_origin": "ast",
-      "id": "workshop_test_logic_main",
-      "community": 7,
-      "community_name": "Path",
-      "norm_label": "main()"
-    },
-    {
-      "label": "Namespace",
+      "label": "Exception",
       "file_type": "code",
       "source_file": "",
       "source_location": "",
       "_origin": "ast",
-      "id": "namespace",
+      "id": "exception",
       "community": 0,
       "community_name": "die",
-      "norm_label": "namespace"
-    },
-    {
-      "label": "git registry.json is canonical. Overlay is emergency-only. Overlay may add\u2026",
-      "file_type": "rationale",
-      "source_file": "bin/corp",
-      "source_location": "L210",
-      "_origin": "ast",
-      "id": "bin_corp_rationale_210",
-      "community": 0,
-      "community_name": "die",
-      "norm_label": "git registry.json is canonical. overlay is emergency-only. overlay may add..."
+      "norm_label": "exception"
     },
     {
       "label": "AGENT_ISOLATION.md",
@@ -8312,6 +8301,17 @@
       "norm_label": "2026-08-17"
     },
     {
+      "label": "Assumptions",
+      "file_type": "document",
+      "source_file": "memory/sessions/2026-08-17.md",
+      "source_location": "L577",
+      "_origin": "ast",
+      "id": "memory_sessions_2026_08_17_assumptions",
+      "community": 11,
+      "community_name": "2026-08-17",
+      "norm_label": "assumptions"
+    },
+    {
       "label": "Decisions",
       "file_type": "document",
       "source_file": "memory/sessions/2026-08-17.md",
@@ -8524,6 +8524,17 @@
       "label": "Decisions",
       "file_type": "document",
       "source_file": "memory/sessions/2026-08-17.md",
+      "source_location": "L572",
+      "_origin": "ast",
+      "id": "memory_sessions_2026_08_17_decisions_572",
+      "community": 11,
+      "community_name": "2026-08-17",
+      "norm_label": "decisions"
+    },
+    {
+      "label": "Decisions",
+      "file_type": "document",
+      "source_file": "memory/sessions/2026-08-17.md",
       "source_location": "L78",
       "_origin": "ast",
       "id": "memory_sessions_2026_08_17_decisions_78",
@@ -8541,6 +8552,28 @@
       "community": 11,
       "community_name": "2026-08-17",
       "norm_label": "decisions"
+    },
+    {
+      "label": "Done today (handoff \u2014 do not omit)",
+      "file_type": "document",
+      "source_file": "memory/sessions/2026-08-17.md",
+      "source_location": "L550",
+      "_origin": "ast",
+      "id": "memory_sessions_2026_08_17_done_today_handoff_do_not_omit",
+      "community": 11,
+      "community_name": "2026-08-17",
+      "norm_label": "done today (handoff \u2014 do not omit)"
+    },
+    {
+      "label": "How to continue",
+      "file_type": "document",
+      "source_file": "memory/sessions/2026-08-17.md",
+      "source_location": "L564",
+      "_origin": "ast",
+      "id": "memory_sessions_2026_08_17_how_to_continue",
+      "community": 11,
+      "community_name": "2026-08-17",
+      "norm_label": "how to continue"
     },
     {
       "label": "Leftovers",
@@ -8722,6 +8755,17 @@
       "label": "Links",
       "file_type": "document",
       "source_file": "memory/sessions/2026-08-17.md",
+      "source_location": "L588",
+      "_origin": "ast",
+      "id": "memory_sessions_2026_08_17_links_588",
+      "community": 11,
+      "community_name": "2026-08-17",
+      "norm_label": "links"
+    },
+    {
+      "label": "Links",
+      "file_type": "document",
+      "source_file": "memory/sessions/2026-08-17.md",
       "source_location": "L88",
       "_origin": "ast",
       "id": "memory_sessions_2026_08_17_links_88",
@@ -8780,6 +8824,17 @@
       "source_location": "L447",
       "_origin": "ast",
       "id": "memory_sessions_2026_08_17_open_questions_447",
+      "community": 11,
+      "community_name": "2026-08-17",
+      "norm_label": "open questions"
+    },
+    {
+      "label": "Open questions",
+      "file_type": "document",
+      "source_file": "memory/sessions/2026-08-17.md",
+      "source_location": "L582",
+      "_origin": "ast",
+      "id": "memory_sessions_2026_08_17_open_questions_582",
       "community": 11,
       "community_name": "2026-08-17",
       "norm_label": "open questions"
@@ -9041,6 +9096,17 @@
       "label": "Outcome",
       "file_type": "document",
       "source_file": "memory/sessions/2026-08-17.md",
+      "source_location": "L542",
+      "_origin": "ast",
+      "id": "memory_sessions_2026_08_17_outcome_542",
+      "community": 11,
+      "community_name": "2026-08-17",
+      "norm_label": "outcome"
+    },
+    {
+      "label": "Outcome",
+      "file_type": "document",
+      "source_file": "memory/sessions/2026-08-17.md",
       "source_location": "L72",
       "_origin": "ast",
       "id": "memory_sessions_2026_08_17_outcome_72",
@@ -9261,23 +9327,23 @@
       "label": "Request",
       "file_type": "document",
       "source_file": "memory/sessions/2026-08-17.md",
+      "source_location": "L538",
+      "_origin": "ast",
+      "id": "memory_sessions_2026_08_17_request_538",
+      "community": 11,
+      "community_name": "2026-08-17",
+      "norm_label": "request"
+    },
+    {
+      "label": "Request",
+      "file_type": "document",
+      "source_file": "memory/sessions/2026-08-17.md",
       "source_location": "L68",
       "_origin": "ast",
       "id": "memory_sessions_2026_08_17_request_68",
       "community": 11,
       "community_name": "2026-08-17",
       "norm_label": "request"
-    },
-    {
-      "label": "Exception",
-      "file_type": "code",
-      "source_file": "",
-      "source_location": "",
-      "_origin": "ast",
-      "id": "exception",
-      "community": 12,
-      "community_name": "CorpError",
-      "norm_label": "exception"
     },
     {
       "label": "memory/README.md",
@@ -9572,6 +9638,17 @@
       "norm_label": "usage()"
     },
     {
+      "label": "Namespace",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "_origin": "ast",
+      "id": "namespace",
+      "community": 2,
+      "community_name": "load_workshop",
+      "norm_label": "namespace"
+    },
+    {
       "label": "propose \u2192 approve \u2192 queue \u2192 reap \u2192 rollback. No gh, tmux, or paid agent.",
       "file_type": "rationale",
       "source_file": "bin/corp",
@@ -9613,17 +9690,6 @@
       "norm_label": "provision-agent-identity.sh script"
     },
     {
-      "label": "Event",
-      "file_type": "code",
-      "source_file": "",
-      "source_location": "",
-      "_origin": "ast",
-      "id": "event",
-      "community": 21,
-      "community_name": "handle_tg_callback",
-      "norm_label": "event"
-    },
-    {
       "label": "sortable.min.js",
       "file_type": "code",
       "source_file": "workshop/static/vendor/sortable.min.js",
@@ -9642,7 +9708,7 @@
       "_origin": "ast",
       "id": "completedprocess",
       "community": 23,
-      "community_name": "run_issue",
+      "community_name": "queue_add",
       "norm_label": "completedprocess"
     },
     {
@@ -9688,6 +9754,17 @@
       "community": 26,
       "community_name": "corp",
       "norm_label": "corp"
+    },
+    {
+      "label": "True only when overlay adds a project or changes a pin vs git registry.",
+      "file_type": "rationale",
+      "source_file": "bin/corp",
+      "source_location": "L129",
+      "_origin": "ast",
+      "id": "bin_corp_rationale_129",
+      "community": 26,
+      "community_name": "corp",
+      "norm_label": "true only when overlay adds a project or changes a pin vs git registry."
     },
     {
       "label": "Bootstrap on a new device",
@@ -9787,6 +9864,28 @@
       "community": 3,
       "community_name": "Harness",
       "norm_label": "workshop and runners"
+    },
+    {
+      "label": "Event",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "_origin": "ast",
+      "id": "event",
+      "community": 31,
+      "community_name": "run_issue",
+      "norm_label": "event"
+    },
+    {
+      "label": "Funnel ON only from an explicit signal \u2014 never a Serve HTTPS URL.",
+      "file_type": "rationale",
+      "source_file": "bin/corp",
+      "source_location": "L577",
+      "_origin": "ast",
+      "id": "bin_corp_rationale_577",
+      "community": 34,
+      "community_name": "run",
+      "norm_label": "funnel on only from an explicit signal \u2014 never a serve https url."
     },
     {
       "label": "Compare shipped vs this spec",
@@ -9897,6 +9996,17 @@
       "community": 36,
       "community_name": "Corporation OS \u2014 SPEC",
       "norm_label": "who this is for"
+    },
+    {
+      "label": "git registry.json is canonical. Overlay is emergency-only. Overlay may add\u2026",
+      "file_type": "rationale",
+      "source_file": "bin/corp",
+      "source_location": "L210",
+      "_origin": "ast",
+      "id": "bin_corp_rationale_210",
+      "community": 37,
+      "community_name": "approve_draft",
+      "norm_label": "git registry.json is canonical. overlay is emergency-only. overlay may add..."
     },
     {
       "label": "1. Tailscale",
@@ -10119,26 +10229,15 @@
       "norm_label": "passkey session/challenge policy. stdlib only \u2014 imported by workshop and tests."
     },
     {
-      "label": "True only when overlay adds a project or changes a pin vs git registry.",
-      "file_type": "rationale",
-      "source_file": "bin/corp",
-      "source_location": "L129",
+      "label": "test_logic.py",
+      "file_type": "code",
+      "source_file": "workshop/test_logic.py",
+      "source_location": "L1",
       "_origin": "ast",
-      "id": "bin_corp_rationale_129",
-      "community": 41,
-      "community_name": "overlay_diverges",
-      "norm_label": "true only when overlay adds a project or changes a pin vs git registry."
-    },
-    {
-      "label": "Funnel ON only from an explicit signal \u2014 never a Serve HTTPS URL.",
-      "file_type": "rationale",
-      "source_file": "bin/corp",
-      "source_location": "L577",
-      "_origin": "ast",
-      "id": "bin_corp_rationale_577",
+      "id": "workshop_test_logic",
       "community": 42,
-      "community_name": "tailscale_status",
-      "norm_label": "funnel on only from an explicit signal \u2014 never a serve https url."
+      "community_name": "main",
+      "norm_label": "test_logic.py"
     },
     {
       "label": "corp",
@@ -10546,17 +10645,6 @@
       "community": 7,
       "community_name": "Path",
       "norm_label": "path"
-    },
-    {
-      "label": "test_logic.py",
-      "file_type": "code",
-      "source_file": "workshop/test_logic.py",
-      "source_location": "L1",
-      "_origin": "ast",
-      "id": "workshop_test_logic",
-      "community": 7,
-      "community_name": "Path",
-      "norm_label": "test_logic.py"
     },
     {
       "label": "Fail-closed isolation report. Uses the wrapper only \u2014 never `sudo -n -u $user\u2026",
@@ -35405,11 +35493,99 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "memory/sessions/2026-08-17.md",
+      "source_location": "L538",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "memory_sessions_2026_08_17_2026_08_17",
+      "target": "memory_sessions_2026_08_17_request_538",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "memory/sessions/2026-08-17.md",
       "source_location": "L54",
       "weight": 1.0,
       "_origin": "ast",
       "source": "memory_sessions_2026_08_17_2026_08_17",
       "target": "memory_sessions_2026_08_17_decisions_54",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "memory/sessions/2026-08-17.md",
+      "source_location": "L542",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "memory_sessions_2026_08_17_2026_08_17",
+      "target": "memory_sessions_2026_08_17_outcome_542",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "memory/sessions/2026-08-17.md",
+      "source_location": "L550",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "memory_sessions_2026_08_17_2026_08_17",
+      "target": "memory_sessions_2026_08_17_done_today_handoff_do_not_omit",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "memory/sessions/2026-08-17.md",
+      "source_location": "L564",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "memory_sessions_2026_08_17_2026_08_17",
+      "target": "memory_sessions_2026_08_17_how_to_continue",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "memory/sessions/2026-08-17.md",
+      "source_location": "L572",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "memory_sessions_2026_08_17_2026_08_17",
+      "target": "memory_sessions_2026_08_17_decisions_572",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "memory/sessions/2026-08-17.md",
+      "source_location": "L577",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "memory_sessions_2026_08_17_2026_08_17",
+      "target": "memory_sessions_2026_08_17_assumptions",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "memory/sessions/2026-08-17.md",
+      "source_location": "L582",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "memory_sessions_2026_08_17_2026_08_17",
+      "target": "memory_sessions_2026_08_17_open_questions_582",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "memory/sessions/2026-08-17.md",
+      "source_location": "L588",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "memory_sessions_2026_08_17_2026_08_17",
+      "target": "memory_sessions_2026_08_17_links_588",
       "confidence_score": 1.0
     },
     {
