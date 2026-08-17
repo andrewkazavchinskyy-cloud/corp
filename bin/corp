@@ -63,6 +63,9 @@ ISOLATION_CLIS = ("claude", "codex", "grok", "agent")
 ISOLATION_SECRET_NAMES = ("env", "workshop.json", "workshop.db", "workshop-setup-token")
 WORKSHOP_UNIT = "workshop"
 WORKSHOP_DB = CONFIG_DIR / "workshop.db"
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+TG_STATUS_KINDS = {"start", "to_qa", "closed", "retry"}
+TG_PUNCH_KINDS = {"need_human", "fail", "hung"}
 _REDACT_PATTERNS = (
     re.compile(r"(?i)\b(authorization|cookie)\s*[:=]\s*\S.*"),
     re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-+/=]{8,}"),
@@ -293,9 +296,20 @@ def project_dir(project: dict) -> Path | None:
     return None
 
 
+def strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text or "")
+
+
 def run(cmd: list[str], cwd: Path | None = None, check: bool = True, timeout: float | None = None) -> subprocess.CompletedProcess:
+    env = None
+    if cmd and cmd[0] == "gh":
+        env = os.environ.copy()
+        env["GH_COLOR"] = "never"
+        env["NO_COLOR"] = "1"
+        env.pop("FORCE_COLOR", None)
+        env.pop("CLICOLOR_FORCE", None)
     try:
-        return subprocess.run(cmd, cwd=cwd, check=check, text=True, capture_output=True, timeout=timeout)
+        return subprocess.run(cmd, cwd=cwd, check=check, text=True, capture_output=True, timeout=timeout, env=env)
     except subprocess.TimeoutExpired as exc:
         out = exc.stdout if isinstance(exc.stdout, str) else (exc.stdout or b"").decode()
         err = exc.stderr if isinstance(exc.stderr, str) else (exc.stderr or b"timeout").decode()
@@ -786,7 +800,7 @@ def github_issues_disabled(err: str) -> bool:
 
 def _parse_issue_list(repo: str, raw: str) -> list[dict]:
     try:
-        data = json.loads(raw or "[]")
+        data = json.loads(strip_ansi(raw or "").strip() or "[]")
     except json.JSONDecodeError as exc:
         die(f"github list parse failed {repo}: {exc}")
     if not isinstance(data, list):
@@ -832,7 +846,10 @@ def _issues_via_graphql(repo: str, state: str, limit: int) -> tuple[list[dict] |
         check=False,
     )
     if proc.returncode == 0:
-        return _parse_issue_list(repo, proc.stdout), ""
+        try:
+            return _parse_issue_list(repo, proc.stdout), ""
+        except CorpError as exc:
+            return None, str(exc)
     return None, (proc.stderr or proc.stdout or "").strip()
 
 
@@ -868,6 +885,8 @@ def issues_for(repo: str, state: str = "open", limit: int = 50) -> list[dict]:
         last_err = err
         if github_issues_disabled(err):
             return []
+        if "parse failed" in (err or "").lower():
+            break
         if not github_transient(err):
             die(f"github list failed {repo}: {err}")
         time.sleep(min(0.35 * (attempt + 1), 1.0))
@@ -1561,7 +1580,7 @@ def notify(
     buttons: list | None = None,
     keyboard: list | None = None,
     force_reply: bool = False,
-) -> None:
+) -> dict:
     _, chat = tg_creds()
     if not chat:
         die("telegram not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in ~/.config/corp/env")
@@ -1576,8 +1595,9 @@ def notify(
             "resize_keyboard": True,
             "is_persistent": True,
         })
-    tg_post("sendMessage", payload)
+    result = tg_post("sendMessage", payload)
     print("notified")
+    return result if isinstance(result, dict) else {}
 
 
 def notify_safe(
@@ -1585,16 +1605,27 @@ def notify_safe(
     buttons: list | None = None,
     keyboard: list | None = None,
     force_reply: bool = False,
-) -> None:
+) -> dict:
     try:
-        notify(text, buttons=buttons, keyboard=keyboard, force_reply=force_reply)
+        return notify(text, buttons=buttons, keyboard=keyboard, force_reply=force_reply) or {}
     except (SystemExit, CorpError):
         print("telegram skipped", file=sys.stderr)
+        return {}
 
 
 def need_human(text: str, buttons: list | None = None) -> None:
     first = redact_secrets((text or "").strip().split("\n", 1)[0])
-    tg_notify_event("need_human", "Нужно тебя", tg_clip(first, 60), buttons=buttons)
+    action_ref = ""
+    ref = "Нужно тебя"
+    found = re.search(r"([\w.-]+/[\w.-]+#\d+)", text or "")
+    if found:
+        action_ref = found.group(1)
+        try:
+            repo, number = parse_issue_ref(action_ref)
+            ref = tg_short_ref(repo, number)
+        except CorpError:
+            ref = action_ref
+    tg_notify_event("need_human", ref, tg_clip(first, 60), buttons=buttons, action_ref=action_ref)
 
 
 def config_dir() -> Path:
@@ -1618,6 +1649,7 @@ def default_workshop() -> dict:
         "orch": {},
         "tg_offset": 0,
         "tg_reply": {},
+        "tg_status": {},
         "registry": {},
         "auto_queue_on_approve": True,
         "queue_retries": QUEUE_MAX_ATTEMPTS,
@@ -1642,6 +1674,7 @@ def load_workshop() -> dict:
     data.setdefault("orch", {})
     data.setdefault("tg_offset", 0)
     data.setdefault("tg_reply", {})
+    data.setdefault("tg_status", {})
     data.setdefault("registry", {})
     data.setdefault("auto_queue_on_approve", True)
     data.setdefault("queue_retries", QUEUE_MAX_ATTEMPTS)
@@ -2030,17 +2063,7 @@ def pulse_label(kind: str, model: str = "") -> str:
 
 
 def pulse_loop(repo: str, number: int, kind: str, started: float, stop: threading.Event, model: str = "") -> None:
-    prefix = issue_ref(repo, number)
-    prev = last_log_lines(1, prefix=prefix)
-    _tg_pulse[prefix] = prev
-    while not stop.wait(PULSE_SEC):
-        mins = int((time.time() - started) / 60)
-        log = last_log_lines(1, prefix=prefix)
-        text = tg_pulse_text(repo, number, mins, log, prev)
-        _tg_pulse[prefix] = log
-        prev = log
-        if text:
-            notify_safe(text)
+    return
 
 
 def ensure_seed_labels(repo: str) -> None:
@@ -2722,6 +2745,104 @@ def session_notes(reg: dict, project_name: str, limit: int = 7) -> list[dict]:
     return notes
 
 
+def is_sandbox_card(issue: dict) -> bool:
+    names = label_names(issue)
+    title = (issue.get("title") or "").lower()
+    return "sandbox" in names or "sandbox" in title or "песочница" in title
+
+
+def tg_status_process_key(data: dict | None = None) -> str:
+    data = data or load_workshop()
+    running = [item for item in (data.get("queue") or []) if item.get("status") == "running"]
+    if running:
+        return issue_ref(running[0].get("repo") or "", running[0].get("issue"))
+    return "idle"
+
+
+def tg_save_status(process_key: str, message_id: int) -> None:
+    with workshop_lock():
+        data = load_workshop()
+        data["tg_status"] = {"process_key": process_key, "message_id": int(message_id)}
+        save_workshop(data)
+
+
+def tg_status_body(data: dict | None = None) -> str:
+    data = data or load_workshop()
+    iso = {}
+    try:
+        iso = probe_isolation()
+    except Exception:
+        iso = {"mode": "transitional"}
+    return tg_pulse_card(
+        queue_on=bool(data.get("queue_running")),
+        writer=tg_writer_line(load_registry(), data),
+        council=tg_council_line(data),
+        last_error=tg_last_queue_error(data),
+        drafts=len(data.get("drafts") or []),
+        server_ok=tg_server_ok(),
+        iso_mode=iso.get("mode") or "transitional",
+    )
+
+
+def tg_edit_status(message_id: int, text: str, buttons: list | None = None) -> bool:
+    _, chat = tg_creds()
+    if not chat:
+        return False
+    payload = {
+        "chat_id": chat,
+        "message_id": int(message_id),
+        "text": redact_secrets(text),
+        "disable_web_page_preview": "true",
+    }
+    if buttons:
+        payload["reply_markup"] = json.dumps({"inline_keyboard": buttons})
+    try:
+        result = tg_post("editMessageText", payload)
+    except (SystemExit, CorpError):
+        return False
+    if result.get("ok"):
+        return True
+    return "not modified" in (result.get("description") or "").lower()
+
+
+def tg_upsert_status(process_key: str = "", *, keep_card: bool = False) -> None:
+    data = load_workshop()
+    key = process_key or tg_status_process_key(data)
+    text = tg_status_body(data)
+    buttons = tg_now_buttons(data)
+    state = data.get("tg_status") or {}
+    mid = state.get("message_id")
+    same = str(state.get("process_key") or "") == str(key)
+    if mid and (same or keep_card):
+        if tg_edit_status(int(mid), text, buttons):
+            if not same:
+                tg_save_status(key, int(mid))
+            return
+    result = notify_safe(text, buttons=buttons)
+    new_id = ((result or {}).get("result") or {}).get("message_id")
+    if new_id:
+        tg_save_status(key, int(new_id))
+
+
+def tg_need_human_buttons(ref: str = "", url: str = "") -> list:
+    row = [{"text": "Пауза", "callback_data": "c:pause"}]
+    action = ""
+    open_url = url or ""
+    raw = (ref or "").strip()
+    if raw and "#" in raw:
+        try:
+            repo, number = parse_issue_ref(raw) if "/" in raw else tg_parse_issue_arg(raw)
+            action = issue_ref(repo, number)
+            open_url = open_url or tg_workshop_issue_url(repo, number, action)
+        except CorpError:
+            action = ""
+    if action:
+        row.append({"text": "Повторить", "callback_data": f"q:{action}"})
+    if open_url:
+        row.append({"text": "Открыть карточку", "url": open_url})
+    return [row]
+
+
 def tg_notify_event(
     kind: str,
     ref: str,
@@ -2735,6 +2856,17 @@ def tg_notify_event(
     record_event(kind, ref, happened)
     key = ":".join(part for part in (kind, ref, happened, extra_key) if part)
     if not tg_should_send(key):
+        return
+    process = action_ref or (ref if "#" in str(ref) else "")
+    if kind in TG_STATUS_KINDS:
+        tg_upsert_status(process)
+        return
+    if kind in TG_PUNCH_KINDS:
+        markup = buttons if buttons is not None else (
+            tg_need_human_buttons(action_ref or ref, url) if kind == "need_human" else tg_event_buttons(kind, url=url, ref=action_ref or ref)
+        )
+        notify_safe(tg_card(ref, happened, nxt), buttons=markup or None)
+        tg_upsert_status(process)
         return
     markup = buttons if buttons is not None else tg_event_buttons(kind, url=url, ref=action_ref or ref)
     notify_safe(tg_card(ref, happened, nxt), buttons=markup or None)
@@ -3970,24 +4102,7 @@ def tg_cmd_help(_arg: str = "") -> None:
 
 
 def tg_cmd_now(_arg: str = "") -> None:
-    data = load_workshop()
-    iso = {}
-    try:
-        iso = probe_isolation()
-    except Exception:
-        iso = {"mode": "transitional"}
-    notify_safe(
-        tg_pulse_card(
-            queue_on=bool(data.get("queue_running")),
-            writer=tg_writer_line(load_registry(), data),
-            council=tg_council_line(data),
-            last_error=tg_last_queue_error(data),
-            drafts=len(data.get("drafts") or []),
-            server_ok=tg_server_ok(),
-            iso_mode=iso.get("mode") or "transitional",
-        ),
-        buttons=tg_now_buttons(data),
-    )
+    tg_upsert_status(keep_card=True)
 
 
 def tg_cmd_status(arg: str = "") -> None:
@@ -4367,7 +4482,10 @@ def get_issue(repo: str, number: int) -> dict:
     )
     if proc.returncode != 0:
         die((proc.stderr or proc.stdout or f"missing {repo}#{number}").strip())
-    return json.loads(proc.stdout)
+    try:
+        return json.loads(strip_ansi(proc.stdout or ""))
+    except json.JSONDecodeError as exc:
+        die(f"github view parse failed {repo}#{number}: {exc}")
 
 
 def ensure_label(repo: str, name: str) -> None:
@@ -5344,12 +5462,7 @@ def run_issue(
     tg_notify_event("start", tg_short_ref(repo, number), "старт", kind, url=issue.get("url") or "", action_ref=issue_ref(repo, number))
     cmd = agent_argv(kind, prompt, dest, model=model, effort=effort, fast=fast)
     print(f"running: {cmd[0]} {repo}#{number} {role}", file=sys.stderr)
-    stop = threading.Event()
-    threading.Thread(target=pulse_loop, args=(repo, number, kind, time.time(), stop, model), daemon=True).start()
-    try:
-        code = launch_agent(kind, cmd, dest, project["name"], prefix=issue_ref(repo, number))
-    finally:
-        stop.set()
+    code = launch_agent(kind, cmd, dest, project["name"], prefix=issue_ref(repo, number))
     latest = get_issue(repo, number)
     closed = (latest.get("state") or "").upper() == "CLOSED"
     if code == 124:
@@ -5675,12 +5788,19 @@ def queue_add(
     kind: str = "",
 ) -> dict:
     issue = get_issue(repo, number)
+    names = label_names(issue)
+    if is_sandbox_card(issue):
+        if "P0" in names:
+            die(f"{repo}#{number} sandbox не берёт P0")
+        if "self" in names:
+            die(f"{repo}#{number} claimed as self")
+        if "blocked" in names:
+            die(f"{repo}#{number} blocked")
     reason = issue_eligibility(reg, repo, number, issue)
     if reason and "self" in reason:
         die(reason)
     if (issue.get("state") or "").upper() == "CLOSED":
         die(reason or f"{repo}#{number} закрыта")
-    names = label_names(issue)
     if "blocked" in names:
         die(f"{repo}#{number} blocked")
     if "in-qa" in names and "qa-fail" not in names:

@@ -176,6 +176,16 @@ def main() -> None:
         assert "cursor" in str(exc).lower()
     assert corp.pulse_label("claude", "") == "auto · claude"
     assert corp.pulse_label("claude", "sonnet") == "sonnet"
+    assert corp.strip_ansi("\x1b[1;37m[]\x1b[m") == "[]"
+    assert corp._parse_issue_list("o/r", "\x1b[1;37m[]\x1b[m") == []
+    plain_issues = '[{"number": 1, "title": "x"}]'
+    assert corp._parse_issue_list("o/r", f"\x1b[1;37m{plain_issues}\x1b[m") == corp._parse_issue_list("o/r", plain_issues)
+    assert corp.is_sandbox_card({"title": "песочница первого часа", "labels": []})
+    assert corp.is_sandbox_card(issue(["sandbox"]))
+    assert not corp.is_sandbox_card(issue(["ready"]))
+    human = corp.tg_need_human_buttons("andrewkazavchinskyy-cloud/corp#56", url="https://example/card")
+    assert [btn["text"] for btn in human[0]][:2] == ["Пауза", "Повторить"]
+    assert human[0][2]["text"] == "Открыть карточку"
     assert corp.parse_json_array('noise [{"title":"x"}] tail') == [{"title": "x"}]
     lines = corp.orch_open_lines(
         [
@@ -1237,6 +1247,12 @@ Nodes (33): active_projects(), board_payload() (+31 more)
         corp.add_labels = lambda *a, **k: None
         corp.comment = lambda *a, **k: None
         corp.invalidate_board = lambda: None
+        corp.get_issue = lambda repo, number: {**issue(["ready", "P0", "sandbox"]), "title": "песочница"}
+        try:
+            corp.queue_add(reg2, "andrewkazavchinskyy-cloud/corp", 9, "claude")
+            raise AssertionError("sandbox P0 should die")
+        except corp.CorpError as exc:
+            assert "P0" in str(exc) or "sandbox" in str(exc).lower()
         corp.get_issue = lambda repo, number: issue(["in-progress", "via:claude"])
         try:
             corp.queue_add(reg2, "andrewkazavchinskyy-cloud/corp", 9, "claude")
