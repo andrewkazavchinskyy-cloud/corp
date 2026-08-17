@@ -117,36 +117,48 @@ Remote control + pager. One chat_id allowlist. Russian chrome. English only for
 product names (Claude, GitHub) and issue titles.
 `/abort` and `queue_abort` no-op unless that issue is in the queue. They
 do not kill another pin's runner. Pulse, `last_error`, and need-human
-redact token-like substrings.
+redact token-like substrings. Isolation `transitional` is not an outage.
 
-Keyboard: **Статус · Очередь · Агенты · Сервер · Доска · Черновики · Старт · Пауза**.
-Typed aliases keep old thumbs: Сейчас, Бежит, Автоном, Автоном ▶,
-/status /queue /running /doctor /go /pause. Старт starts the queue.
-Автоном ▶ is not a keyboard key.
+Home is four jobs: **Сейчас · Доска · Цикл · Ещё**. `/start` and the persistent
+keyboard (or Menu Button) open that home. Slash menu is at most six commands:
+`/start` домой, `/сейчас` пульс, `/доска` карточки, `/цикл` команда QA/PM/дизайн,
+`/пауза` стоп очереди, `/помощь` один экран. Old aliases (`/status` `/queue`
+`/running` `/doctor` `/go` `/abort` `/improve` `/help`, Старт, Автоном)
+still work and map into those four jobs. They are hidden from the command menu.
 
-One phone screen. No issue-title walls unless he asked for Доска or Очередь.
-- Статус: queue on/off, who writes, server ok, draft count.
-- Очередь: running + next 3 + paused. Not history.
-- Агенты: tmux/orch per pin, one line.
-- Сервер: load, disk, workshop, queue. Four lines.
-- Доска: Бэклог / Готово / Ход / QA / Закрыто + P0 (max 5).
-- Черновики: count + Approve/Skip on the current draft only.
+- Сейчас: очередь, кто пишет, цикл, последняя ошибка (redacted), одна строка «дальше».
+- Доска: до пяти карточек. Кнопки: открыть / я сам / в очередь / на QA.
+  На колонке QA: QA прошёл / QA не принял (непринятие просит заметку).
+- Цикл: одно подтверждение Да/Нет, затем прогресс, не список команд.
+- Ещё: пауза или продолжить автоном (продолжить — Да/Нет), откатить карточку
+  в очереди, стоп цикла, помощь, открыть мастерскую. Черновики: Принять / Пропустить.
+
+Dangerous actions (цикл, откатить, продолжить автоном, стоп цикла) ask Да / Нет.
+`QA прошёл` closes only when the card is in the QA column. Otherwise the bot
+says so and offers «На QA». Готово = колонка `ready`, not closed.
 
 Immediate cards: start, closed, failed, hung, retry, drafts, need-human.
-Shape: `repo#n · what · next action`. Do not resend the queue.
-Pulse every 15 minutes only if the log changed. One line.
-Inline: Открыть · Очередь+ · Пауза · QA. No duplicate menu under every reply.
-Dedup identical events. Workshop web uses the same formatter.
+Shape: what happened + what to do next. Pulse every 15 minutes only if the log
+changed. Dedup identical events.
 
-`/цикл` and `/improve` (same) start a council: three Grok agents (QA, PM, Design)
-file up to 3 Issues each (`council` + role), then the existing queue takes them
-on Grok. After a council writer succeeds, automated Grok QA reviews the diff vs
-`origin/main`. Pass → ff-merge to `main` and additive deploy of `/opt/corp` +
-writers. Fail → `qa-fail`, no merge. Human QA buttons stay for non-council cards.
-This command is an explicit auto-take exception to «research writes drafts only».
-Автоном button **Команда** hits the same `corp council` / `POST /api/council`.
-Scope is the current pin if it is a real project, else corp. Cap 9. Dedup open
-issues + drafts. `/abort` is still a no-op unless that issue is in the queue.
+Mini App lives at Workshop `/tg` (alias `/mini`): Telegram WebView chrome
+(`telegram-web-app.js`, themeParams, MainButton, safe-area). Not a dump of
+`preview.html`. Menu Button `web_app` is the Tailscale `/tg` URL only if
+Telegram accepts it. If not, Menu Button stays `commands`. Do not enable Funnel.
+If the WebView has a Passkey session, the shell can read the board; otherwise
+it deep-links jobs back to the bot (`?start=now|board|cycle|more`).
+
+`/цикл` and `/improve` (same) start a council after confirm: three Grok agents
+(QA, PM, Design) file up to 3 Issues each (`council` + role), then the existing
+queue takes them on Grok. After a council writer succeeds, automated Grok QA
+reviews the diff vs `origin/main`. Pass → ff-merge to `main` and additive deploy
+of `/opt/corp` + writers. Fail → `qa-fail`, no merge. Human QA buttons stay for
+non-council cards. This command is an explicit auto-take exception to
+«research writes drafts only». Автоном **Команда** hits the same
+`corp council` / `POST /api/council`. Scope is the current pin if it is a real
+project, else corp. Cap 9. Dedup open issues + drafts.
+«Остановить цикл» kills `corp-council-*` tmux after confirm. `/abort` of a
+queued card still does not kill another pin's runner.
 
 ## Autopilot
 

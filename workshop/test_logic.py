@@ -249,36 +249,70 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     fail_open = {"state": "OPEN", "labels": [{"name": "qa-fail"}, {"name": "ready"}]}
     ghost["attempts"] = 1
     assert corp.queue_decision(ghost, now=100, tmux_on=False, issue=fail_open, max_attempts=2) == "retry"
-    assert corp.tg_parse_command("/status") == ("status", "")
+    assert corp.tg_parse_command("/status") == ("now", "")
+    assert corp.tg_parse_command("/сейчас") == ("now", "")
     assert corp.tg_parse_command("/retry #41") == ("retry", "#41")
     assert corp.tg_parse_command("/retry@corpbot 41") == ("retry", "41")
-    assert corp.tg_parse_command("очередь") == ("queue", "")
-    assert corp.tg_parse_command("черновики") == ("drafts", "")
+    assert corp.tg_parse_command("очередь") == ("now", "")
+    assert corp.tg_parse_command("черновики") == ("more", "")
     assert corp.tg_parse_command("retry 41") == ("retry", "41")
     assert corp.tg_parse_command("непонятно") == ("", "")
-    assert corp.tg_parse_command("Сейчас") == ("status", "")
-    assert corp.tg_parse_command("Бежит") == ("running", "")
-    assert corp.tg_parse_command("Агенты") == ("running", "")
+    assert corp.tg_parse_command("Сейчас") == ("now", "")
+    assert corp.tg_parse_command("Бежит") == ("now", "")
+    assert corp.tg_parse_command("Агенты") == ("now", "")
     assert corp.tg_parse_command("Старт") == ("go", "")
     assert corp.tg_parse_command("Автоном ▶") == ("go", "")
-    assert corp.tg_parse_command("/agents") == ("agents", "")
+    assert corp.tg_parse_command("/agents") == ("now", "")
     assert corp.tg_parse_command("/цикл") == ("council", "")
     assert corp.tg_parse_command("/improve") == ("council", "")
     assert corp.tg_parse_command("/цикл@corpbot") == ("council", "")
     assert corp.tg_parse_command("цикл") == ("council", "")
     assert corp.tg_parse_command("improve") == ("council", "")
     assert corp.tg_parse_command("команда") == ("council", "")
-    assert "/цикл" in corp.tg_help_text()
+    assert corp.tg_parse_command("Ещё") == ("more", "")
+    assert corp.tg_parse_command("/доска") == ("board", "")
+    assert corp.tg_parse_command("/пауза") == ("pause", "")
+    assert corp.tg_parse_command("/помощь") == ("help", "")
+    assert corp.tg_parse_command("/abort") == ("abort", "")
+    assert corp.tg_parse_command("/help") == ("help", "")
+    help_text = corp.tg_help_text()
+    assert "Сейчас" in help_text and "Доска" in help_text and "Цикл" in help_text
+    assert "/status /queue" not in help_text
+    menu = corp.tg_command_menu()
+    assert len(menu) <= 6
+    assert [row["command"] for row in menu] == ["start", "сейчас", "доска", "цикл", "пауза", "помощь"]
     keys = [btn["text"] for row in corp.tg_reply_keyboard() for btn in row]
-    assert keys == ["Статус", "Очередь", "Агенты", "Сервер", "Доска", "Черновики", "Старт", "Пауза"]
-    assert "Автоном ▶" not in keys
-    assert corp.tg_menu_buttons() == []
+    assert keys == ["Сейчас", "Доска", "Цикл", "Ещё"]
+    assert "Автоном ▶" not in keys and "Статус" not in keys
+    home = corp.tg_menu_buttons()
+    assert [btn["text"] for row in home for btn in row] == ["Сейчас", "Доска", "Цикл", "Ещё"]
+    assert all("callback_data" in btn for row in home for btn in row)
+    assert corp.tg_needs_confirm("council") and corp.tg_needs_confirm("abort") and corp.tg_needs_confirm("go")
+    assert not corp.tg_needs_confirm("pause")
+    yes_no = corp.tg_confirm_buttons("!y")
+    assert [btn["text"] for btn in yes_no[0]] == ["Да", "Нет"]
+    assert "вызов" not in corp.tg_confirm_text("council").lower()
+    assert corp.tg_iso_line("transitional") == "Изоляция ещё настраивается. Мастерская работает."
+    assert "авария" not in corp.tg_iso_line("transitional").lower()
+    assert corp.tg_menu_button_payload("https://vmi3510874.tailad6484.ts.net/tg")["type"] == "web_app"
+    assert corp.tg_menu_button_payload("https://example.com/tg")["type"] == "commands"
     assert corp.tg_short_ref("andrewkazavchinskyy-cloud/corp", 56) == "corp#56"
     assert corp.tg_card("corp#56", "старт", "claude") == "corp#56 · старт · claude"
     assert "\n" not in corp.tg_card("corp#56", "упал", "Очередь+")
     assert "http" not in corp.tg_card("corp#56", "старт", "claude")
     status = corp.tg_status_text(queue_on=False, writer="тихо", server_ok=True, drafts=2)
-    assert status == "Очередь: пауза\nПишет: тихо\nСервер: ок\nЧерновики: 2"
+    assert status.startswith("Сейчас\n")
+    assert "Очередь: пауза" in status and "Пишет: тихо" in status
+    assert "Черновики: 2" in status
+    assert "Изоляция ещё настраивается" in status
+    assert "Дальше:" in status
+    dirty = corp.tg_pulse_card(
+        queue_on=False,
+        writer="тихо",
+        last_error="token=ghp_abcdefghijklmnopqrstuvwxyz1234",
+        iso_mode="transitional",
+    )
+    assert "ghp_" not in dirty and "[redacted]" in dirty
     queue_text = corp.tg_queue_text(
         [
             {"status": "running", "repo": "andrewkazavchinskyy-cloud/corp", "issue": 56, "title": "Telegram rewrite"},
@@ -313,24 +347,28 @@ Nodes (33): active_projects(), board_payload() (+31 more)
         {"column": "ready", "repo": "o/corp", "number": 6, "title": "wall of text " * 20, "labels": []},
     ]
     board = corp.tg_board_text(board_cards)
-    assert board.startswith("Бэклог 1 · Готово 2 · Ход 1 · QA 1 · Закрыто 1")
-    assert "P0" in board and "corp#2" in board and "corp#4" in board
-    assert "corp#5" not in board and "wall of text" not in board
-    assert board.count("\n") <= 7
+    assert board.startswith("Доска")
+    assert "Готово 2 · Ход 1 · QA 1" in board
+    assert "corp#2" in board and "corp#4" in board
+    assert "corp#5" not in board
+    assert board.count("wall of text") <= 2
+    picked = corp.tg_board_pick(board_cards)
+    assert len(picked) <= 5
+    assert picked[0]["column"] == "qa"
     drafts_text = corp.tg_drafts_text(
         [{"id": "d1", "project": "corp", "title": "First"}, {"id": "d2", "project": "clarity", "title": "Second"}]
     )
     assert drafts_text == "Черновики: 2\ncorp · First"
     assert corp.tg_draft_buttons([{"id": "d1"}, {"id": "d2"}]) == [
-        [{"text": "Approve", "callback_data": "a:d1"}, {"text": "Skip", "callback_data": "s:d1"}]
+        [{"text": "Принять черновик", "callback_data": "a:d1"}, {"text": "Пропустить черновик", "callback_data": "s:d1"}]
     ]
     assert corp.tg_pulse_text("o/corp", 56, 15, "same", "same") is None
     assert corp.tg_pulse_text("o/corp", 56, 15, "new", "") is None
     assert corp.tg_pulse_text("o/corp", 56, 45, "new", "old") == "corp#56 · 45 мин · пишет"
     ev = corp.tg_event_buttons("start", url="https://github.com/o/corp/issues/56", ref="o/corp#56")
-    assert [btn["text"] for btn in ev[0]] == ["Открыть", "Пауза"]
+    assert [btn["text"] for btn in ev[0]] == ["Открыть карточку", "Поставить на паузу"]
     fail_btns = corp.tg_event_buttons("fail", url="https://example", ref="o/corp#56")
-    assert [btn["text"] for btn in fail_btns[0]] == ["Открыть", "Очередь+"]
+    assert [btn["text"] for btn in fail_btns[0]] == ["Открыть карточку", "Повторить карточку"]
     corp.tg_reset_dedup()
     assert corp.tg_should_send("start:corp#56", now=100)
     assert not corp.tg_should_send("start:corp#56", now=110)
@@ -1076,6 +1114,11 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     app_src = (ROOT / "workshop" / "app.py").read_text()
     assert "/api/self/drop" in app_src and "/api/qa/start" in app_src
     assert "/api/council" in app_src
+    assert '@app.get("/tg")' in app_src and '@app.get("/mini")' in app_src
+    tg_html = (ROOT / "workshop" / "static" / "tg.html").read_text()
+    assert "telegram-web-app.js" in tg_html and "themeParams" in tg_html
+    assert "MainButton" in tg_html and "safe-area-inset" in tg_html
+    assert "preview.html" not in tg_html
     assert "Команда" in (ROOT / "workshop" / "static" / "app.js").read_text()
     assert "approve_drafts_checked" in app_src and "console_log_for_issue" in app_src
     closed_only = [{"title": "Ship the billing path for invoices", "state": "CLOSED"}]
@@ -1198,17 +1241,36 @@ Nodes (33): active_projects(), board_payload() (+31 more)
         assert any("?issue=" in (b.get("url") or "") for b in flat)
         assert not any(str(b.get("callback_data") or "").startswith("qa:") for b in flat)
         assert any(str(b.get("callback_data") or "").startswith("qap:") for b in flat)
+        assert any(b.get("text") == "QA прошёл" for b in flat)
         sent = []
+        notes = []
         old_send = corp.send_to_qa
         old_note = corp.notify_safe
+        old_get = corp.get_issue
+        old_close = corp.close_issue
         try:
-            corp.send_to_qa = lambda *a, **k: sent.append(1)
-            corp.notify_safe = lambda *a, **k: None
+            corp.send_to_qa = lambda *a, **k: sent.append("send")
+            corp.close_issue = lambda *a, **k: sent.append("close")
+            corp.notify_safe = lambda *a, **k: notes.append(a[0] if a else "")
             corp.handle_tg_callback("qa:andrewkazavchinskyy-cloud/corp#1")
             assert sent == []
+            corp.get_issue = lambda repo, number: {"state": "OPEN", "labels": [{"name": "ready"}]}
+            corp.handle_tg_callback("qap:andrewkazavchinskyy-cloud/corp#1")
+            assert "close" not in sent and "send" not in sent
+            assert any("не в колонке QA" in str(n) for n in notes)
+            notes.clear()
+            corp.handle_tg_callback("?y")
+            assert any("Запустить цикл" in str(n) for n in notes)
+            assert any(
+                btn.get("text") == "Да"
+                for row in (corp.tg_confirm_buttons("!y") or [])
+                for btn in row
+            )
         finally:
             corp.send_to_qa = old_send
             corp.notify_safe = old_note
+            corp.get_issue = old_get
+            corp.close_issue = old_close
     finally:
         if old_url is None:
             os.environ.pop("CORP_WORKSHOP_URL", None)
@@ -1293,8 +1355,9 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert corp.council_should_auto_qa({"ready", "council", "qa"})
     assert not corp.council_should_auto_qa({"ready", "qa"})
     assert "force" not in corp.council_ff_merge_main.__code__.co_names
+    assert "tmux" in corp.council_abort.__code__.co_names or "killed" in corp.council_abort.__code__.co_varnames
     pulse = corp.tg_council_text({"status": "analyze", "project": "corp", "filed": []})
-    assert "Цикл: QA/PM/Дизайн" in pulse and "анализ" in pulse
+    assert "Цикл" in pulse and "смотрит мастерскую" in pulse and "QA" in pulse
     council_tmp = Path(tempfile.mkdtemp(prefix="corp-council-")) / "workshop.json"
     notes = []
     launched = []
@@ -1346,7 +1409,7 @@ Nodes (33): active_projects(), board_payload() (+31 more)
             assert len(finished["filed"]) == 9
             assert all(role in {item[0] for item in filed} for role in corp.COUNCIL_ROLES)
             assert "queue-on" in notes
-            assert "завели 9" in corp.tg_council_text(corp.council_load())
+            assert "Завели 9" in corp.tg_council_text(corp.council_load())
     finally:
         corp.council_existing_titles = old_titles
     print("ok")

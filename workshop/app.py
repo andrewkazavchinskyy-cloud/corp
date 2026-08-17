@@ -200,7 +200,7 @@ def check_origin(request: Request) -> None:
 async def gate(request: Request, call_next):
     path = request.url.path
     if path.startswith("/api/"):
-        if path.startswith("/api/auth/"):
+        if path.startswith("/api/auth/") or path == "/api/tg/meta":
             if request.method not in {"GET", "HEAD", "OPTIONS"}:
                 try:
                     check_origin(request)
@@ -222,6 +222,31 @@ async def gate(request: Request, call_next):
 @app.get("/")
 def index() -> FileResponse:
     return FileResponse(STATIC / "index.html", headers={"Referrer-Policy": "no-referrer"})
+
+
+def _tg_mini_html() -> FileResponse:
+    return FileResponse(STATIC / "tg.html", headers={"Referrer-Policy": "no-referrer", "Cache-Control": "no-store"})
+
+
+@app.get("/tg")
+def tg_mini() -> FileResponse:
+    return _tg_mini_html()
+
+
+@app.get("/mini")
+def tg_mini_alias() -> FileResponse:
+    return _tg_mini_html()
+
+
+@app.get("/api/tg/meta")
+def api_tg_meta() -> dict:
+    bot = ""
+    try:
+        me = corp.tg_post("getMe", {})
+        bot = ((me.get("result") or {}).get("username") or "") if isinstance(me, dict) else ""
+    except Exception:
+        bot = ""
+    return {"ok": True, "bot": bot, "mini": True}
 
 
 @app.get("/api/auth/status")

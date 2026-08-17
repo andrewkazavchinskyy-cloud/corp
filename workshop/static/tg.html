@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="referrer" content="no-referrer">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Мастерская</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg: #17212b;
+      --text: #f5f5f5;
+      --hint: #8b9aa8;
+      --card: #232e3c;
+      --line: #2b3847;
+      --btn: #2ea6ff;
+      --btn-text: #fff;
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bot: env(safe-area-inset-bottom, 0px);
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; min-height: 100%;
+      background: var(--bg); color: var(--text);
+      font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    body {
+      padding: calc(16px + var(--safe-top)) 16px calc(24px + var(--safe-bot));
+    }
+    h1 { font-size: 22px; font-weight: 650; margin: 0 0 6px; }
+    .hint { color: var(--hint); margin: 0 0 18px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .job {
+      display: block; width: 100%; text-align: left;
+      background: var(--card); color: var(--text);
+      border: 1px solid var(--line); border-radius: 16px;
+      padding: 16px 14px; min-height: 92px;
+    }
+    .job b { display: block; font-size: 17px; margin-bottom: 4px; }
+    .job span { color: var(--hint); font-size: 13px; }
+    .card {
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 16px; padding: 14px 16px; margin-bottom: 14px;
+    }
+    .card p { margin: 0 0 6px; }
+    .card p:last-child { margin: 0; }
+    .note { color: var(--hint); font-size: 13px; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <h1>Мастерская</h1>
+  <p class="hint" id="kicker">Четыре дела. Нажми одно — откроется чат с ботом.</p>
+  <div class="card" id="pulse" hidden></div>
+  <div class="grid">
+    <button class="job" type="button" data-start="now"><b>Сейчас</b><span>очередь и что дальше</span></button>
+    <button class="job" type="button" data-start="board"><b>Доска</b><span>до пяти карточек</span></button>
+    <button class="job" type="button" data-start="cycle"><b>Цикл</b><span>QA, PM, Дизайн</span></button>
+    <button class="job" type="button" data-start="more"><b>Ещё</b><span>пауза и мастерская</span></button>
+  </div>
+  <p class="note" id="auth-note">Действия идут в чат бота. Funnel выключен — только Tailscale.</p>
+  <script>
+    const tg = window.Telegram && window.Telegram.WebApp;
+    const theme = (tg && tg.themeParams) || {};
+    const root = document.documentElement;
+    if (theme.bg_color) root.style.setProperty("--bg", theme.bg_color);
+    if (theme.text_color) root.style.setProperty("--text", theme.text_color);
+    if (theme.hint_color) root.style.setProperty("--hint", theme.hint_color);
+    if (theme.secondary_bg_color) root.style.setProperty("--card", theme.secondary_bg_color);
+    if (theme.button_color) root.style.setProperty("--btn", theme.button_color);
+    if (theme.button_text_color) root.style.setProperty("--btn-text", theme.button_text_color);
+    if (tg) {
+      tg.ready();
+      tg.expand();
+      tg.MainButton.setText("Вернуться в чат");
+      tg.MainButton.show();
+      tg.MainButton.onClick(() => tg.close());
+    }
+    let bot = "";
+    function openJob(start) {
+      const dest = start || "now";
+      if (tg && bot) {
+        tg.openTelegramLink("https://t.me/" + bot + "?start=" + encodeURIComponent(dest));
+        return;
+      }
+      if (tg) { tg.close(); return; }
+      location.href = "/?issue=";
+    }
+    document.querySelectorAll("[data-start]").forEach((btn) => {
+      btn.addEventListener("click", () => openJob(btn.dataset.start));
+    });
+    async function boot() {
+      try {
+        const meta = await fetch("/api/tg/meta", { credentials: "same-origin" }).then((r) => r.json());
+        bot = meta.bot || "";
+      } catch (_) { /* shell */ }
+      try {
+        const status = await fetch("/api/auth/status", { credentials: "same-origin" }).then((r) => r.json());
+        if (!status.ok) return;
+        const board = await fetch("/api/board", { credentials: "same-origin" }).then((r) => r.json());
+        const queue = await fetch("/api/queue", { credentials: "same-origin" }).then((r) => r.json());
+        const cards = (board.cards || []).filter((c) => (c.state || "OPEN").toUpperCase() !== "CLOSED" && c.column !== "done");
+        const running = (queue.queue || []).filter((i) => i.status === "running");
+        const pulse = document.getElementById("pulse");
+        pulse.hidden = false;
+        pulse.innerHTML =
+          "<p><b>Сейчас</b></p>" +
+          "<p>Очередь: " + (queue.queue_running ? "идёт" : "пауза") + "</p>" +
+          "<p>Пишет: " + (running[0] ? ((running[0].repo || "").split("/").pop() + "#" + running[0].issue) : "тихо") + "</p>" +
+          "<p>Открыто: " + cards.length + "</p>";
+        document.getElementById("kicker").textContent = "Сессия есть. Карточки ниже — или нажми дело.";
+      } catch (_) { /* read-only shell */ }
+    }
+    boot();
+  </script>
+</body>
+</html>
