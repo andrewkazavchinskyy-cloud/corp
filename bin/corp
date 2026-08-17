@@ -3388,7 +3388,8 @@ def tg_board_card_buttons(card: dict, shop: str = "") -> list:
             {"text": "QA не принял", "callback_data": f"qaf:{key}"},
         ])
     else:
-        take = {"text": "Снять", "callback_data": f"d:{key}"} if "self" in labels else {"text": "Себе", "callback_data": f"t:{key}"}
+        claimed = card.get("runner") == "self" or "self" in labels
+        take = {"text": "Снять", "callback_data": f"d:{key}"} if claimed else {"text": "Себе", "callback_data": f"t:{key}"}
         rows.append([take, {"text": "Очередь", "callback_data": f"u:{key}"}])
     rows.append([{"text": "К доске", "callback_data": "b:b"}])
     return rows
@@ -4668,15 +4669,24 @@ def handle_tg_reply(pending: dict, text: str) -> None:
         if not note:
             tg_ask_qa_note(repo, number)
             return
-        close_issue(load_registry(), repo, number, fail=True, note=note)
+        board_click(load_registry(), "qa_fail", repo, number, "", note)
         tg_send(tg_screen("QA", [f"{tg_short_ref(repo, number)} вернул в Готово с правками."], "открой доску."))
         return
     handle_tg_text(text)
 
 
+def local_board_card(repo: str, number: int) -> dict | None:
+    data = load_workshop()
+    snap = data.get("board_snap") or {}
+    raw = _find_snap_card(snap.get("cards") or [], repo, number)
+    if raw is None:
+        return None
+    return _paint_card(raw, (data.get("board_ov") or {}).get(board_key(repo, number)) or {})
+
+
 def tg_issue_in_qa(repo: str, number: int) -> bool:
-    issue = get_issue(repo, number)
-    return close_action(issue) == "close"
+    card = local_board_card(repo, number)
+    return bool(card and _card_waiting_qa(card))
 
 
 TG_HANDLERS = {
@@ -4791,22 +4801,22 @@ def handle_tg_callback(code: str) -> None:
         return
     if raw.startswith("t:"):
         repo, number = parse_issue_ref(raw.split(":", 1)[1])
-        take_issue(load_registry(), repo, number)
+        board_click(load_registry(), "take", repo, number)
         tg_send(tg_screen("Доска", [f"{tg_short_ref(repo, number)} взял себе."], "работай или верни карточку."))
         return
     if raw.startswith("d:"):
         repo, number = parse_issue_ref(raw.split(":", 1)[1])
-        drop_self(repo, number)
+        board_click(load_registry(), "drop", repo, number)
         tg_send(tg_screen("Доска", [f"{tg_short_ref(repo, number)} снял с себя."], "открой доску."))
         return
     if raw.startswith("u:"):
         repo, number = parse_issue_ref(raw.split(":", 1)[1])
-        queue_add(load_registry(), repo, number, "")
+        board_click(load_registry(), "queue", repo, number)
         tg_send(tg_screen("Доска", [f"{tg_short_ref(repo, number)} в очереди."], "продолжи автоном, если он на паузе."))
         return
     if raw.startswith("m:"):
         repo, number = parse_issue_ref(raw.split(":", 1)[1])
-        send_to_qa(load_registry(), repo, number, enqueue=False)
+        board_click(load_registry(), "move", repo, number, "qa")
         tg_send(tg_screen("QA", [f"{tg_short_ref(repo, number)} на QA."], "QA прошёл или QA не принял."))
         return
     if raw.startswith("qap:"):
@@ -4817,13 +4827,12 @@ def handle_tg_callback(code: str) -> None:
                 buttons=[[{"text": "На QA", "callback_data": f"m:{issue_ref(repo, number)}"}]],
             )
             return
-        close_issue(load_registry(), repo, number)
+        board_click(load_registry(), "qa_pass", repo, number)
         tg_send(tg_screen("QA", [f"{tg_short_ref(repo, number)} закрыта. QA прошёл."], "открой доску."))
         return
     if raw.startswith("qaf:"):
         repo, number = parse_issue_ref(raw.split(":", 1)[1])
-        issue = get_issue(repo, number)
-        if close_action(issue, fail=True) != "reject":
+        if not tg_issue_in_qa(repo, number):
             tg_send(tg_screen("QA", [f"{tg_short_ref(repo, number)} не в колонке QA."], "сначала поставь её на QA."))
             return
         tg_ask_qa_note(repo, number)
