@@ -5,23 +5,60 @@
 # see docs/AGENT_ISOLATION.md). Ignores the caller's environment entirely
 # and rebuilds a minimal one, so a writing agent's own edit to bin/corp
 # cannot smuggle extra env or a different target binary through argv.
+#
+# Probe (corp#60): `corp-agent-exec --probe` is the only allowed readiness
+# hop. Do not add `true` / `bash` / `test` to sudoers.
 set -euo pipefail
 
 AGENT_HOME="/home/corp-agent"
 WORKSPACE_ROOT="/home/corp/projects"
 ALLOWED_BIN_DIR="$AGENT_HOME/.local/bin"
+CONFIG_DIR="/home/corp/.config/corp"
 
 usage() {
-  echo "usage: corp-agent-exec <dest-dir> <binary> [args...]" >&2
+  echo "usage: corp-agent-exec --probe | <dest-dir> <binary> [args...]" >&2
   exit 1
 }
+
+[ $# -ge 1 ] || usage
+
+if [ "$1" = "--probe" ]; then
+  scratch="$WORKSPACE_ROOT/.corp-isolation-probe-$$"
+  if ! mkdir -p "$scratch" || ! echo ok > "$scratch/f"; then
+    echo "corp-agent-exec: workspace not writable: $WORKSPACE_ROOT" >&2
+    rm -rf "$scratch" 2>/dev/null || true
+    exit 1
+  fi
+  rm -rf "$scratch"
+  if [ -x "$CONFIG_DIR" ] || [ -r "$CONFIG_DIR" ]; then
+    echo "corp-agent-exec: can open $CONFIG_DIR" >&2
+    exit 1
+  fi
+  for secret in env workshop.json workshop.db workshop-setup-token; do
+    path="$CONFIG_DIR/$secret"
+    [ -e "$path" ] || continue
+    if [ -r "$path" ]; then
+      echo "corp-agent-exec: secret readable: $path" >&2
+      exit 1
+    fi
+  done
+  mode="$(stat -c '%a' "$WORKSPACE_ROOT" 2>/dev/null || true)"
+  other="${mode: -1}"
+  if [ -z "$mode" ] || [ "$other" != "0" ]; then
+    echo "corp-agent-exec: workspace is world-accessible: ${mode:-unknown}" >&2
+    exit 1
+  fi
+  exit 0
+fi
 
 [ $# -ge 2 ] || usage
 dest="$1"; shift
 binary="$1"; shift
 
+dest="$(realpath -m -- "$dest")"
+root="$(realpath -m -- "$WORKSPACE_ROOT")"
 case "$dest" in
-  "$WORKSPACE_ROOT"/*) ;;
+  "$root"|"$root"/*) ;;
   *) echo "corp-agent-exec: refusing dest outside $WORKSPACE_ROOT: $dest" >&2; exit 1 ;;
 esac
 [ -d "$dest" ] || { echo "corp-agent-exec: no such dest: $dest" >&2; exit 1; }

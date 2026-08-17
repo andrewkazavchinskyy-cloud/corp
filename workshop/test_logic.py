@@ -450,17 +450,103 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     finally:
         corp.run = old_run
     old_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    old_agent_user = os.environ.get("CORP_AGENT_USER")
+    old_agent_home = os.environ.get("CORP_AGENT_HOME")
+    old_agent_wrap = os.environ.get("CORP_AGENT_WRAPPER")
     os.environ["TELEGRAM_BOT_TOKEN"] = "secret-token"
+    os.environ.pop("CORP_AGENT_USER", None)
     try:
         wrapped = corp.wrap_isolated(["claude", "-p", "x"], Path("/tmp"))
         assert wrapped[0] == "env"
         assert not any("TELEGRAM_BOT_TOKEN" in part for part in wrapped)
         assert any(part.startswith("PATH=") for part in wrapped)
+        assert "true" not in wrapped
+        argv = corp.isolation_wrapper_argv()
+        assert argv[:3] == ["sudo", "-n", "-u"]
+        assert argv[-1] == "--probe"
+        assert "true" not in argv
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            wrapper = root / "corp-agent-exec"
+            wrapper.write_text("#!/bin/sh\n")
+            wrapper.chmod(0o755)
+            home = root / "agent-home"
+            claude = home / ".local" / "bin" / "claude"
+            claude.parent.mkdir(parents=True)
+            claude.write_text("#!/bin/sh\n")
+            claude.chmod(0o755)
+            user_home = root / "corp-home"
+            ws = user_home / "projects"
+            cfg = user_home / ".config" / "corp"
+            cfg.mkdir(parents=True)
+            ws.mkdir()
+            os.chmod(user_home, 0o751)
+            os.chmod(user_home / ".config", 0o700)
+            os.chmod(cfg, 0o700)
+            os.chmod(ws, 0o750)
+            (cfg / "env").write_text("X=1\n")
+            os.chmod(cfg / "env", 0o600)
+            os.environ["CORP_AGENT_WRAPPER"] = str(wrapper)
+            os.environ["CORP_AGENT_HOME"] = str(home)
+            seen = []
+
+            def fake_run(cmd):
+                seen.append(cmd)
+                assert cmd[-1] == "--probe"
+                assert "true" not in cmd
+                return _Proc(0)
+
+            report = corp.probe_isolation(run_cmd=fake_run, dest_workspace=ws, config=cfg)
+            assert report["mode"] == "ready-to-arm"
+            assert report["ready_to_arm"] and not report["isolated"] and not report["armed"]
+            assert report["wrapper_ok"] and report["workspace_ok"] and report["secrets_denied"]
+            assert report["clis"]["claude"]
+            assert "CORP_AGENT_USER unset" in report["blockers"]
+            assert "CLIs not installed under that UID" not in report["blockers"]
+            assert seen and seen[0][-1] == "--probe"
+            doctor = corp.doctor_payload(isolation=report)
+            assert doctor["isolation"]["mode"] == "ready-to-arm"
+            assert not any(row["name"] == "agent identity isolated" and row["ok"] for row in doctor["checks"])
+            os.chmod(ws, 0o775)
+            claude.unlink()
+            dirty = corp.probe_isolation(run_cmd=fake_run, dest_workspace=ws, config=cfg)
+            assert dirty["mode"] == "transitional"
+            assert not dirty["ready_to_arm"]
+            assert "workspace is world-readable" in dirty["blockers"]
+            assert "CLIs not installed under that UID" in dirty["blockers"]
+            dest = ws / "corp"
+            dest.mkdir()
+            os.environ["CORP_AGENT_USER"] = "corp-agent"
+            isolated = corp.wrap_isolated(["claude", "-p", "x"], dest)
+            assert isolated[:4] == ["sudo", "-n", "-u", "corp-agent"]
+            assert isolated[4] == str(wrapper)
+            assert isolated[5] == str(dest.resolve())
+            assert isolated[6] == str(claude)
+            assert isolated[7:] == ["-p", "x"]
+            assert "true" not in isolated
+            os.environ.pop("CORP_AGENT_USER", None)
+            os.environ["CORP_AGENT_WRAPPER"] = str(root / "missing-wrapper")
+            os.environ["CORP_AGENT_USER"] = "corp-agent"
+            fallback = corp.wrap_isolated(["claude", "-p", "x"], dest)
+            assert fallback[0] == "env"
+            os.environ.pop("CORP_AGENT_USER", None)
     finally:
         if old_token is None:
             os.environ.pop("TELEGRAM_BOT_TOKEN", None)
         else:
             os.environ["TELEGRAM_BOT_TOKEN"] = old_token
+        if old_agent_user is None:
+            os.environ.pop("CORP_AGENT_USER", None)
+        else:
+            os.environ["CORP_AGENT_USER"] = old_agent_user
+        if old_agent_home is None:
+            os.environ.pop("CORP_AGENT_HOME", None)
+        else:
+            os.environ["CORP_AGENT_HOME"] = old_agent_home
+        if old_agent_wrap is None:
+            os.environ.pop("CORP_AGENT_WRAPPER", None)
+        else:
+            os.environ["CORP_AGENT_WRAPPER"] = old_agent_wrap
     now = 1_000_000.0
     assert auth.session_valid(now - 10, now)
     assert not auth.session_valid(now - auth.SESSION_TTL_SEC - 1, now)

@@ -13,7 +13,9 @@ set -euo pipefail
 CONTROL_USER="${CORP_CONTROL_USER:-corp}"
 AGENT_USER="${CORP_AGENT_USER:-corp-agent}"
 AGENT_HOME="${CORP_AGENT_HOME:-/home/$AGENT_USER}"
-WORKSPACE="${CORP_WORKSPACE:-/home/$CONTROL_USER/projects}"
+CONTROL_HOME="$(getent passwd "$CONTROL_USER" | cut -d: -f6)"
+CONTROL_HOME="${CONTROL_HOME:-/home/$CONTROL_USER}"
+WORKSPACE="${CORP_WORKSPACE:-$CONTROL_HOME/projects}"
 WRITE_GROUP="${CORP_AGENT_WRITE_GROUP:-corp-write}"
 WRAPPER_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/corp-agent-exec"
 WRAPPER_DST="/usr/local/sbin/corp-agent-exec"
@@ -39,12 +41,24 @@ usermod -a -G "$WRITE_GROUP" "$AGENT_USER"
 
 # Writing agents get write access to project worktrees only, via the shared
 # group -- never ownership of, or membership implying access to,
-# $CONTROL_USER's actual home (~/.config/corp secrets stay mode 0600, owned
-# by $CONTROL_USER, unreadable to a different UID by construction).
-echo "granting $WRITE_GROUP write access to $WORKSPACE"
+# $CONTROL_USER's actual home. Make the home traversable (o+x) so corp-agent
+# can reach $WORKSPACE; do not open ~/.config/corp (keep 0700).
+echo "granting $WRITE_GROUP write access to $WORKSPACE (not world-readable)"
+chmod o+x "$CONTROL_HOME"
+if [ -d "$CONTROL_HOME/.config" ]; then
+  chmod 700 "$CONTROL_HOME/.config"
+fi
+if [ -d "$CONTROL_HOME/.config/corp" ]; then
+  chmod 700 "$CONTROL_HOME/.config/corp"
+  for secret in env workshop.json workshop.db workshop-setup-token run.log; do
+    [ -e "$CONTROL_HOME/.config/corp/$secret" ] || continue
+    chmod 600 "$CONTROL_HOME/.config/corp/$secret"
+  done
+fi
 chgrp -R "$WRITE_GROUP" "$WORKSPACE"
-chmod -R g+rwX "$WORKSPACE"
-find "$WORKSPACE" -type d -exec chmod g+s {} \;
+chmod -R g+rwX,o-rwx "$WORKSPACE"
+find "$WORKSPACE" -type d -exec chmod g+s,o-rwx {} \;
+chmod 2750 "$WORKSPACE"
 
 mkdir -p "$AGENT_HOME/.local/bin" "$AGENT_HOME/.config/corp-agent"
 touch "$AGENT_HOME/.config/corp-agent/env"
@@ -74,15 +88,19 @@ echo "installed sudoers rule: $SUDOERS_DST"
 
 cat >&2 <<EOF
 
-Provisioning done. Next:
+Provisioning done. Isolated mode is NOT armed. Do not set CORP_AGENT_USER
+until corp doctor reports mode ready-to-arm (wrapper --probe pass, workspace
+traversable and not world-readable, claude/agent installed under $AGENT_USER).
+Next:
 1. Log in as $AGENT_USER and install/authenticate the agent CLIs you need
    (see above). Only their own \$HOME/.local/bin binaries are runnable
-   through the wrapper.
-2. On the control-plane user ($CONTROL_USER), export in
-   ~/.config/corp/env or the shell that runs the workshop service:
+   through the wrapper. This is the remaining blocker on a fresh UID.
+2. Run: bash deploy/agent-isolation-smoke.sh
+   (uses the wrapper only — never sudo -n -u $AGENT_USER true).
+3. corp doctor should show mode transitional or ready-to-arm, never a false
+   isolated ok while CORP_AGENT_USER is unset.
+4. Only then, on $CONTROL_USER, add to ~/.config/corp/env:
      CORP_AGENT_USER=$AGENT_USER
-   (CORP_AGENT_HOME / CORP_AGENT_WRAPPER only needed if you overrode the
-   defaults above.)
-3. Run: bash deploy/agent-isolation-smoke.sh
-4. corp doctor should show "agent identity (corp#41): ok".
+   Restart the workshop service. CORP_AGENT_HOME / CORP_AGENT_WRAPPER only
+   if you overrode the defaults above.
 EOF
