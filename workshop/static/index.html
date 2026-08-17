@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Schibsted+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=34">
+  <link rel="stylesheet" href="/static/app.css?v=35">
 </head>
 <body>
   <div id="gate" class="gate">
@@ -44,6 +44,7 @@
         <button data-tab="project" type="button">Проект</button>
         <button data-tab="graphs" type="button">Графы</button>
         <button data-tab="map" type="button">Карта</button>
+        <button data-tab="journal" type="button">Журнал</button>
         <button data-tab="console" type="button">Консоль</button>
         <button data-tab="settings" type="button">Настройки</button>
       </nav>
@@ -60,6 +61,10 @@
           <button type="button" id="strip" class="live" disabled aria-live="polite"><i class="pulse"></i><b>загрузка…</b></button>
         </div>
         <div class="filters" id="project-filters"></div>
+        <label class="q-wrap">
+          <span class="sr-only">Поиск</span>
+          <input id="q" type="search" placeholder="Поиск · title / repo#n" autocomplete="off" spellcheck="false">
+        </label>
       </header>
 
       <div class="body">
@@ -85,6 +90,10 @@
 
         <section id="tab-map" class="tab">
           <div id="map" class="map"></div>
+        </section>
+
+        <section id="tab-journal" class="tab">
+          <div id="journal" class="journal"></div>
         </section>
 
         <section id="tab-console" class="tab">
@@ -161,6 +170,7 @@
       <div id="more-menu" class="more-menu hidden" role="menu" aria-label="Ещё">
         <button type="button" data-tab="graphs" role="menuitem">Графы</button>
         <button type="button" data-tab="map" role="menuitem">Карта</button>
+        <button type="button" data-tab="journal" role="menuitem">Журнал</button>
         <button type="button" data-tab="console" role="menuitem">Консоль</button>
         <button type="button" data-tab="settings" role="menuitem">Настройки</button>
       </div>
@@ -173,7 +183,7 @@
     </section>
   </div>
 
-  <script src="/static/app.js?v=34"></script>
-  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js" defer></script>
+  <script src="/static/vendor/sortable.min.js?v=35"></script>
+  <script src="/static/app.js?v=35"></script>
 </body>
 </html>

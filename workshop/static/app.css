@@ -113,6 +113,31 @@ input, select { width: 100%; }
 }
 .top p { margin: 2px 0 0; color: var(--dim); font-size: 13px; }
 .top .filters { padding-bottom: 0; }
+.q-wrap { display: block; }
+.q-wrap input {
+  width: 100%; max-width: 420px;
+}
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); border: 0;
+}
+.board-drag-note { margin: 0 0 10px; }
+.board.can-drag .lane { cursor: grab; }
+.draft.pick { cursor: default; }
+.draft-batch { margin: 8px 0 12px; }
+.journal { display: grid; gap: 16px; }
+.journal article { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; }
+.journal pre {
+  max-height: 240px; min-height: 0; margin-top: 8px;
+  background: #09090b; border: 1px solid var(--line); border-radius: 10px;
+}
+.event-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.event-list li {
+  display: grid; gap: 2px; background: var(--lift); border: 1px solid var(--line);
+  border-radius: 10px; padding: 8px 12px;
+}
+.event-list b { font-size: 13px; font-weight: 600; }
+.stuck-qa { margin-top: 12px; }
 .live {
   display: flex; align-items: center; gap: 8px; max-width: 100%;
   background: var(--lift); border: 1px solid var(--line); border-radius: 999px;
@@ -382,7 +407,6 @@ pre {
     box-shadow: -16px 8px 48px rgba(0, 0, 0, 0.45);
   }
   .more-menu, #more-scrim { display: none !important; }
-  .lane { cursor: grab; }
 }
 
 .rooms { padding-bottom: 14px; }

@@ -40,12 +40,17 @@ Lost phone or a new device without a session: `corp workshop-token` on the
 VPS, then register a new Passkey on the gate. Existing keys stay.
 Sheet: close, ready, backlog, and drop `self` on phone and desktop.
 Drag to in-progress is not a move — take or run from the sheet.
+Desktop drag uses vendored Sortable in `workshop/static/vendor`. Phone stays
+sheet-only. Journal (Ещё): last 7 `memory/sessions/*.md` for the current pin,
+plus the in-app event list from `~/.config/corp/workshop-events.jsonl`.
 
 ## Filter
 
 Header: All / each pin. One choice for Board, Autopilot, Project, Console.
 Cookie remembers last choice. First visit = All. Settings and login ignore it.
 Orchestrator with All: pick one project first.
+Typeahead search filters cards, drafts, and pin chips (title, `repo#n`, project).
+Deep-link `?issue=org/repo#n` opens that card on the board.
 
 ## Model catalog
 
@@ -78,7 +83,8 @@ follow-ups for spec work that is not shipped and not already a card.
 On **corp** (the workshop): also draft functional expansion and maximum
 UI/UX of the live app. `workshop/preview.html` is a reference, not a dump.
 No spec → one draft «написать SPEC». No new product. GitHub only after
-Approve. Batch Approve only in the workshop. Drafts: 7 days.
+Approve. Batch Approve (selected / all visible) only in the workshop; Skip
+stays per card. Drafts: 7 days.
 While it runs, the Project tab shows research status and the live log.
 Drafts include body, why, vs PRD, and vs open issues for Approve/Skip.
 
@@ -121,10 +127,13 @@ Dedup identical events. Workshop web uses the same formatter.
 Three steps on the Автоном tab: propose a draft (not GitHub), Approve, then
 queue + start. Per-card profile when enqueueing many. Failed/hung cards show
 the error, Restart, Rollback (kill tmux, labels back to ready), Console.
-`wait_tmux` ending is not success unless QA closed the Issue. Reap recovers
-`running` without tmux and `done` that left the card open. Agent crashes
-requeue themselves with the error on the card and in Telegram. After the
-retry cap, a 10-minute pause, then another try. Need-human only for
+Pause shows **Продолжить** (resume the queue, not a new enqueue).
+`waiting` with an error has Restart. Stuck `in-qa` cards appear on Автоном.
+`wait_tmux` ending is not success unless QA closed the Issue. A live tmux
+past the hung timeout is killed, the queue stops, and the human is paged.
+Reap recovers `running` without tmux and `done` that left the card open.
+Agent crashes requeue themselves with the error on the card and in Telegram.
+After the retry cap the queue stops and pages the human. Need-human also for
 GitHub/auth/self/CLI.
 
 Local E2E (no paid agent, no live P0): `corp queue e2e` writes a throwaway

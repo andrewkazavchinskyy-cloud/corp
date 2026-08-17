@@ -282,6 +282,7 @@ async def register_verify(request: Request) -> JSONResponse:
         TOKEN_PATH.unlink()
     if kind == "reg-recover":
         revoke_sessions()
+        corp.record_event("recover", "", "восстановил ключ")
     resp = JSONResponse({"ok": True})
     set_session(resp)
     return resp
@@ -347,6 +348,7 @@ async def login_verify(request: Request) -> JSONResponse:
         conn.commit()
     resp = JSONResponse({"ok": True})
     set_session(resp)
+    corp.record_event("login", "", "вход")
     return resp
 
 
@@ -536,7 +538,14 @@ async def api_draft(request: Request) -> dict:
             body.get("label") or "ready",
         )
     if action == "approve":
-        return call(corp.approve_draft, draft_id)
+        ids = [item for item in (body.get("ids") or []) if item]
+        if draft_id:
+            ids = [draft_id, *[item for item in ids if item != draft_id]]
+        if not ids:
+            raise HTTPException(400, "id required")
+        if len(ids) == 1:
+            return call(corp.approve_draft, ids[0])
+        return call(corp.approve_drafts, ids)
     if action == "skip":
         return call(corp.skip_draft, draft_id)
     raise HTTPException(400, "action must be propose|approve|skip")
@@ -679,6 +688,17 @@ def api_queue() -> dict:
     return corp.queue_status()
 
 
+@app.get("/api/memory")
+def api_memory(name: str = "") -> dict:
+    pin = name or ""
+    return {"notes": call(corp.session_notes, corp.load_registry(), pin, 7), "project": pin}
+
+
+@app.get("/api/events")
+def api_events(limit: int = 40) -> dict:
+    return {"events": corp.load_events(max(1, min(80, int(limit or 40))))}
+
+
 @app.get("/api/console")
 def api_console(project: str = "", issue: str = "") -> dict:
     log = ""
@@ -734,10 +754,19 @@ def _notify_queue_event(event: dict) -> None:
     number = item.get("issue")
     ref = corp.tg_short_ref(repo, number)
     key = corp.issue_ref(repo, number) if repo and number not in (None, "") else ref
-    if event.get("kind") == "closed":
+    kind = event.get("kind") or ""
+    if kind == "closed":
         corp.tg_notify_event("closed", ref, "закрыл", action_ref=key)
-    else:
-        corp.tg_notify_event("hung", ref, "завис", "перезапуск", action_ref=key)
+        return
+    if kind == "stop":
+        corp.need_human(f"{ref} · стоп после повторов")
+        corp.tg_notify_event("fail", ref, "стоп после повторов", action_ref=key)
+        return
+    if kind == "hung":
+        corp.need_human(f"{ref} · завис (таймаут)")
+        corp.tg_notify_event("hung", ref, "завис", "стоп", action_ref=key)
+        return
+    corp.tg_notify_event("hung", ref, "завис", "перезапуск", action_ref=key)
 
 
 def queue_tick() -> None:
@@ -820,6 +849,7 @@ def _queue_job(item: dict, profile: dict) -> None:
     fast = profile.get("fast")
     if item.get("fast") is not None:
         fast = bool(item.get("fast"))
+    hung = False
     try:
         result = corp.run_issue(
             corp.load_registry(),
@@ -832,6 +862,7 @@ def _queue_job(item: dict, profile: dict) -> None:
         )
         status = "done" if result.get("ok") else "failed"
         error = "" if result.get("ok") else (result.get("error") or ("не закрыл ишью" if result.get("incomplete") else "упал"))
+        hung = bool(result.get("hung"))
     except Exception as exc:
         status = "failed"
         error = str(exc)
@@ -847,35 +878,34 @@ def _queue_job(item: dict, profile: dict) -> None:
                 if row["repo"] == repo and row["issue"] == number and row.get("status") == "running":
                     attempts = int(row.get("attempts") or 1)
                     row["last_error"] = error
-                    if status == "done":
-                        row["status"] = "done"
-                    elif data.get("queue_running"):
-                        row["status"] = "waiting"
-                        if attempts < retries:
-                            corp.tg_notify_event(
-                                "fail",
-                                corp.tg_short_ref(repo, number),
-                                corp.tg_clip(error, 40),
-                                "сам перезапускаю",
-                                action_ref=corp.issue_ref(repo, number),
-                            )
-                        else:
-                            row["attempts"] = 0
-                            row["retry_after"] = time.time() + corp.RETRY_COOLDOWN_SEC
-                            corp.tg_notify_event(
-                                "fail",
-                                corp.tg_short_ref(repo, number),
-                                corp.tg_clip(error, 40),
-                                "пауза 10 мин",
-                                action_ref=corp.issue_ref(repo, number),
-                            )
-                    else:
-                        row["status"] = "failed"
+                    outcome = corp.queue_job_outcome(
+                        status == "done",
+                        attempts,
+                        retries,
+                        bool(data.get("queue_running")),
+                        hung=hung,
+                    )
+                    row["status"] = outcome["status"]
+                    if outcome["stop"]:
+                        data["queue_running"] = False
+                    if outcome["page"]:
+                        corp.need_human(
+                            f"{corp.tg_short_ref(repo, number)} · "
+                            + ("завис (таймаут)" if outcome["event"] == "hung" else "стоп после повторов")
+                        )
+                    nxt = {
+                        "closed": "",
+                        "retry": "сам перезапускаю",
+                        "hung": "стоп",
+                        "stop": "стоп после повторов",
+                        "fail": "очередь на паузе",
+                    }.get(outcome["event"], "")
+                    if outcome["event"] != "closed":
                         corp.tg_notify_event(
-                            "fail",
+                            "hung" if outcome["event"] == "hung" else "fail",
                             corp.tg_short_ref(repo, number),
                             corp.tg_clip(error or "упал", 40),
-                            "очередь на паузе",
+                            nxt,
                             action_ref=corp.issue_ref(repo, number),
                         )
             corp.save_workshop(data)

@@ -38,12 +38,15 @@ TG_QUEUE_NEXT = 3
 TG_P0_MAX = 5
 QUEUE_STALE_SEC = 90
 QUEUE_MAX_ATTEMPTS = 4
+QUEUE_HUNG_SEC = 45 * 60
 QA_ROUNDS = 3
 RETRY_COOLDOWN_SEC = 600
 CONFIG_DIR = Path.home() / ".config" / "corp"
 WORKSHOP_JSON = Path(os.environ["CORP_WORKSHOP_JSON"]) if os.environ.get("CORP_WORKSHOP_JSON") else CONFIG_DIR / "workshop.json"
 TOKEN_PATH = CONFIG_DIR / "workshop-setup-token"
 RUN_LOG = CONFIG_DIR / "run.log"
+EVENTS_PATH = CONFIG_DIR / "workshop-events.jsonl"
+EVENTS_KEEP = 80
 CONTROL_PLANE_SECRET_KEYS = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
 AGENT_WRAPPER_DEFAULT = "/usr/local/sbin/corp-agent-exec"
 DEFAULT_PROFILES = [
@@ -1452,6 +1455,19 @@ def approve_draft(draft_id: str) -> dict:
     return {"ok": True, "url": url, "draft": draft, "queued": queued, "issue": number}
 
 
+def approve_drafts(ids: list[str]) -> dict:
+    approved = []
+    errors = []
+    for did in ids:
+        if not did:
+            continue
+        try:
+            approved.append(approve_draft(did))
+        except CorpError as exc:
+            errors.append({"id": did, "error": str(exc)})
+    return {"ok": not errors, "approved": approved, "errors": errors}
+
+
 def skip_draft(draft_id: str) -> dict:
     draft = draft_by_id(draft_id)
     drop_draft(draft_id)
@@ -1691,6 +1707,84 @@ def tg_should_send(key: str, now: float | None = None, ttl: int = TG_DEDUP_TTL) 
     return True
 
 
+def record_event(kind: str, ref: str = "", text: str = "", path: Path | None = None, now: float | None = None) -> None:
+    kind = (kind or "").strip()[:40]
+    if not kind:
+        return
+    blob = f"{ref} {text}".lower()
+    if any(word in blob for word in ("token", "cookie", "secret", "passkey", "authorization")):
+        text = "[redacted]"
+        ref = (ref or "")[:80]
+    row = {
+        "t": time.time() if now is None else now,
+        "kind": kind,
+        "ref": str(ref or "")[:80],
+        "text": str(text or "")[:200],
+    }
+    dest = path or EVENTS_PATH
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        lines = dest.read_text().splitlines() if dest.is_file() else []
+        lines.append(json.dumps(row, ensure_ascii=False))
+        dest.write_text("\n".join(lines[-EVENTS_KEEP:]) + "\n")
+        os.chmod(dest, 0o600)
+    except OSError:
+        pass
+
+
+def load_events(limit: int = 40, path: Path | None = None) -> list[dict]:
+    dest = path or EVENTS_PATH
+    if not dest.is_file():
+        return []
+    out = []
+    for line in dest.read_text().splitlines()[-max(1, int(limit)):]:
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict) and row.get("kind"):
+            out.append(row)
+    out.reverse()
+    return out
+
+
+def text_matches(query: str, *parts: object) -> bool:
+    q = (query or "").strip().lower()
+    if not q:
+        return True
+    hay = " ".join(str(part or "") for part in parts).lower()
+    return q in hay
+
+
+def session_notes(reg: dict, project_name: str, limit: int = 7) -> list[dict]:
+    name = (project_name or "").strip()
+    if not name or name == "all":
+        return []
+    try:
+        project = project_by_name(reg, name)
+    except CorpError:
+        return []
+    dest = project_dir(project)
+    if dest is None and name == "corp":
+        dest = ROOT
+    if dest is None:
+        return []
+    folder = dest / "memory" / "sessions"
+    if not folder.is_dir():
+        return []
+    files = sorted(folder.glob("*.md"), key=lambda path: path.stat().st_mtime, reverse=True)[: max(0, int(limit))]
+    notes = []
+    for path in files:
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        if len(text) > 8000:
+            text = text[:8000] + "\n…"
+        notes.append({"name": path.name, "text": text, "mtime": path.stat().st_mtime})
+    return notes
+
+
 def tg_notify_event(
     kind: str,
     ref: str,
@@ -1701,6 +1795,7 @@ def tg_notify_event(
     action_ref: str = "",
     extra_key: str = "",
 ) -> None:
+    record_event(kind, ref, happened)
     key = ":".join(part for part in (kind, ref, happened, extra_key) if part)
     if not tg_should_send(key):
         return
@@ -2522,6 +2617,7 @@ def take_issue(reg: dict, repo: str, number: int) -> dict:
     if "in-progress" not in label_names(latest) or "self" not in label_names(latest):
         die(f"{repo}#{number} claim did not stick on GitHub")
     invalidate_board()
+    record_event("take", tg_short_ref(repo, number), "взял")
     return {"ok": True, "repo": repo, "issue": number, "runner": "self"}
 
 
@@ -2583,6 +2679,7 @@ def close_issue(
     if action == "not-qa":
         die(f"{repo}#{number} не на QA")
     if action == "reject":
+        record_event("qa_fail", tg_short_ref(repo, number), "QA не принял")
         return reject_qa(reg, repo, number, note)
     if action == "send-to-qa":
         return send_to_qa(reg, repo, number, enqueue=False)
@@ -2594,6 +2691,7 @@ def close_issue(
     graph = refresh_graph(dest, repo, number) if dest else "no checkout"
     invalidate_board()
     maybe_orchestrate(reg, project["name"])
+    record_event("qa_pass", tg_short_ref(repo, number), "QA прошёл")
     return {"ok": True, "repo": repo, "issue": number, "graph": graph, "closed": True}
 
 
@@ -2862,10 +2960,15 @@ def can_promote_to_qa(code: int, issue: dict) -> bool:
     return (issue.get("state") or "OPEN").upper() != "CLOSED"
 
 
-def wait_tmux(project: str, prefix: str = "") -> int:
+def wait_tmux(project: str, prefix: str = "", hung_sec: int | None = None) -> int:
     session = tmux_session(project)
     pane = ""
+    started = time.time()
+    limit = QUEUE_HUNG_SEC if hung_sec is None else hung_sec
     while run(["tmux", "has-session", "-t", session], check=False).returncode == 0:
+        if limit >= 0 and time.time() - started >= limit:
+            tmux_kill(project)
+            return 124
         pane = capture_pane(session)
         time.sleep(3)
     log_text = RUN_LOG.read_text() if RUN_LOG.is_file() else ""
@@ -2971,6 +3074,21 @@ def run_issue(
         stop.set()
     latest = get_issue(repo, number)
     closed = (latest.get("state") or "").upper() == "CLOSED"
+    if code == 124:
+        release_runner(repo, number)
+        reason = "завис (таймаут)"
+        tg_notify_event("hung", tg_short_ref(repo, number), reason, "стоп", url=latest.get("url") or "", action_ref=issue_ref(repo, number))
+        return {
+            "ok": False,
+            "code": code,
+            "repo": repo,
+            "issue": number,
+            "kind": kind,
+            "graph": "",
+            "closed": False,
+            "hung": True,
+            "error": reason,
+        }
     if role in {"build", "design"}:
         if closed:
             run(["gh", "issue", "reopen", str(number), "-R", repo], check=False)
@@ -3144,6 +3262,7 @@ def queue_decision(
     issue: dict | None,
     max_attempts: int = QUEUE_MAX_ATTEMPTS,
     stale_sec: int = QUEUE_STALE_SEC,
+    hung_sec: int = QUEUE_HUNG_SEC,
 ) -> str:
     status = item.get("status") or ""
     attempts = int(item.get("attempts") or 0)
@@ -3158,6 +3277,8 @@ def queue_decision(
     if status != "running":
         return "keep"
     if tmux_on:
+        if started and hung_sec >= 0 and now - started >= hung_sec:
+            return "hung"
         return "keep"
     if issue and not open_issue:
         return "closed"
@@ -3166,18 +3287,33 @@ def queue_decision(
     return "retry" if attempts < max_attempts else "fail"
 
 
+def queue_job_outcome(ok: bool, attempts: int, retries: int, queue_running: bool, hung: bool = False) -> dict:
+    if ok:
+        return {"status": "done", "stop": False, "page": False, "event": "closed"}
+    if hung:
+        return {"status": "failed", "stop": True, "page": True, "event": "hung"}
+    if not queue_running:
+        return {"status": "failed", "stop": False, "page": False, "event": "fail"}
+    if attempts < retries:
+        return {"status": "waiting", "stop": False, "page": False, "event": "retry"}
+    return {"status": "failed", "stop": True, "page": True, "event": "stop"}
+
+
 def reap_queue(
     data: dict,
     now: float | None = None,
     tmux=None,
     fetch_issue=None,
     release=None,
+    kill=None,
 ) -> list[dict]:
     now = time.time() if now is None else now
     tmux = tmux or tmux_alive
     fetch_issue = fetch_issue or (lambda repo, number: get_issue(repo, number))
     release = release or release_runner
+    kill = kill or tmux_kill
     max_attempts = int(data.get("queue_retries") or QUEUE_MAX_ATTEMPTS)
+    hung_sec = int(data.get("queue_hung_sec") or QUEUE_HUNG_SEC)
     events = []
     for item in data.get("queue") or []:
         status = item.get("status") or ""
@@ -3193,6 +3329,7 @@ def reap_queue(
             tmux_on=bool(tmux(item.get("project") or "")),
             issue=issue,
             max_attempts=max_attempts,
+            hung_sec=hung_sec,
         )
         if action == "keep":
             continue
@@ -3201,15 +3338,31 @@ def reap_queue(
             item["last_error"] = ""
             events.append({"kind": "closed", "item": item})
             continue
+        if action == "hung":
+            try:
+                kill(item.get("project") or "")
+            except Exception:
+                pass
+            try:
+                release(item["repo"], item["issue"])
+            except Exception:
+                pass
+            item["status"] = "failed"
+            item["last_error"] = "завис (таймаут)"
+            data["queue_running"] = False
+            events.append({"kind": "hung", "item": item, "stop": True})
+            continue
         try:
             release(item["repo"], item["issue"])
         except Exception:
             pass
         item["last_error"] = "раннер умер, ишью не закрыта" if status == "done" else "завис без сессии"
-        item["status"] = "waiting"
         if action == "fail":
-            item["attempts"] = 0
-            item["retry_after"] = now + RETRY_COOLDOWN_SEC
+            item["status"] = "failed"
+            data["queue_running"] = False
+            events.append({"kind": "stop", "item": item, "stop": True})
+            continue
+        item["status"] = "waiting"
         events.append({"kind": "retry", "item": item})
     return events
 
@@ -3288,6 +3441,7 @@ def queue_add(
         else:
             data["queue"].append(row)
         save_workshop(data)
+    record_event("enqueue", tg_short_ref(repo, number), "в очереди")
     return {"ok": True, "queue": data["queue"]}
 
 
@@ -3332,6 +3486,7 @@ def queue_abort(repo: str, number: int, kill=None, release=None, notify=None) ->
         data["queue"] = [item for item in data["queue"] if item is not found]
         save_workshop(data)
     release(repo, number)
+    record_event("abort", tg_short_ref(repo, number), "откатил")
     notify(tg_card(tg_short_ref(repo, number), "откатил"))
     return {"ok": True, "queue": data["queue"], "aborted": True}
 
