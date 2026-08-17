@@ -2497,10 +2497,31 @@ def orch_workshop_extra(project: str) -> str:
     )
 
 
-def orch_prompt(dest: Path, out: Path, spec_rels: list[str], open_lines: str, project: str = "") -> str:
+def orch_gap_payload(unshipped: list[str], open_lines: str) -> list[dict]:
+    rows = []
+    for bullet in unshipped or []:
+        title = re.sub(r"\s+", " ", bullet or "").strip()[:72]
+        if not title:
+            continue
+        rows.append(
+            {
+                "title": title,
+                "body": f"Сделать пункт спеки: {bullet}",
+                "why": "Пункт спеки не закрыт кодом и не покрыт открытой карточкой.",
+                "vs_prd": bullet,
+                "vs_open": "нет открытой карточки на этот пункт" if open_lines in {"", "(none)"} else f"не покрыто открытыми: {open_lines[:200]}",
+                "label": "ready",
+                "kind": "build",
+            }
+        )
+    return rows[:12]
+
+
+def orch_prompt(dest: Path, out: Path, spec_rels: list[str], open_lines: str, project: str = "", gaps: list[str] | None = None) -> str:
     spec = ", ".join(spec_rels) or "NONE"
     prd = next((rel for rel in spec_rels if rel.endswith("PRD.md") or rel.endswith("SPEC.md")), "")
     source = prd or spec
+    gap_lines = "\n".join(f"- {item}" for item in (gaps or [])[:12]) or "(none)"
     return (
         f"Read-only review of {dest}. Follow {ROOT}/docs/WORKSHOP.md. "
         f"You are the project orchestrator. Compare three things:\n"
@@ -2508,7 +2529,9 @@ def orch_prompt(dest: Path, out: Path, spec_rels: list[str], open_lines: str, pr
         f"Also read: {spec}.\n"
         f"2) What is already shipped: code, README, graphify-out/GRAPH_REPORT.md, closed work.\n"
         f"3) Open GitHub issues already on the board (do not duplicate these):\n{open_lines}\n"
-        f"Propose NEW workshop drafts only for PRD/SPEC work that is not shipped and not already an open issue. "
+        f"4) Spec gaps already computed from the repo. Each must become a draft unless you prove it is shipped in code:\n{gap_lines}\n"
+        f"Propose NEW workshop drafts for those gaps and any other PRD/SPEC work that is not shipped and not already an open issue. "
+        f"An empty JSON array is only allowed when the gap list is (none). "
         f"Do not file GitHub ready Issues. Do not auto-Approve. "
         f"Each draft is a concrete follow-up against that spec. "
         f"{orch_workshop_extra(project)}"
@@ -2550,12 +2573,16 @@ def orchestrate(reg: dict, repo: str) -> dict:
         }:
             die(f"{project['name']} is claimed as self")
         out = config_dir() / f"orch-{project['name']}.json"
+        snap = pin_research(project, dest, reg.get("research_files") or [], cards)
+        open_lines = orch_open_lines(cards, project["name"])
+        gaps = list(snap.get("unshipped") or [])
         prompt = orch_prompt(
             dest,
             out,
             orch_spec_rels(dest, reg.get("research_files") or []),
-            orch_open_lines(cards, project["name"]),
+            open_lines,
             project["name"],
+            gaps=gaps,
         )
         cmd = agent_argv(
             kind,
@@ -2592,13 +2619,34 @@ def orchestrate(reg: dict, repo: str) -> dict:
             payload = parse_json_array(capture.read_text())
         if not payload and RUN_LOG.is_file():
             payload = parse_json_array(strip_log_prefix(RUN_LOG.read_text()[-20000:], prefix))
+        if not payload:
+            if not snap.get("spec_present") and not snap.get("prd_present"):
+                payload = [
+                    {
+                        "title": "написать SPEC",
+                        "body": "В репо нет SPEC/PRD. Написать минимальную спеку.",
+                        "label": "ready",
+                        "kind": "build",
+                    }
+                ]
+            else:
+                payload = orch_gap_payload(gaps, open_lines)
+        have = {
+            (item.get("title") or "").strip().lower()
+            for item in load_workshop().get("drafts") or []
+            if item.get("repo") == repo
+        }
         for item in payload[:12]:
             if not isinstance(item, dict) or not item.get("title"):
                 continue
+            title = (item.get("title") or "").strip()
+            if title.lower() in have:
+                continue
+            have.add(title.lower())
             drafts.append(
                 new_draft(
                     repo,
-                    item.get("title") or "",
+                    title,
                     item.get("body") or "",
                     item.get("label") or "blocked",
                     item.get("kind") or "build",
@@ -2615,10 +2663,6 @@ def orchestrate(reg: dict, repo: str) -> dict:
             or "unexpected argument" in blob
             or bool(exits and not exits[-1].rstrip().endswith("EXIT:0"))
         )
-        if not drafts:
-            stage = project_stage(reg, project["name"])
-            if stage["stage"] == "нет спеки":
-                drafts.append(new_draft(repo, "написать SPEC", "В репо нет SPEC/PRD. Написать минимальную спеку.", "ready", "build"))
         if crashed and not drafts:
             set_orch_state(
                 project["name"],

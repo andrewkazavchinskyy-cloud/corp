@@ -215,10 +215,15 @@ def main() -> None:
         (dest / "docs" / "DESIGN.md").write_text("design")
         rels = corp.orch_spec_rels(dest, ["docs/SPEC.md"])
         assert "docs/SPEC.md" in rels and "docs/DESIGN.md" in rels
-    prompt = corp.orch_prompt(Path("/tmp/clarity"), Path("/tmp/orch.json"), ["docs/SPEC.md"], lines, "clarity")
+    prompt = corp.orch_prompt(Path("/tmp/clarity"), Path("/tmp/orch.json"), ["docs/SPEC.md"], lines, "clarity", gaps=["Welcome screen"])
     assert "docs/SPEC.md" in prompt and "#20" in prompt and "do not duplicate" in prompt.lower()
     assert "vs_prd" in prompt and "vs_open" in prompt
+    assert "Welcome screen" in prompt and "empty JSON array is only allowed" in prompt
     assert "workshop/static" not in prompt
+    gap_items = corp.orch_gap_payload(["Welcome screen", "App icon → Calm splash"], lines)
+    assert [item["title"] for item in gap_items] == ["Welcome screen", "App icon → Calm splash"]
+    assert gap_items[0]["label"] == "ready" and "спеки" in gap_items[0]["body"]
+    assert corp.orch_gap_payload([], "(none)") == []
     built_body = corp.draft_issue_body({
         "title": "t",
         "body": "сделать x",
