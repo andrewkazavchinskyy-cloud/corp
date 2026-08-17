@@ -505,7 +505,9 @@ Nodes (33): active_projects(), board_payload() (+31 more)
             assert "CLIs not installed under that UID" not in report["blockers"]
             assert seen and seen[0][-1] == "--probe"
             doctor = corp.doctor_payload(isolation=report)
-            assert doctor["isolation"]["mode"] == "ready-to-arm"
+            assert doctor["isolation"] == "ready-to-arm"
+            assert "CORP_AGENT_USER unset" in doctor["isolation_reason"]
+            assert "CORP_AGENT_USER unset" in doctor["isolation_blockers"]
             assert not any(row["name"] == "agent identity isolated" and row["ok"] for row in doctor["checks"])
             os.chmod(ws, 0o775)
             claude.unlink()
@@ -742,7 +744,7 @@ Nodes (33): active_projects(), board_payload() (+31 more)
             "tailscale serve",
             "tailscale funnel off",
             "cursor",
-            "agent isolation",
+            "agent identity isolated",
         ):
             assert need in names
         assert payload["doctor"]["isolation"] in {"isolated", "transitional"}
@@ -804,6 +806,94 @@ Nodes (33): active_projects(), board_payload() (+31 more)
             notify=lambda *a, **k: notes.append(a),
         )
         assert running["aborted"] is True and killed == ["corp"]
+    assert corp.text_matches("", "x")
+    assert corp.text_matches("corp#63", "title", "andrewkazavchinskyy-cloud/corp#63")
+    assert not corp.text_matches("clarity", "corp#1")
+    ev = Path(tempfile.mkdtemp(prefix="corp-ev-")) / "events.jsonl"
+    corp.record_event("take", "corp#63", "взял", path=ev, now=10)
+    corp.record_event("login", "", "token=secret", path=ev, now=11)
+    rows = corp.load_events(10, path=ev)
+    assert rows[0]["kind"] == "login" and rows[0]["text"] == "[redacted]"
+    assert rows[1]["kind"] == "take" and rows[1]["ref"] == "corp#63"
+    memdir = Path(tempfile.mkdtemp(prefix="corp-mem-"))
+    sess = memdir / "memory" / "sessions"
+    sess.mkdir(parents=True)
+    for i, name in enumerate(["2026-08-10.md", "2026-08-16.md", "2026-08-17.md"]):
+        path = sess / name
+        path.write_text(f"# {name}\n")
+        os.utime(path, (1_000_000 + i, 1_000_000 + i))
+    old_dir = corp.project_dir
+    corp.project_dir = lambda _project: memdir
+    try:
+        notes = corp.session_notes(reg2, "corp", 2)
+        assert [n["name"] for n in notes] == ["2026-08-17.md", "2026-08-16.md"]
+        assert corp.session_notes(reg2, "all") == []
+    finally:
+        corp.project_dir = old_dir
+    running_alive = {"status": "running", "attempts": 1, "started_at": 1}
+    assert corp.queue_decision(running_alive, now=200, tmux_on=True, issue=None) == "keep"
+    assert corp.queue_decision(running_alive, now=1 + corp.QUEUE_HUNG_SEC + 1, tmux_on=True, issue=None) == "hung"
+    assert corp.queue_job_outcome(True, 1, 2, True)["status"] == "done"
+    assert corp.queue_job_outcome(False, 1, 2, True)["event"] == "retry"
+    assert corp.queue_job_outcome(False, 2, 2, True)["event"] == "stop"
+    assert corp.queue_job_outcome(False, 1, 2, True, hung=True)["event"] == "hung"
+    class _Alive:
+        returncode = 0
+    killed = []
+    old_run = corp.run
+    old_kill = corp.tmux_kill
+    try:
+        corp.run = lambda *a, **k: _Alive()
+        corp.tmux_kill = lambda name: killed.append(name)
+        assert corp.wait_tmux("corp", hung_sec=0) == 124
+        assert killed == ["corp"]
+    finally:
+        corp.run = old_run
+        corp.tmux_kill = old_kill
+    hung_item = {
+        "status": "running",
+        "attempts": 1,
+        "started_at": 1,
+        "repo": "o/corp",
+        "issue": 1,
+        "project": "corp",
+    }
+    hung_data = {"queue": [hung_item], "queue_running": True, "queue_retries": 2, "queue_hung_sec": 10}
+    killed = []
+    hung_events = corp.reap_queue(
+        hung_data,
+        now=20,
+        tmux=lambda _name: True,
+        fetch_issue=lambda *_a: claimed,
+        release=lambda *_a: None,
+        kill=lambda name: killed.append(name),
+    )
+    assert hung_events[0]["kind"] == "hung" and hung_data["queue_running"] is False and killed == ["corp"]
+    ghost_fail = {
+        "status": "done",
+        "attempts": 2,
+        "started_at": 1,
+        "repo": "o/corp",
+        "issue": 1,
+        "project": "corp",
+    }
+    fail_data = {"queue": [ghost_fail], "queue_running": True, "queue_retries": 2}
+    stop_events = corp.reap_queue(
+        fail_data,
+        now=100,
+        tmux=lambda _name: False,
+        fetch_issue=lambda *_a: claimed,
+        release=lambda *_a: None,
+    )
+    assert stop_events[0]["kind"] == "stop" and fail_data["queue"][0]["status"] == "failed"
+    approved = []
+    old_approve = corp.approve_draft
+    try:
+        corp.approve_draft = lambda did: approved.append(did) or {"ok": True, "id": did}
+        out = corp.approve_drafts(["a", "b"])
+        assert approved == ["a", "b"] and out["ok"]
+    finally:
+        corp.approve_draft = old_approve
     print("ok")
 
 
