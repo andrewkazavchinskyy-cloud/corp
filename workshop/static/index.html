@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Schibsted+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=31">
+  <link rel="stylesheet" href="/static/app.css?v=34">
 </head>
 <body>
   <div id="gate" class="gate">
@@ -31,7 +31,7 @@
         </label>
         <button id="btn-register" class="btn" type="button">Записать ключ</button>
       </details>
-      <p id="gate-err" class="err"></p>
+      <p id="gate-err" class="err" aria-live="polite"></p>
     </div>
   </div>
 
@@ -69,11 +69,7 @@
         </section>
 
         <section id="tab-auto" class="tab">
-          <p class="howto">Чтобы запустить готовые карточки: отметь задачи, выбери модель, нажми одну кнопку. Черновик и Approve — отдельно, если задачи ещё нет в GitHub.</p>
-          <div class="panel" id="auto-propose"></div>
-          <div class="panel" id="auto-drafts"></div>
-          <div class="panel" id="auto-ready-box"></div>
-          <div class="panel" id="auto-queue-box"></div>
+          <div id="auto-root"></div>
         </section>
 
         <section id="tab-project" class="tab">
@@ -101,18 +97,15 @@
         </section>
 
         <section id="tab-settings" class="tab">
-          <div class="toolbar savebar">
-            <label>Параллель <input id="max-parallel" type="number" min="1" max="3" value="3"></label>
-            <label>Ретраи <input id="queue-retries" type="number" min="0" max="5" value="2"></label>
-            <button type="button" class="btn" id="refresh-catalog">Обновить CLI</button>
-            <button type="button" class="btn" id="add-profile">Добавить подписку</button>
-            <button type="button" class="btn primary" id="save-settings" disabled>Сохранить</button>
+          <div class="filters rooms" id="settings-rooms" role="tablist" aria-label="Комнаты настроек">
+            <button type="button" class="chip on" data-room="access" aria-pressed="true">Доступ</button>
+            <button type="button" class="chip" data-room="agents" aria-pressed="false">Агенты</button>
+            <button type="button" class="chip" data-room="repos" aria-pressed="false">Репозитории</button>
           </div>
-          <p id="catalog-note" class="note"></p>
-          <details class="block" open>
-            <summary class="block-title">Доступ</summary>
+          <div id="room-access" class="room">
             <div class="panel">
-              <p class="note">Passkey · Tailscale only · Funnel выключен. Сессия 7 дней, challenge 5 минут.</p>
+              <h2>Доступ</h2>
+              <p class="note">Passkey · только Tailscale · Funnel выключен. Сессия 7 дней, вызов 5 минут. «Выйти везде» снимет все сессии.</p>
               <div class="toolbar">
                 <button type="button" class="btn" id="btn-add-key">Добавить ключ</button>
                 <button type="button" class="btn" id="btn-logout">Выйти</button>
@@ -120,18 +113,24 @@
               </div>
               <p id="auth-note" class="note"></p>
             </div>
-          </details>
-          <details class="block" open>
-            <summary class="block-title">Слоты</summary>
+          </div>
+          <div id="room-agents" class="room hidden">
+            <div class="toolbar savebar">
+              <label>Параллель <input id="max-parallel" type="number" min="1" max="3" value="3"></label>
+              <label>Повторы <input id="queue-retries" type="number" min="0" max="5" value="2"></label>
+              <button type="button" class="btn" id="refresh-catalog">Обновить каталог</button>
+              <button type="button" class="btn" id="add-profile">Добавить подписку</button>
+              <button type="button" class="btn primary" id="save-settings" disabled>Сохранить</button>
+            </div>
+            <p id="catalog-note" class="note"></p>
+            <h2 class="block-title">Слоты</h2>
             <div id="slots" class="stack"></div>
-          </details>
-          <details class="block">
-            <summary class="block-title">Подписки</summary>
+            <h2 class="block-title">Подписки</h2>
             <div id="profiles" class="stack"></div>
-          </details>
-          <details class="block">
-            <summary class="block-title">Репозитории</summary>
+          </div>
+          <div id="room-repos" class="room hidden">
             <div class="panel">
+              <h2>Репозитории</h2>
               <div class="toolbar">
                 <input id="add-repo" placeholder="org/name существующего">
                 <button type="button" class="btn" id="btn-add-repo">Добавить</button>
@@ -140,7 +139,7 @@
               </div>
               <div id="repo-list" class="stack"></div>
             </div>
-          </details>
+          </div>
         </section>
       </div>
 
@@ -155,20 +154,26 @@
         </div>
         <p id="sheet-note" class="note"></p>
         <div class="acts" id="sheet-acts"></div>
+        <div class="house" id="sheet-house"></div>
       </aside>
 
-      <nav class="dock">
+      <div id="more-scrim" class="scrim hidden"></div>
+      <div id="more-menu" class="more-menu hidden" role="menu" aria-label="Ещё">
+        <button type="button" data-tab="graphs" role="menuitem">Графы</button>
+        <button type="button" data-tab="map" role="menuitem">Карта</button>
+        <button type="button" data-tab="console" role="menuitem">Консоль</button>
+        <button type="button" data-tab="settings" role="menuitem">Настройки</button>
+      </div>
+      <nav class="dock" aria-label="Разделы">
         <button data-tab="board" class="on" type="button" aria-current="page">Доска</button>
         <button data-tab="auto" type="button">Автоном</button>
         <button data-tab="project" type="button">Проект</button>
-        <button data-tab="graphs" type="button">Графы</button>
-        <button data-tab="console" type="button">Консоль</button>
-        <button data-tab="settings" type="button">Настройки</button>
+        <button id="dock-more" data-tab="more" type="button" aria-haspopup="true" aria-expanded="false">Ещё</button>
       </nav>
     </section>
   </div>
 
-  <script src="/static/app.js?v=31"></script>
+  <script src="/static/app.js?v=34"></script>
   <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.6/Sortable.min.js" defer></script>
 </body>
 </html>
