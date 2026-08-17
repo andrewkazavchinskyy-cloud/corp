@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import os
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 SESSION_TTL_SEC = 7 * 24 * 3600
 CHALLENGE_TTL_SEC = 5 * 60
 SETUP_TOKEN_TTL_SEC = 30 * 60
+INITDATA_TTL_SEC = 24 * 3600
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
@@ -161,3 +165,95 @@ def take_challenge(
 def delete_all_sessions(conn) -> int:
     cur = conn.execute("DELETE FROM sessions")
     return int(cur.rowcount or 0)
+
+
+def init_data_from_headers(headers) -> str:
+    if not headers:
+        return ""
+    items = headers.items() if hasattr(headers, "items") else []
+    lower = {str(key).lower(): str(value) for key, value in items}
+    raw = (lower.get("x-telegram-init-data") or "").strip()
+    if raw:
+        return raw
+    authz = (lower.get("authorization") or "").strip()
+    if authz.lower().startswith("tma "):
+        return authz[4:].strip()
+    return ""
+
+
+def telegram_init_data_pairs(raw: str) -> list[tuple[str, str]] | None:
+    text = (raw or "").strip()
+    if not text or "=" not in text:
+        return None
+    try:
+        pairs = parse_qsl(text, keep_blank_values=True, strict_parsing=False)
+    except ValueError:
+        return None
+    return pairs or None
+
+
+def telegram_init_data_user_id(pairs: list[tuple[str, str]]) -> str:
+    for key, value in pairs:
+        if key != "user":
+            continue
+        try:
+            user = json.loads(value)
+        except (TypeError, ValueError):
+            return ""
+        if isinstance(user, dict) and user.get("id") is not None:
+            return str(user["id"])
+        return ""
+    return ""
+
+
+def telegram_init_data_hash_ok(pairs: list[tuple[str, str]], bot_token: str) -> bool:
+    token = (bot_token or "").strip()
+    if not token:
+        return False
+    got = ""
+    check: list[tuple[str, str]] = []
+    for key, value in pairs:
+        if key == "hash":
+            got = value
+            continue
+        check.append((key, value))
+    if not got or len(got) != 64:
+        return False
+    check.sort(key=lambda item: item[0])
+    data_check = "\n".join(f"{key}={value}" for key, value in check)
+    secret = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
+    computed = hmac.new(secret, data_check.encode(), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(computed, got)
+
+
+def telegram_init_data_ok(
+    raw: str,
+    bot_token: str,
+    chat_id: str,
+    now: float,
+    ttl: int = INITDATA_TTL_SEC,
+    tailscale_login: str | None = None,
+    tailscale_expected: str | None = None,
+) -> bool:
+    token = (bot_token or "").strip()
+    allowed = (chat_id or "").strip()
+    if not token or not allowed:
+        return False
+    expected_login = (tailscale_expected or "").strip()
+    if expected_login and (tailscale_login or "").strip() != expected_login:
+        return False
+    pairs = telegram_init_data_pairs(raw)
+    if not pairs or not telegram_init_data_hash_ok(pairs, token):
+        return False
+    auth_date = None
+    for key, value in pairs:
+        if key != "auth_date":
+            continue
+        try:
+            auth_date = float(value)
+        except (TypeError, ValueError):
+            return False
+        break
+    if auth_date is None or not within_ttl(auth_date, now, ttl):
+        return False
+    return telegram_init_data_user_id(pairs) == allowed

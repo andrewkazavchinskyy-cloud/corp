@@ -145,8 +145,10 @@ Mini App lives at Workshop `/tg` (alias `/mini`): Telegram WebView chrome
 (`telegram-web-app.js`, themeParams, MainButton, safe-area). Not a dump of
 `preview.html`. Menu Button `web_app` is the Tailscale `/tg` URL only if
 Telegram accepts it. If not, Menu Button stays `commands`. Do not enable Funnel.
-If the WebView has a Passkey session, the shell can read the board; otherwise
-it deep-links jobs back to the bot (`?start=now|board|cycle|more`).
+`/tg` API calls authenticate with Telegram `initData` HMAC (bot token +
+`TELEGRAM_CHAT_ID`), not Workshop passkeys. WebView WebAuthn is unreliable.
+A normal browser still needs a passkey. Jobs also deep-link back to the bot
+(`?start=now|board|cycle|more`).
 
 `/цикл` and `/improve` (same) start a council after confirm: three Grok agents
 (QA, PM, Design) file up to 3 Issues each (`council` + role), then the existing

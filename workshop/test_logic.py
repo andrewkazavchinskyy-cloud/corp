@@ -665,6 +665,49 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     conn.execute("INSERT INTO sessions(token, created) VALUES('other', ?)", (now,))
     assert auth.delete_all_sessions(conn) >= 1
     assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+    import hashlib
+    import hmac
+    from urllib.parse import urlencode
+
+    def sign_init_data(fields: dict, token: str) -> str:
+        pairs = [(key, str(value)) for key, value in fields.items() if key != "hash"]
+        data_check = "\n".join(f"{key}={value}" for key, value in sorted(pairs))
+        secret = hmac.new(b"WebAppData", token.encode(), hashlib.sha256).digest()
+        digest = hmac.new(secret, data_check.encode(), hashlib.sha256).hexdigest()
+        return urlencode(pairs + [("hash", digest)])
+
+    token = "test-bot-token"
+    chat = "4242"
+    user = json.dumps({"id": 4242, "first_name": "Andrei"}, separators=(",", ":"))
+    good = sign_init_data({"auth_date": str(int(now)), "query_id": "AA", "user": user}, token)
+    assert auth.telegram_init_data_ok(good, token, chat, now)
+    assert auth.init_data_from_headers({"X-Telegram-Init-Data": good}) == good
+    assert auth.init_data_from_headers({"Authorization": "tma " + good}) == good
+    assert auth.init_data_from_headers({"cookie": "corp_workshop=nope"}) == ""
+    assert not auth.telegram_init_data_ok("", token, chat, now)
+    assert not auth.telegram_init_data_ok(good, "", chat, now)
+    assert not auth.telegram_init_data_ok(good, token, "", now)
+    assert not auth.telegram_init_data_ok(good, "other-token", chat, now)
+    assert not auth.telegram_init_data_ok(good, token, "9999", now)
+    stale = sign_init_data(
+        {"auth_date": str(int(now - auth.INITDATA_TTL_SEC - 5)), "user": user},
+        token,
+    )
+    assert not auth.telegram_init_data_ok(stale, token, chat, now)
+    future = sign_init_data({"auth_date": str(int(now + 30)), "user": user}, token)
+    assert not auth.telegram_init_data_ok(future, token, chat, now)
+    tampered = good[:-2] + ("0" if good[-2] != "0" else "1") + good[-1]
+    assert not auth.telegram_init_data_ok(tampered, token, chat, now)
+    assert auth.telegram_init_data_ok(
+        good, token, chat, now, tailscale_login="andrei@tailscale", tailscale_expected="andrei@tailscale"
+    )
+    assert not auth.telegram_init_data_ok(
+        good, token, chat, now, tailscale_login="other@tailscale", tailscale_expected="andrei@tailscale"
+    )
+    assert not auth.telegram_init_data_ok(
+        good, token, chat, now, tailscale_login="", tailscale_expected="andrei@tailscale"
+    )
+    assert auth.telegram_init_data_ok(good, token, chat, now, tailscale_expected="")
     spec_text = (
         "## Goal\n"
         "- Ship the billing path for invoices\n"
@@ -1115,10 +1158,16 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert "/api/self/drop" in app_src and "/api/qa/start" in app_src
     assert "/api/council" in app_src
     assert '@app.get("/tg")' in app_src and '@app.get("/mini")' in app_src
+    assert "telegram_ok" in app_src and "telegram_init_data_ok" in app_src
+    assert 'X-Telegram-Init-Data' in (ROOT / "workshop" / "static" / "tg.html").read_text()
+    assert "passkey required" in app_src
+    assert "require_auth(request)" in app_src
     tg_html = (ROOT / "workshop" / "static" / "tg.html").read_text()
     assert "telegram-web-app.js" in tg_html and "themeParams" in tg_html
     assert "MainButton" in tg_html and "safe-area-inset" in tg_html
     assert "preview.html" not in tg_html
+    assert "tg.initData" in tg_html and "tgFetch" in tg_html
+    assert "passkey" in tg_html.lower()
     assert "Команда" in (ROOT / "workshop" / "static" / "app.js").read_text()
     assert "approve_drafts_checked" in app_src and "console_log_for_issue" in app_src
     closed_only = [{"title": "Ship the billing path for invoices", "state": "CLOSED"}]

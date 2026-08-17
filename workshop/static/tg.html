@@ -57,7 +57,7 @@
     <button class="job" type="button" data-start="cycle"><b>Цикл</b><span>QA, PM, Дизайн</span></button>
     <button class="job" type="button" data-start="more"><b>Ещё</b><span>пауза и мастерская</span></button>
   </div>
-  <p class="note" id="auth-note">Действия идут в чат бота. Funnel выключен — только Tailscale.</p>
+  <p class="note" id="auth-note">Вход через Telegram, не passkey. Funnel выключен — только Tailscale.</p>
   <script>
     const tg = window.Telegram && window.Telegram.WebApp;
     const theme = (tg && tg.themeParams) || {};
@@ -76,6 +76,15 @@
       tg.MainButton.onClick(() => tg.close());
     }
     let bot = "";
+    function initData() {
+      return (tg && tg.initData) || "";
+    }
+    function tgFetch(url) {
+      const headers = {};
+      const data = initData();
+      if (data) headers["X-Telegram-Init-Data"] = data;
+      return fetch(url, { credentials: "same-origin", headers: headers });
+    }
     function openJob(start) {
       const dest = start || "now";
       if (tg && bot) {
@@ -90,14 +99,14 @@
     });
     async function boot() {
       try {
-        const meta = await fetch("/api/tg/meta", { credentials: "same-origin" }).then((r) => r.json());
+        const meta = await tgFetch("/api/tg/meta").then((r) => r.json());
         bot = meta.bot || "";
       } catch (_) { /* shell */ }
       try {
-        const status = await fetch("/api/auth/status", { credentials: "same-origin" }).then((r) => r.json());
+        const status = await tgFetch("/api/auth/status").then((r) => r.json());
         if (!status.ok) return;
-        const board = await fetch("/api/board", { credentials: "same-origin" }).then((r) => r.json());
-        const queue = await fetch("/api/queue", { credentials: "same-origin" }).then((r) => r.json());
+        const board = await tgFetch("/api/board").then((r) => r.json());
+        const queue = await tgFetch("/api/queue").then((r) => r.json());
         const cards = (board.cards || []).filter((c) => (c.state || "OPEN").toUpperCase() !== "CLOSED" && c.column !== "done");
         const running = (queue.queue || []).filter((i) => i.status === "running");
         const pulse = document.getElementById("pulse");

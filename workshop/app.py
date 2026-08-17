@@ -35,12 +35,14 @@ from auth_policy import (
     SESSION_TTL_SEC,
     delete_all_sessions,
     extra_origins_from_env,
+    init_data_from_headers,
     is_loopback_host,
     origin_allowed,
     prune_auth_tables,
     session_valid,
     setup_token_file_valid,
     take_challenge,
+    telegram_init_data_ok,
     trusted_scheme,
 )
 import api_logic
@@ -119,6 +121,21 @@ def session_ok(request: Request) -> bool:
         row = conn.execute("SELECT token, created FROM sessions WHERE token=?", (token,)).fetchone()
         conn.commit()
     return bool(row) and session_valid(row["created"], now)
+
+
+def telegram_ok(request: Request) -> bool:
+    raw = init_data_from_headers(request.headers)
+    if not raw:
+        return False
+    token, chat = corp.tg_creds()
+    return telegram_init_data_ok(
+        raw,
+        token,
+        chat,
+        time.time(),
+        tailscale_login=request.headers.get("tailscale-user-login"),
+        tailscale_expected=os.environ.get("TAILSCALE_USER_LOGIN"),
+    )
 
 
 def set_session(response: JSONResponse) -> None:
@@ -207,7 +224,12 @@ async def gate(request: Request, call_next):
                 except HTTPException as exc:
                     return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
             return await call_next(request)
-        if not session_ok(request):
+        if session_ok(request):
+            pass
+        elif init_data_from_headers(request.headers):
+            if not telegram_ok(request):
+                return JSONResponse({"error": "telegram auth failed"}, status_code=401)
+        else:
             return JSONResponse({"error": "passkey required"}, status_code=401)
         try:
             check_origin(request)
@@ -251,7 +273,8 @@ def api_tg_meta() -> dict:
 
 @app.get("/api/auth/status")
 def auth_status(request: Request) -> dict:
-    return {"ok": session_ok(request), "has_passkey": cred_count() > 0}
+    tg = telegram_ok(request)
+    return {"ok": session_ok(request) or tg, "has_passkey": cred_count() > 0, "telegram": tg}
 
 
 @app.post("/api/auth/register/options")
