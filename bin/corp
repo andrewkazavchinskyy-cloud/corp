@@ -1254,8 +1254,6 @@ def slot_for_issue(name: str, issue: dict) -> tuple[str, dict]:
         return "qa", slots["qa"]
     if "design" in names:
         return "design", slots["design"]
-    if "qa" in names and "qa-fail" not in names:
-        return "qa", slots["qa"]
     return "build", slots["build"]
 
 
@@ -1548,14 +1546,27 @@ def load_catalog() -> dict:
     return probe_catalog()
 
 
+def log_line_matches_issue(line: str, prefix: str) -> bool:
+    text = (prefix or "").strip()
+    if not text:
+        return False
+    start = 0
+    while True:
+        idx = line.find(text, start)
+        if idx < 0:
+            return False
+        end = idx + len(text)
+        if end >= len(line) or not line[end].isdigit():
+            return True
+        start = idx + 1
+
+
 def last_log_lines(n: int = 3, prefix: str = "") -> str:
     if not RUN_LOG.is_file():
         return "тишина"
     lines = [line.rstrip() for line in RUN_LOG.read_text().splitlines() if line.strip()]
     if prefix:
-        tagged = [line for line in lines if line.startswith(prefix)]
-        if tagged:
-            lines = tagged
+        lines = [line for line in lines if log_line_matches_issue(line, prefix)]
     if not lines:
         return "тишина"
     clipped = []
@@ -2207,6 +2218,8 @@ def load_events(limit: int = 40, path: Path | None = None) -> list[dict]:
         except json.JSONDecodeError:
             continue
         if isinstance(row, dict) and row.get("kind"):
+            row["text"] = redact_secrets(str(row.get("text") or ""))
+            row["ref"] = redact_secrets(str(row.get("ref") or ""))
             out.append(row)
     out.reverse()
     return out
@@ -2245,7 +2258,7 @@ def session_notes(reg: dict, project_name: str, limit: int = 7) -> list[dict]:
             continue
         if len(text) > 8000:
             text = text[:8000] + "\n…"
-        notes.append({"name": path.name, "text": text, "mtime": path.stat().st_mtime})
+        notes.append({"name": path.name, "text": redact_secrets(text), "mtime": path.stat().st_mtime})
     return notes
 
 

@@ -43,6 +43,7 @@ from auth_policy import (
     take_challenge,
     trusted_scheme,
 )
+import api_logic
 
 ROOT = Path(__file__).resolve().parent.parent
 STATIC = Path(__file__).resolve().parent / "static"
@@ -408,8 +409,12 @@ def api_map() -> dict:
             orch.append(project["name"])
     workshop = corp.load_workshop()
     status = corp.registry_status()
+    contour = api_logic.contour_fields(corp, reg)
     return {
-        "doctor": corp.doctor_payload(),
+        "doctor": contour["doctor"],
+        "trees": contour["trees"],
+        "graphify": contour["graphify"],
+        "graphify_stale": contour["graphify_stale"],
         "projects": corp.research_report(reg),
         "live": live,
         "orch": orch,
@@ -417,6 +422,7 @@ def api_map() -> dict:
         "queue": workshop.get("queue"),
         "uncommitted_registry": status["uncommitted_registry"],
         "registry_source": "overlay" if status["uncommitted_registry"] else "git",
+        "workshop_host": api_logic.workshop_host(),
     }
 
 
@@ -446,7 +452,12 @@ def api_settings(probe: bool = False) -> dict:
     status = corp.registry_status()
     data["uncommitted_registry"] = status["uncommitted_registry"]
     data["registry_source"] = "overlay" if status["uncommitted_registry"] else "git"
-    data["doctor"] = corp.doctor_payload()
+    contour = api_logic.contour_fields(corp, corp.load_registry())
+    data["doctor"] = contour["doctor"]
+    data["trees"] = contour["trees"]
+    data["graphify"] = contour["graphify"]
+    data["graphify_stale"] = contour["graphify_stale"]
+    data["workshop_host"] = api_logic.workshop_host()
     return data
 
 
@@ -520,13 +531,22 @@ def api_project(name: str) -> dict:
     prune = getattr(corp, "prune_drafts", None)
     if prune:
         prune()
-    stage = call(corp.project_stage, corp.load_registry(), name)
+    reg = corp.load_registry()
+    stage = call(corp.project_stage, reg, name)
     drafts = [d for d in corp.load_workshop().get("drafts") or [] if d.get("repo") == stage.get("repo")]
+    try:
+        project = corp.project_by_name(reg, name)
+        graph = api_logic.graphify_pin_status(corp, project)
+    except Exception:
+        graph = {"graphify_stale": True, "graph_age": stage.get("graph_age") or ""}
+    stage = {**stage, **{k: graph[k] for k in ("graphify_stale", "graph_commit", "head", "refreshed") if k in graph}}
     return {
         "stage": stage,
         "drafts": drafts,
         "slots": corp.slots_for(name),
         "orch": corp.orch_status(name),
+        "graphify_stale": graph.get("graphify_stale"),
+        "graph_age": graph.get("graph_age") or stage.get("graph_age") or "",
     }
 
 
@@ -540,6 +560,7 @@ async def api_orchestrate(request: Request) -> dict:
         repo = project.get("repo") or ""
     else:
         project = corp.project_by_repo(reg, repo)
+    call(api_logic.require_pin_repo, corp, repo, reg)
     if corp.orch_alive(project["name"]):
         return {"ok": True, "started": False}
     threading.Thread(target=lambda: corp.orchestrate(reg, repo), daemon=True).start()
@@ -553,7 +574,8 @@ async def api_draft(request: Request) -> dict:
     draft_id = body.get("id") or ""
     if action == "propose":
         return call(
-            corp.propose_draft,
+            api_logic.propose_checked,
+            corp,
             corp.load_registry(),
             body.get("project") or "",
             body.get("title") or "",
@@ -566,9 +588,8 @@ async def api_draft(request: Request) -> dict:
             ids = [draft_id, *[item for item in ids if item != draft_id]]
         if not ids:
             raise HTTPException(400, "id required")
-        if len(ids) == 1:
-            return call(corp.approve_draft, ids[0])
-        return call(corp.approve_drafts, ids)
+        result = call(api_logic.approve_drafts_checked, corp, ids, corp.load_registry())
+        return result
     if action == "skip":
         return call(corp.skip_draft, draft_id)
     raise HTTPException(400, "action must be propose|approve|skip")
@@ -578,28 +599,89 @@ async def api_draft(request: Request) -> dict:
 async def api_take(request: Request) -> dict:
     body = await request.json()
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
-    return call(corp.take_issue, corp.load_registry(), repo, number)
+    return api_logic.with_issue_link(call(corp.take_issue, corp.load_registry(), repo, number), repo, number)
+
+
+@app.post("/api/self/drop")
+async def api_self_drop(request: Request) -> dict:
+    body = await request.json()
+    repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
+    return api_logic.with_issue_link(call(api_logic.drop_self, corp, repo, number), repo, number)
 
 
 @app.post("/api/move")
 async def api_move(request: Request) -> dict:
     body = await request.json()
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
-    return call(corp.move_issue, corp.load_registry(), repo, number, body.get("column") or "")
+    result = call(
+        api_logic.workshop_move,
+        corp,
+        corp.load_registry(),
+        repo,
+        number,
+        body.get("column") or "",
+        body.get("note") or "",
+    )
+    return api_logic.with_issue_link(result, repo, number)
 
 
 @app.post("/api/close")
 async def api_close(request: Request) -> dict:
     body = await request.json()
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
-    return call(
-        corp.close_issue,
+    result = call(
+        api_logic.workshop_close,
+        corp,
         corp.load_registry(),
         repo,
         number,
-        force=bool(body.get("force")),
-        fail=bool(body.get("fail") or body.get("verdict") == "fail"),
-        note=body.get("note") or "",
+        bool(body.get("force")),
+        bool(body.get("fail") or body.get("verdict") == "fail"),
+        body.get("note") or "",
+    )
+    return api_logic.with_issue_link(result, repo, number)
+
+
+@app.post("/api/qa")
+async def api_qa(request: Request) -> dict:
+    body = await request.json()
+    repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
+    fail = bool(body.get("fail") or body.get("verdict") == "fail")
+    if body.get("verdict") == "pass":
+        fail = False
+    result = call(
+        api_logic.workshop_close,
+        corp,
+        corp.load_registry(),
+        repo,
+        number,
+        False,
+        fail,
+        body.get("note") or "",
+    )
+    return api_logic.with_issue_link(result, repo, number)
+
+
+@app.post("/api/qa/start")
+async def api_qa_start(request: Request) -> dict:
+    body = await request.json()
+    repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
+    issue = call(api_logic.assert_in_qa, corp, repo, number)
+    project = call(corp.project_by_repo, corp.load_registry(), repo)
+    role, slot = api_logic.run_role_for_issue(corp, project["name"], issue)
+    kind = body.get("agent") or slot.get("kind") or ""
+    model = body.get("model") or slot.get("model") or ""
+    effort = body.get("effort") or slot.get("effort") or ""
+    fast = bool(body.get("fast") or slot.get("fast"))
+    threading.Thread(
+        target=_run_job,
+        args=(repo, number, kind, model, effort, fast),
+        daemon=True,
+    ).start()
+    return api_logic.with_issue_link(
+        {"ok": True, "started": True, "queued": False, "role": role, "slot": {"kind": slot.get("kind"), "model": slot.get("model")}},
+        repo,
+        number,
     )
 
 
@@ -625,8 +707,12 @@ async def api_run(request: Request) -> dict:
     ).start()
     issue = call(corp.get_issue, repo, number)
     project = call(corp.project_by_repo, corp.load_registry(), repo)
-    role, slot = corp.slot_for_issue(project["name"], issue)
-    return {"ok": True, "started": True, "role": role, "slot": {"kind": slot.get("kind"), "model": slot.get("model")}}
+    role, slot = api_logic.run_role_for_issue(corp, project["name"], issue)
+    return api_logic.with_issue_link(
+        {"ok": True, "started": True, "role": role, "slot": {"kind": slot.get("kind"), "model": slot.get("model")}},
+        repo,
+        number,
+    )
 
 
 def _run_job(repo: str, number: int, kind: str, model: str, effort: str, fast: bool) -> None:
@@ -714,23 +800,33 @@ def api_queue() -> dict:
 @app.get("/api/memory")
 def api_memory(name: str = "") -> dict:
     pin = name or ""
-    return {"notes": call(corp.session_notes, corp.load_registry(), pin, 7), "project": pin}
+    return {"notes": call(api_logic.journal_notes, corp, corp.load_registry(), pin, 7), "project": pin}
 
 
 @app.get("/api/events")
 def api_events(limit: int = 40) -> dict:
-    return {"events": corp.load_events(max(1, min(80, int(limit or 40))))}
+    return {"events": api_logic.journal_events(corp, max(1, min(80, int(limit or 40))))}
+
+
+@app.get("/api/link")
+def api_link(issue: str = "") -> dict:
+    repo, number = call(corp.parse_issue_ref, issue)
+    return {
+        "ok": True,
+        "issue": api_logic.workshop_issue_ref(repo, number),
+        "issue_ref": api_logic.workshop_issue_ref(repo, number),
+        "issue_href": api_logic.workshop_issue_href(repo, number),
+        "query": f"issue={api_logic.workshop_issue_ref(repo, number)}",
+    }
 
 
 @app.get("/api/console")
 def api_console(project: str = "", issue: str = "") -> dict:
     log = ""
     if issue:
-        log = corp.last_log_lines(80, prefix=issue)
-        if log == "тишина":
-            log = ""
+        log = api_logic.console_log_for_issue(corp, issue, 80)
     elif corp.RUN_LOG.is_file():
-        log = corp.RUN_LOG.read_text()[-20000:]
+        log = corp.redact_secrets(corp.RUN_LOG.read_text()[-20000:])
     pane = ""
     kind = "log"
     if not issue:
@@ -757,6 +853,8 @@ def api_console(project: str = "", issue: str = "") -> dict:
             if f"{item.get('repo')}#{item.get('issue')}" == issue:
                 err = item.get("last_error") or ""
                 break
+    if err:
+        err = corp.redact_secrets(err)
     return {"log": log, "pane": pane, "live": live, "kind": kind, "issue": issue, "last_error": err}
 
 

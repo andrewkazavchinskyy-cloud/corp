@@ -14,6 +14,9 @@ _loader.exec_module(corp)
 _auth_loader = importlib.machinery.SourceFileLoader("auth_policy", str(ROOT / "workshop" / "auth_policy.py"))
 auth = importlib.util.module_from_spec(importlib.util.spec_from_loader(_auth_loader.name, _auth_loader))
 _auth_loader.exec_module(auth)
+_api_loader = importlib.machinery.SourceFileLoader("api_logic", str(ROOT / "workshop" / "api_logic.py"))
+api_logic = importlib.util.module_from_spec(importlib.util.spec_from_loader(_api_loader.name, _api_loader))
+_api_loader.exec_module(api_logic)
 
 
 def issue(labels, state="OPEN"):
@@ -36,6 +39,10 @@ def main() -> None:
     assert corp.slot_for_issue("corp", issue(["design"]))[0] == "design"
     assert corp.slot_for_issue("corp", issue(["in-qa", "design"]))[0] == "qa"
     assert corp.slot_for_issue("corp", issue(["design", "qa-fail"]))[0] == "design"
+    assert corp.slot_for_issue("corp", issue(["qa"]))[0] == "build"
+    assert corp.slot_for_issue("corp", issue(["ready", "qa"]))[0] == "build"
+    assert api_logic.run_role_for_issue(corp, "corp", issue(["ready", "qa"]))[0] == "build"
+    assert api_logic.run_role_for_issue(corp, "corp", issue(["in-qa"]))[0] == "qa"
     assert corp.runner_of(issue(["self"])) == "self"
     assert corp.runner_of(issue(["via:claude"])) == "claude"
     reg = {"labels": {"ready": "ready"}}
@@ -892,8 +899,176 @@ Nodes (33): active_projects(), board_payload() (+31 more)
         corp.approve_draft = lambda did: approved.append(did) or {"ok": True, "id": did}
         out = corp.approve_drafts(["a", "b"])
         assert approved == ["a", "b"] and out["ok"]
+        def flaky(did):
+            if did == "b":
+                raise corp.CorpError("boom")
+            return {"ok": True, "id": did}
+        corp.approve_draft = flaky
+        partial = corp.approve_drafts(["a", "b", "c"])
+        assert partial["ok"] is False
+        assert [row["id"] for row in partial["approved"]] == ["a", "c"]
+        assert partial["errors"][0]["id"] == "b" and "boom" in partial["errors"][0]["error"]
     finally:
         corp.approve_draft = old_approve
+    old_log = corp.RUN_LOG
+    log_tmp = Path(tempfile.mkdtemp(prefix="corp-console-")) / "run.log"
+    log_tmp.write_text(
+        "andrewkazavchinskyy-cloud/corp#38 via claude\n"
+        "andrewkazavchinskyy-cloud/corp#18 leftover\n"
+        "noise without a tag\n"
+    )
+    try:
+        corp.RUN_LOG = log_tmp
+        assert "corp#38" in corp.last_log_lines(80, prefix="andrewkazavchinskyy-cloud/corp#38")
+        assert corp.last_log_lines(80, prefix="andrewkazavchinskyy-cloud/corp#1") == "тишина"
+        assert corp.last_log_lines(80, prefix="andrewkazavchinskyy-cloud/corp#99999") == "тишина"
+        assert "corp#18" not in corp.last_log_lines(80, prefix="andrewkazavchinskyy-cloud/corp#1")
+        leaked = api_logic.console_log_for_issue(corp, "andrewkazavchinskyy-cloud/corp#1")
+        missing = api_logic.console_log_for_issue(corp, "andrewkazavchinskyy-cloud/corp#99999")
+        owned = api_logic.console_log_for_issue(corp, "andrewkazavchinskyy-cloud/corp#38")
+        assert leaked == "" and missing == ""
+        assert "corp#38" in owned and "corp#18" not in owned
+    finally:
+        corp.RUN_LOG = old_log
+    ev2 = Path(tempfile.mkdtemp(prefix="corp-ev2-")) / "events.jsonl"
+    ev2.write_text(
+        json.dumps({"t": 1, "kind": "fail", "ref": "corp#1", "text": "runner died ghp_abcdefghijklmnopqrstuvwxyz1234"})
+        + "\n"
+    )
+    hidden = corp.load_events(10, path=ev2)
+    assert hidden[0]["kind"] == "fail"
+    assert "ghp_" not in hidden[0]["text"] and "[redacted]" in hidden[0]["text"]
+    journal = api_logic.journal_events(corp)
+    assert isinstance(journal, list)
+    memdir = Path(tempfile.mkdtemp(prefix="corp-mem2-"))
+    sess = memdir / "memory" / "sessions"
+    sess.mkdir(parents=True)
+    secret_note = sess / "2026-08-17.md"
+    secret_note.write_text("token=ghp_abcdefghijklmnopqrstuvwxyz1234\nbot 123456789:AAHxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n")
+    old_dir = corp.project_dir
+    corp.project_dir = lambda _project: memdir
+    try:
+        notes = corp.session_notes(reg2, "corp", 2)
+        blob = notes[0]["text"]
+        assert "ghp_" not in blob and "AAH" not in blob and "[redacted]" in blob
+        wrapped = api_logic.journal_notes(corp, reg2, "corp", 2)
+        assert "ghp_" not in wrapped[0]["text"]
+    finally:
+        corp.project_dir = old_dir
+    href = api_logic.workshop_issue_href("andrewkazavchinskyy-cloud/corp", 86)
+    assert "issue=" in href and "andrewkazavchinskyy-cloud%2Fcorp%2386" in href
+    assert api_logic.workshop_issue_ref("andrewkazavchinskyy-cloud/corp", 86) == "andrewkazavchinskyy-cloud/corp#86"
+    try:
+        api_logic.require_qa_note(corp, "   ")
+        raise AssertionError("empty QA note should die")
+    except corp.CorpError as exc:
+        assert "правк" in str(exc)
+    assert api_logic.require_qa_note(corp, "поправь кнопку") == "поправь кнопку"
+    rejected = []
+    moved = []
+    old_get = corp.get_issue
+    old_reject = corp.reject_qa
+    old_close = corp.close_issue
+    old_send = corp.send_to_qa
+    old_move = corp.move_issue
+    try:
+        corp.get_issue = lambda repo, number: issue(["in-qa"])
+        corp.reject_qa = lambda *a, **k: rejected.append((a, k)) or {"ok": True, "qa_fail": True, "column": "ready"}
+        corp.close_issue = lambda *a, **k: {"ok": True, "closed": True, "graph": "graph pushed"}
+        corp.send_to_qa = lambda *a, **k: moved.append(k) or {"ok": True, "column": "qa", "queued": k.get("enqueue")}
+        corp.move_issue = lambda *a, **k: {"ok": True, "column": a[3]}
+        fail_move = api_logic.workshop_move(corp, reg2, repo, 9, "ready", "сломан лист")
+        assert fail_move["qa_fail"] and rejected
+        try:
+            api_logic.workshop_move(corp, reg2, repo, 9, "ready", "")
+            raise AssertionError("QA to ready without note should die")
+        except corp.CorpError:
+            pass
+        passed = api_logic.workshop_move(corp, reg2, repo, 9, "done")
+        assert passed.get("closed")
+        sent = api_logic.workshop_move(corp, reg2, repo, 1, "qa")
+        assert sent.get("queued") is False
+        corp.get_issue = lambda repo, number: issue(["ready"])
+        to_qa = api_logic.workshop_move(corp, reg2, repo, 1, "done")
+        assert to_qa.get("queued") is False
+        closed = api_logic.workshop_close(corp, reg2, repo, 9, fail=False)
+        assert closed.get("graphify") == "graph pushed" and closed.get("graphify_stale") is False
+        try:
+            api_logic.workshop_close(corp, reg2, repo, 9, fail=True, note="")
+            raise AssertionError("close fail without note should die")
+        except corp.CorpError:
+            pass
+    finally:
+        corp.get_issue = old_get
+        corp.reject_qa = old_reject
+        corp.close_issue = old_close
+        corp.send_to_qa = old_send
+        corp.move_issue = old_move
+    dropped = []
+    old_get = corp.get_issue
+    old_rm = corp.remove_labels
+    old_inv = corp.invalidate_board
+    try:
+        corp.get_issue = lambda repo, number: issue(["in-progress", "self"])
+        corp.remove_labels = lambda repo, number, labels: dropped.append(labels)
+        corp.invalidate_board = lambda: None
+        out = api_logic.drop_self(corp, repo, 83)
+        assert out["dropped"] is True and out["column"] == "in-progress"
+        assert dropped == [["self"]]
+        corp.get_issue = lambda repo, number: issue(["ready"])
+        idle = api_logic.drop_self(corp, repo, 83)
+        assert idle["dropped"] is False and idle["column"] == "ready"
+    finally:
+        corp.get_issue = old_get
+        corp.remove_labels = old_rm
+        corp.invalidate_board = old_inv
+    old_draft = corp.draft_by_id
+    old_approve = corp.approve_drafts
+    try:
+        corp.draft_by_id = lambda did: {"id": did, "repo": "andrewkazavchinskyy-cloud/LifeBalance"}
+        corp.approve_drafts = lambda ids: {"ok": True, "approved": ids, "errors": []}
+        gated = api_logic.approve_drafts_checked(corp, ["x"], reg2)
+        assert gated["ok"] is False and gated["approved"] == []
+        assert "пин" in gated["errors"][0]["error"]
+        corp.draft_by_id = lambda did: {"id": did, "repo": "andrewkazavchinskyy-cloud/corp"}
+        def one_fail(ids):
+            return {"ok": False, "approved": [{"id": ids[0]}], "errors": [{"id": ids[1], "error": "gh down"}]}
+        corp.approve_drafts = one_fail
+        mixed = api_logic.approve_drafts_checked(corp, ["ok", "bad"], reg2)
+        assert mixed["ok"] is False and mixed["errors"][0]["id"] == "bad"
+    finally:
+        corp.draft_by_id = old_draft
+        corp.approve_drafts = old_approve
+    trees = api_logic.trees_from_doctor(
+        {"corp": "/opt/corp", "workspace": "/home/corp/projects", "live": "/opt/corp", "live_sha": "abc", "trees": {"writers": "/home/corp/projects/corp"}}
+    )
+    assert trees["live"] == "/opt/corp" and trees["writers"] == "/home/corp/projects/corp"
+    old_probe = corp.probe_isolation
+    old_doc = corp.doctor_payload
+    try:
+        def boom():
+            raise PermissionError("EACCES /home/corp-agent/.local/bin/claude")
+        corp.probe_isolation = boom
+        corp.doctor_payload = lambda isolation=None: {"isolation": (isolation or {}).get("mode"), "isolation_blockers": (isolation or {}).get("blockers") or [], "live": "/opt/corp", "workspace": "/home/corp/projects", "corp": "/opt/corp"}
+        doctor = api_logic.safe_doctor(corp)
+        assert doctor["isolation"] == "transitional"
+        assert any("EACCES" in row or "probe failed" in row for row in doctor["isolation_blockers"])
+        contour = api_logic.contour_fields(corp, reg2)
+        assert contour["trees"]["live"] == "/opt/corp"
+        assert "graphify_stale" in contour
+    finally:
+        corp.probe_isolation = old_probe
+        corp.doctor_payload = old_doc
+    waiting = issue(["in-qa"])
+    try:
+        api_logic.assert_in_qa(corp, repo, 85, issue(["ready"]))
+        raise AssertionError("ready is not a QA slot")
+    except corp.CorpError:
+        pass
+    assert api_logic.assert_in_qa(corp, repo, 85, waiting) == waiting
+    app_src = (ROOT / "workshop" / "app.py").read_text()
+    assert "/api/self/drop" in app_src and "/api/qa/start" in app_src
+    assert "approve_drafts_checked" in app_src and "console_log_for_issue" in app_src
     print("ok")
 
 
