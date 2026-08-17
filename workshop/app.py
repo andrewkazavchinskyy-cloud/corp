@@ -1095,10 +1095,13 @@ def queue_loop() -> None:
         try:
             queue_tick()
             corp.council_tick()
-            corp.telegram_tick()
         except Exception as exc:
             corp.append_log(f"queue: {exc}\n")
         time.sleep(4)
+
+
+def telegram_loop() -> None:
+    corp.telegram_loop()
 
 
 @app.on_event("startup")
@@ -1110,6 +1113,7 @@ def startup() -> None:
     except Exception:
         pass
     threading.Thread(target=queue_loop, daemon=True).start()
+    threading.Thread(target=telegram_loop, daemon=True).start()
 
 
 if __name__ == "__main__":
