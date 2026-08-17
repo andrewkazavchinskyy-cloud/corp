@@ -11,7 +11,10 @@ WorkingDirectory=/opt/corp/workshop
 Environment=HOME=/home/corp
 Environment=CORP_WORKSPACE=/home/corp/projects
 Environment=PATH=/home/corp/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin
-ExecStart=/home/corp/.local/share/workshop-venv/bin/uvicorn app:app --host 127.0.0.1 --port 8787
+Nice=-5
+LimitNOFILE=8192
+# One worker: queue + telegram loops live in-process.
+ExecStart=/home/corp/.local/share/workshop-venv/bin/uvicorn app:app --host 127.0.0.1 --port 8787 --timeout-keep-alive 5 --limit-concurrency 200
 Restart=always
 RestartSec=3
 

@@ -13,7 +13,7 @@ import threading
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from webauthn import (
@@ -61,6 +61,7 @@ corp = importlib.util.module_from_spec(importlib.util.spec_from_loader(_loader.n
 _loader.exec_module(corp)
 
 LOCK = threading.Lock()
+_map_heavy = {"t": 0.0, "data": None}
 app = FastAPI(title="Мастерская")
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
@@ -456,21 +457,27 @@ def api_map() -> dict:
         if corp.orch_alive(project["name"]):
             orch.append(project["name"])
     workshop = corp.load_workshop()
-    status = corp.registry_status()
-    contour = api_logic.contour_fields(corp, reg)
+    now = time.time()
+    if not _map_heavy["data"] or now - _map_heavy["t"] > 60:
+        status = corp.registry_status()
+        contour = api_logic.contour_fields(corp, reg)
+        _map_heavy["data"] = {
+            "doctor": contour["doctor"],
+            "trees": contour["trees"],
+            "graphify": contour["graphify"],
+            "graphify_stale": contour["graphify_stale"],
+            "projects": corp.cached_research(reg),
+            "uncommitted_registry": status["uncommitted_registry"],
+            "registry_source": "overlay" if status["uncommitted_registry"] else "git",
+            "workshop_host": api_logic.workshop_host(),
+        }
+        _map_heavy["t"] = now
     return {
-        "doctor": contour["doctor"],
-        "trees": contour["trees"],
-        "graphify": contour["graphify"],
-        "graphify_stale": contour["graphify_stale"],
-        "projects": corp.research_report(reg),
+        **_map_heavy["data"],
         "live": live,
         "orch": orch,
         "queue_running": workshop.get("queue_running"),
         "queue": workshop.get("queue"),
-        "uncommitted_registry": status["uncommitted_registry"],
-        "registry_source": "overlay" if status["uncommitted_registry"] else "git",
-        "workshop_host": api_logic.workshop_host(),
     }
 
 
@@ -510,8 +517,7 @@ def api_settings(probe: bool = False) -> dict:
 
 
 @app.post("/api/settings")
-async def api_settings_save(request: Request) -> dict:
-    body = await request.json()
+def api_settings_save(body: dict = Body(default_factory=dict)) -> dict:
     with LOCK:
         data = corp.load_workshop()
         if "profiles" in body:
@@ -534,20 +540,17 @@ def api_catalog() -> dict:
 
 
 @app.post("/api/pin")
-async def api_pin(request: Request) -> dict:
-    body = await request.json()
+def api_pin(body: dict = Body(default_factory=dict)) -> dict:
     return call(corp.set_pin, corp.load_registry(), body.get("project") or "", True)
 
 
 @app.post("/api/hide")
-async def api_hide(request: Request) -> dict:
-    body = await request.json()
+def api_hide(body: dict = Body(default_factory=dict)) -> dict:
     return call(corp.hide_project, corp.load_registry(), body.get("project") or "")
 
 
 @app.post("/api/archive")
-async def api_archive(request: Request) -> dict:
-    body = await request.json()
+def api_archive(body: dict = Body(default_factory=dict)) -> dict:
     return call(corp.archive_project, corp.load_registry(), body.get("project") or "")
 
 
@@ -557,20 +560,17 @@ def api_repos() -> dict:
 
 
 @app.post("/api/unarchive")
-async def api_unarchive(request: Request) -> dict:
-    body = await request.json()
+def api_unarchive(body: dict = Body(default_factory=dict)) -> dict:
     return call(corp.unarchive_project, corp.load_registry(), body.get("repo") or body.get("project") or "")
 
 
 @app.post("/api/projects/add")
-async def api_projects_add(request: Request) -> dict:
-    body = await request.json()
+def api_projects_add(body: dict = Body(default_factory=dict)) -> dict:
     return call(corp.add_existing, corp.load_registry(), body.get("repo") or "")
 
 
 @app.post("/api/projects/create")
-async def api_projects_create(request: Request) -> dict:
-    body = await request.json()
+def api_projects_create(body: dict = Body(default_factory=dict)) -> dict:
     return call(corp.create_project, corp.load_registry(), body.get("name") or "")
 
 
@@ -599,8 +599,7 @@ def api_project(name: str) -> dict:
 
 
 @app.post("/api/orchestrate")
-async def api_orchestrate(request: Request) -> dict:
-    body = await request.json()
+def api_orchestrate(body: dict = Body(default_factory=dict)) -> dict:
     reg = corp.load_registry()
     repo = body.get("repo") or ""
     if not repo:
@@ -616,8 +615,7 @@ async def api_orchestrate(request: Request) -> dict:
 
 
 @app.post("/api/draft")
-async def api_draft(request: Request) -> dict:
-    body = await request.json()
+def api_draft(body: dict = Body(default_factory=dict)) -> dict:
     action = body.get("action") or ""
     draft_id = body.get("id") or ""
     if action == "propose":
@@ -644,22 +642,19 @@ async def api_draft(request: Request) -> dict:
 
 
 @app.post("/api/take")
-async def api_take(request: Request) -> dict:
-    body = await request.json()
+def api_take(body: dict = Body(default_factory=dict)) -> dict:
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
     return api_logic.with_issue_link(call(corp.take_issue, corp.load_registry(), repo, number), repo, number)
 
 
 @app.post("/api/self/drop")
-async def api_self_drop(request: Request) -> dict:
-    body = await request.json()
+def api_self_drop(body: dict = Body(default_factory=dict)) -> dict:
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
     return api_logic.with_issue_link(call(api_logic.drop_self, corp, repo, number), repo, number)
 
 
 @app.post("/api/move")
-async def api_move(request: Request) -> dict:
-    body = await request.json()
+def api_move(body: dict = Body(default_factory=dict)) -> dict:
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
     result = call(
         api_logic.workshop_move,
@@ -674,8 +669,7 @@ async def api_move(request: Request) -> dict:
 
 
 @app.post("/api/close")
-async def api_close(request: Request) -> dict:
-    body = await request.json()
+def api_close(body: dict = Body(default_factory=dict)) -> dict:
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
     result = call(
         api_logic.workshop_close,
@@ -691,8 +685,7 @@ async def api_close(request: Request) -> dict:
 
 
 @app.post("/api/qa")
-async def api_qa(request: Request) -> dict:
-    body = await request.json()
+def api_qa(body: dict = Body(default_factory=dict)) -> dict:
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
     fail = bool(body.get("fail") or body.get("verdict") == "fail")
     if body.get("verdict") == "pass":
@@ -711,8 +704,7 @@ async def api_qa(request: Request) -> dict:
 
 
 @app.post("/api/qa/start")
-async def api_qa_start(request: Request) -> dict:
-    body = await request.json()
+def api_qa_start(body: dict = Body(default_factory=dict)) -> dict:
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
     issue = call(api_logic.assert_in_qa, corp, repo, number)
     project = call(corp.project_by_repo, corp.load_registry(), repo)
@@ -734,8 +726,7 @@ async def api_qa_start(request: Request) -> dict:
 
 
 @app.post("/api/run")
-async def api_run(request: Request) -> dict:
-    body = await request.json()
+def api_run(body: dict = Body(default_factory=dict)) -> dict:
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
     profile_id = body.get("profile") or ""
     kind = body.get("agent") or ""
@@ -773,8 +764,7 @@ def _run_job(repo: str, number: int, kind: str, model: str, effort: str, fast: b
 
 
 @app.post("/api/queue/add")
-async def api_queue_add(request: Request) -> dict:
-    body = await request.json()
+def api_queue_add(body: dict = Body(default_factory=dict)) -> dict:
     refs = body.get("issues") or []
     if body.get("issue"):
         refs = [body.get("issue"), *refs]
@@ -805,35 +795,28 @@ async def api_queue_add(request: Request) -> dict:
 
 
 @app.post("/api/queue/rm")
-async def api_queue_rm(request: Request) -> dict:
-    body = await request.json()
+def api_queue_rm(body: dict = Body(default_factory=dict)) -> dict:
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
     with LOCK:
         return call(corp.queue_rm, repo, number)
 
 
 @app.post("/api/queue/retry")
-async def api_queue_retry(request: Request) -> dict:
-    body = await request.json()
+def api_queue_retry(body: dict = Body(default_factory=dict)) -> dict:
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
     with LOCK:
         return call(corp.queue_retry, repo, number)
 
 
 @app.post("/api/queue/abort")
-async def api_queue_abort(request: Request) -> dict:
-    body = await request.json()
+def api_queue_abort(body: dict = Body(default_factory=dict)) -> dict:
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
     with LOCK:
         return call(corp.queue_abort, repo, number)
 
 
 @app.post("/api/council")
-async def api_council(request: Request) -> dict:
-    try:
-        body = await request.json()
-    except Exception:
-        body = {}
+def api_council(body: dict = Body(default_factory=dict)) -> dict:
     project = (body.get("project") or "").strip()
     return call(corp.council_start, corp.load_registry(), project)
 

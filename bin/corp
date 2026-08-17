@@ -16,6 +16,7 @@ import sys
 import tempfile
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -5008,11 +5009,30 @@ def column_of(issue: dict) -> str:
 
 
 _board_memo = {"t": 0.0, "key": "", "data": None}
+_research_memo = {"t": 0.0, "key": "", "data": None}
 
 
 def invalidate_board() -> None:
     _board_memo["t"] = 0
     _board_memo["data"] = None
+
+
+def cached_research(reg: dict, cards: list | None = None) -> list[dict]:
+    key = ",".join(p["name"] for p in pinned_projects(reg))
+    now = time.time()
+    if _research_memo["data"] is not None and _research_memo["key"] == key and now - _research_memo["t"] < 60:
+        return _research_memo["data"]
+    data = research_report(reg, cards)
+    _research_memo.update({"t": now, "key": key, "data": data})
+    return data
+
+
+def _pin_issue_job(job: tuple) -> tuple:
+    project, state, limit = job
+    try:
+        return project, state, issues_for(project["repo"], state, limit), ""
+    except CorpError as exc:
+        return project, state, [], str(exc)
 
 
 def board_payload(reg: dict) -> dict:
@@ -5022,14 +5042,24 @@ def board_payload(reg: dict) -> dict:
         return _board_memo["data"]
     cards = []
     warnings = []
-    for project in pinned_projects(reg):
-        if not issues_enabled(project):
-            continue
-        try:
-            open_issues = issues_for(project["repo"], "open", 80)
-            closed = issues_for(project["repo"], "closed", 20)
-        except CorpError as exc:
-            msg = str(exc)
+    pins_on = [p for p in pinned_projects(reg) if issues_enabled(p)]
+    jobs = [(p, "open", 80) for p in pins_on] + [(p, "closed", 20) for p in pins_on]
+    fetched: list[tuple] = []
+    if len(jobs) <= 1:
+        fetched = [_pin_issue_job(job) for job in jobs]
+    else:
+        with ThreadPoolExecutor(max_workers=min(8, len(jobs))) as pool:
+            fetched = list(pool.map(_pin_issue_job, jobs))
+    by_pin: dict[str, dict] = {}
+    for project, state, issues, err in fetched:
+        row = by_pin.setdefault(project["name"], {"project": project, "open": [], "closed": [], "err": ""})
+        row[state] = issues
+        if err:
+            row["err"] = err
+    for _name, row in by_pin.items():
+        project = row["project"]
+        if row["err"]:
+            msg = row["err"]
             if github_transient(msg) and _board_memo["data"] is not None and _board_memo["key"] == cache_key:
                 stale = dict(_board_memo["data"])
                 stale["github_warning"] = "GitHub временно не отвечает. Показываю последнее."
@@ -5037,25 +5067,26 @@ def board_payload(reg: dict) -> dict:
             if github_transient(msg):
                 warnings.append(project["name"])
                 continue
-            raise
+            raise CorpError(msg)
         seen = set()
-        for issue in open_issues + closed:
+        for issue in (row["open"] or []) + (row["closed"] or []):
             number = issue.get("number")
             if number in seen:
                 continue
             seen.add(number)
             role, _slot = slot_for_issue(project["name"], issue)
-            row = {
-                **issue,
-                "project": project["name"],
-                "repo": project["repo"],
-                "column": column_of(issue),
-                "runner": runner_of(issue),
-                "queued": "queued" in label_names(issue),
-                "blocked": "blocked" in label_names(issue),
-                "role": role,
-            }
-            cards.append(row)
+            cards.append(
+                {
+                    **issue,
+                    "project": project["name"],
+                    "repo": project["repo"],
+                    "column": column_of(issue),
+                    "runner": runner_of(issue),
+                    "queued": "queued" in label_names(issue),
+                    "blocked": "blocked" in label_names(issue),
+                    "role": role,
+                }
+            )
     for row in cards:
         reason = issue_eligibility(reg, row["repo"], row["number"], row, cards=cards)
         row["block_reason"] = reason
@@ -5065,7 +5096,7 @@ def board_payload(reg: dict) -> dict:
     drafts = draft_summaries(reg)
     payload = {
         "cards": cards,
-        "projects": research_report(reg, cards),
+        "projects": cached_research(reg, cards),
         "pins": pins,
         "drafts": drafts,
         "github_warning": "GitHub временно не отвечает. Обнови через пару секунд." if warnings else "",

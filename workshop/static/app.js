@@ -34,6 +34,7 @@ let phoneCol = "ready";
 let settingsDirty = false;
 let lastBoardKey = "";
 let refreshBusy = false;
+let refreshTimer = 0;
 let catalogProbed = false;
 let graphFocus = "";
 let graphsCache = [];
@@ -167,13 +168,62 @@ function humanizeError(msg) {
   return s;
 }
 
+function refreshSoon(ms) {
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => refresh(), ms == null ? 250 : ms);
+}
+
+function cardByIssue(issue) {
+  return (state.cards || []).find((c) => issueRef(c) === issue);
+}
+
+function paintLocal() {
+  lastBoardKey = "";
+  lastAutoKey = "";
+  renderFilters();
+  renderBoard();
+  if ($("tab-auto") && $("tab-auto").classList.contains("on") && !autoTyping()) renderAuto();
+}
+
+function patchCard(issue, fields) {
+  const card = cardByIssue(issue);
+  if (!card) return false;
+  Object.assign(card, fields);
+  paintLocal();
+  return true;
+}
+
+function applyOptimistic(path, body) {
+  const issue = body && body.issue;
+  if (!issue) return;
+  if (path === "/api/move" && body.column) patchCard(issue, { column: body.column });
+  if (path === "/api/take") patchCard(issue, { column: "in-progress", runner: "self" });
+  if (path === "/api/self/drop") patchCard(issue, { column: "ready", runner: "" });
+  if (path === "/api/qa" && body.verdict === "pass") patchCard(issue, { column: "done", state: "CLOSED" });
+  if (path === "/api/qa" && (body.fail || body.verdict === "fail")) patchCard(issue, { column: "ready" });
+  if (path === "/api/queue/add") {
+    const card = cardByIssue(issue);
+    patchCard(issue, { queued: true });
+    if (card && !(state.queue || []).some((q) => String(q.issue) === String(card.number) && q.repo === card.repo)) {
+      state.queue = [...(state.queue || []), {
+        repo: card.repo, issue: card.number, project: card.project, title: card.title, status: "waiting",
+      }];
+    }
+  }
+  if (path === "/api/queue/rm" || path === "/api/queue/abort") patchCard(issue, { queued: false });
+  if (path === "/api/run" || path === "/api/qa/start") patchCard(issue, { column: "in-progress" });
+}
+
 async function write(path, body, okMsg) {
+  applyOptimistic(path, body);
   try {
     const data = await api(path, body);
     if (okMsg) flash(okMsg);
+    refreshSoon(250);
     return data;
   } catch (err) {
     flash(err.message, true);
+    refreshSoon(0);
     throw err;
   }
 }
@@ -655,7 +705,6 @@ function bindBoardSortable() {
             await write("/api/move", { issue, column }, `в ${colWord(column)}`);
           }
         } catch (_) { /* strip */ }
-        refresh();
       },
     });
   });
@@ -751,11 +800,11 @@ function sheetHouse(card, extra = "") {
 
 function bindSheetHouse() {
   $("sheet-house").querySelectorAll("[data-col]").forEach((b) => {
-    b.onclick = async () => {
-      try {
-        await write("/api/move", { issue: sheetIssue, column: b.dataset.col }, `в ${colWord(b.dataset.col)}`);
-        closeSheet();
-      } catch (_) { /* strip */ }
+    b.onclick = () => {
+      const issue = sheetIssue;
+      const column = b.dataset.col;
+      closeSheet();
+      write("/api/move", { issue, column }, `в ${colWord(column)}`).catch(() => {});
     };
   });
 }
@@ -763,6 +812,12 @@ function bindSheetHouse() {
 function bindSheetAct(id, fn) {
   const el = $(id);
   if (el) el.onclick = fn;
+}
+
+function sheetWrite(path, extra, okMsg) {
+  const issue = sheetIssue;
+  closeSheet();
+  return write(path, { issue, ...(extra || {}) }, okMsg).catch(() => {});
 }
 
 function issueRole(card) {
@@ -790,7 +845,6 @@ function hideSheet(keepIssue) {
   $("sheet").classList.add("hidden");
   $("scrim").classList.add("hidden");
   setSheetOpen(false);
-  lastBoardKey = "";
   if (!keepIssue && issueFromUrl()) setIssueParam("");
   if (!keepIssue && sheetReturn && sheetReturn.focus) {
     try { sheetReturn.focus(); } catch (_) { /* gone */ }
@@ -928,36 +982,28 @@ function openSheet(issue) {
         <button type="button" class="btn danger" id="sheet-qa-fail-go">Вернуть в колонку Готово</button>
       </label>`;
     house.innerHTML = sheetHouse(card);
-    bindSheetAct("sheet-qa-pass", async () => {
+    bindSheetAct("sheet-qa-pass", () => {
       if (!confirm("Закрыть карточку на GitHub? Это приёмка QA.")) return;
-      try {
-        await write("/api/qa", { issue: sheetIssue, verdict: "pass" }, "QA прошёл");
-        closeSheet();
-      } catch (_) { /* strip */ }
+      sheetWrite("/api/qa", { verdict: "pass" }, "QA прошёл");
     });
     bindSheetAct("sheet-qa-fail", () => {
       const wrap = $("qa-fail-wrap");
       if (wrap) wrap.classList.remove("hidden");
       if ($("qa-fail-note")) $("qa-fail-note").focus();
     });
-    bindSheetAct("sheet-qa-fail-go", async () => {
+    bindSheetAct("sheet-qa-fail-go", () => {
       const note = ($("qa-fail-note")?.value || "").trim();
       if (!note) {
         flash("нужна заметка с правками", true);
         return;
       }
-      try {
-        await write("/api/qa", { issue: sheetIssue, verdict: "fail", fail: true, note }, "QA не принял");
-        closeSheet();
-      } catch (_) { /* strip */ }
+      sheetWrite("/api/qa", { verdict: "fail", fail: true, note }, "QA не принял");
     });
-    bindSheetAct("sheet-qa-slot", async () => {
-      try { await write("/api/qa/start", { issue: sheetIssue }, "QA слот запущен"); closeSheet(); } catch (_) { /* strip */ }
-    });
+    bindSheetAct("sheet-qa-slot", () => sheetWrite("/api/qa/start", {}, "QA слот запущен"));
     bindSheetAct("sheet-console", () => openConsoleFor(card));
-    bindSheetAct("sheet-abort", async () => {
+    bindSheetAct("sheet-abort", () => {
       if (!confirm("Остановить агента и вернуть карточку в колонку Готово?")) return;
-      try { await write("/api/queue/abort", { issue: sheetIssue }, "откатил"); closeSheet(); } catch (_) { /* strip */ }
+      sheetWrite("/api/queue/abort", {}, "откатил");
     });
     bindSheetHouse();
   } else if (card.column === "in-progress" && vpsRunner(card)) {
@@ -965,18 +1011,16 @@ function openSheet(issue) {
     acts.innerHTML = '<button type="button" class="btn primary" id="sheet-console">Консоль</button><button type="button" class="btn" id="sheet-abort">Откатить</button>';
     house.innerHTML = sheetHouse(card);
     bindSheetAct("sheet-console", () => openConsoleFor(card));
-    bindSheetAct("sheet-abort", async () => {
+    bindSheetAct("sheet-abort", () => {
       if (!confirm("Остановить агента и вернуть карточку в колонку Готово?")) return;
-      try { await write("/api/queue/abort", { issue: sheetIssue }, "откатил"); closeSheet(); } catch (_) { /* strip */ }
+      sheetWrite("/api/queue/abort", {}, "откатил");
     });
     bindSheetHouse();
   } else if (card.runner === "self") {
     $("sheet-note").textContent = "Это ты. Карточка у тебя. VPS не стартует.";
     acts.innerHTML = '<button type="button" class="btn primary" id="sheet-drop">Снять</button>';
     house.innerHTML = sheetHouse(card);
-    bindSheetAct("sheet-drop", async () => {
-      try { await write("/api/self/drop", { issue: sheetIssue }, "снял с себя"); closeSheet(); } catch (_) { /* strip */ }
-    });
+    bindSheetAct("sheet-drop", () => sheetWrite("/api/self/drop", {}, "снял с себя"));
     bindSheetHouse();
   } else if (card.column === "backlog") {
     $("sheet-note").textContent = card.blocked
@@ -984,15 +1028,9 @@ function openSheet(issue) {
       : "Ещё не в колонке Готово. Можно перенести, взять себе или поставить в очередь.";
     acts.innerHTML = `<button type="button" class="btn primary" id="sheet-ready">В Готово</button>${selfBtn}${enqueue}`;
     house.innerHTML = sheetHouse(card);
-    bindSheetAct("sheet-ready", async () => {
-      try { await write("/api/move", { issue: sheetIssue, column: "ready" }, "в Готово"); closeSheet(); } catch (_) { /* strip */ }
-    });
-    bindSheetAct("sheet-self", async () => {
-      try { await write("/api/take", { issue: sheetIssue }, "взял себе"); closeSheet(); } catch (_) { /* strip */ }
-    });
-    bindSheetAct("sheet-queue", async () => {
-      try { await write("/api/queue/add", { issue: sheetIssue }, "в очереди"); closeSheet(); } catch (_) { /* strip */ }
-    });
+    bindSheetAct("sheet-ready", () => sheetWrite("/api/move", { column: "ready" }, "в Готово"));
+    bindSheetAct("sheet-self", () => sheetWrite("/api/take", {}, "взял себе"));
+    bindSheetAct("sheet-queue", () => sheetWrite("/api/queue/add", {}, "в очереди"));
     bindSheetHouse();
   } else {
     $("sheet-note").textContent = card.blocked
@@ -1001,27 +1039,18 @@ function openSheet(issue) {
     acts.innerHTML = `<button type="button" class="btn primary" id="sheet-run"${why ? " disabled" : ""}>${why ? escapeHtml(why) : "Запустить"}</button>
       ${selfBtn}${enqueue}`;
     house.innerHTML = sheetHouse(card);
-    bindSheetAct("sheet-self", async () => {
-      try { await write("/api/take", { issue: sheetIssue }, "взял себе"); closeSheet(); } catch (_) { /* strip */ }
-    });
-    bindSheetAct("sheet-queue", async () => {
-      try { await write("/api/queue/add", { issue: sheetIssue }, "в очереди"); closeSheet(); } catch (_) { /* strip */ }
-    });
+    bindSheetAct("sheet-self", () => sheetWrite("/api/take", {}, "взял себе"));
+    bindSheetAct("sheet-queue", () => sheetWrite("/api/queue/add", {}, "в очереди"));
     if ($("sheet-run") && !why) {
-      $("sheet-run").onclick = async () => {
-        try { await write("/api/run", { issue: sheetIssue }, "запустил"); closeSheet(); } catch (_) { /* strip */ }
-      };
+      $("sheet-run").onclick = () => sheetWrite("/api/run", {}, "запустил");
     }
     bindSheetHouse();
   }
-  lastBoardKey = "";
-  renderBoard();
   showSheet();
 }
 
 function closeSheet() {
   hideSheet(false);
-  refresh();
 }
 
 $("sheet-cancel").onclick = closeSheet;
@@ -2505,46 +2534,47 @@ async function refresh() {
     if ($("tab-project").classList.contains("on")) renderProject();
     if ($("tab-graphs").classList.contains("on")) renderGraphs();
     if ($("tab-journal") && $("tab-journal").classList.contains("on")) renderJournal();
-
-    const extras = await Promise.allSettled([api("/api/settings"), api("/api/map")]);
-    if (gen !== refreshGen) return;
-    const settings = extras[0].status === "fulfilled" ? extras[0].value : null;
-    const mapped = extras[1].status === "fulfilled" ? extras[1].value : (state._map || { live: [], orch: [] });
-    if (settings) {
-      const keepProfiles = settingsDirty ? state.profiles : settings.profiles;
-      const keepSlots = settingsDirty ? state.slots : settings.slots;
-      state = { ...state, ...settings, profiles: keepProfiles, slots: keepSlots };
-      if (!settingsDirty) state.catalog = settings.catalog || state.catalog;
-    } else if (extras[0].status === "rejected") {
-      const msg = String(extras[0].reason?.message || extras[0].reason || "");
-      if (msg.includes("passkey")) {
-        showGate(true);
-        return;
+    refreshBusy = false;
+    Promise.allSettled([api("/api/settings"), api("/api/map")]).then((extras) => {
+      if (gen !== refreshGen) return;
+      const settings = extras[0].status === "fulfilled" ? extras[0].value : null;
+      const mapped = extras[1].status === "fulfilled" ? extras[1].value : (state._map || { live: [], orch: [] });
+      if (settings) {
+        const keepProfiles = settingsDirty ? state.profiles : settings.profiles;
+        const keepSlots = settingsDirty ? state.slots : settings.slots;
+        state = { ...state, ...settings, profiles: keepProfiles, slots: keepSlots };
+        if (!settingsDirty) state.catalog = settings.catalog || state.catalog;
+      } else if (extras[0].status === "rejected") {
+        const msg = String(extras[0].reason?.message || extras[0].reason || "");
+        if (msg.includes("passkey")) {
+          showGate(true);
+          return;
+        }
       }
-    }
-    state._map = mapped;
-    const running = (mapped.live || [])[0];
-    const researching = (mapped.orch || [])[0];
-    const writing = liveWritingCard(running);
-    stripIssue = writing ? issueRef(writing) : "";
-    const q = (state.queue || []).filter((i) => i.status === "waiting").length;
-    if (Date.now() >= stripHold) {
-      $("strip").classList.remove("bad");
-      stripTarget = running ? "console" : researching ? "project" : "";
-      $("strip").disabled = !(stripTarget || stripIssue);
-      $("strip").innerHTML = running
-        ? `<i class="pulse"></i><b>VPS · ${escapeHtml(running)}${q ? ` · очередь ${q}` : ""}</b>`
-        : researching
-          ? `<i class="pulse"></i><b>разбор · ${escapeHtml(researching)}</b>`
-          : `<i class="pulse"></i><b>${state.queue_running ? `Автоном · ждут ${q}` : "тихо"}</b>`;
-    }
-    if (!autoTyping()) renderAuto();
-    renderMap(mapped);
-    if (!settingsDirty && settings) {
-      renderSlots();
-      renderSettings();
-    }
-    if ($("tab-console").classList.contains("on")) pollConsole();
+      state._map = mapped;
+      const running = (mapped.live || [])[0];
+      const researching = (mapped.orch || [])[0];
+      const writing = liveWritingCard(running);
+      stripIssue = writing ? issueRef(writing) : "";
+      const q = (state.queue || []).filter((i) => i.status === "waiting").length;
+      if (Date.now() >= stripHold) {
+        $("strip").classList.remove("bad");
+        stripTarget = running ? "console" : researching ? "project" : "";
+        $("strip").disabled = !(stripTarget || stripIssue);
+        $("strip").innerHTML = running
+          ? `<i class="pulse"></i><b>VPS · ${escapeHtml(running)}${q ? ` · очередь ${q}` : ""}</b>`
+          : researching
+            ? `<i class="pulse"></i><b>разбор · ${escapeHtml(researching)}</b>`
+            : `<i class="pulse"></i><b>${state.queue_running ? `Автоном · ждут ${q}` : "тихо"}</b>`;
+      }
+      if (!autoTyping()) renderAuto();
+      renderMap(mapped);
+      if (!settingsDirty && settings) {
+        renderSlots();
+        renderSettings();
+      }
+      if ($("tab-console").classList.contains("on")) pollConsole();
+    });
   } catch (err) {
     if (String(err.message).includes("passkey")) {
       showGate(true);
@@ -2599,4 +2629,4 @@ boot();
 setInterval(() => {
   if (document.hidden || $("app").classList.contains("hidden")) return;
   refresh();
-}, 15000);
+}, 8000);
