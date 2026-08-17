@@ -472,6 +472,22 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     take_cbs = [b["callback_data"] for row in take_btns for b in row if "callback_data" in b]
     assert any(c.startswith("t:") for c in take_cbs) and any(c.startswith("u:") for c in take_cbs)
     assert not any(c.startswith(("qap:", "qaf:", "m:")) for c in take_cbs)
+    self_btns = corp.tg_board_buttons(
+        [{"column": "in-progress", "repo": "o/corp", "number": 7, "title": "mine", "runner": "self", "labels": []}],
+        open_ref="corp#7",
+    )
+    self_cbs = [b["callback_data"] for row in self_btns for b in row if "callback_data" in b]
+    assert any(c.startswith("d:") for c in self_cbs) and not any(c.startswith("t:") for c in self_cbs)
+    cb_src = inspect.getsource(corp.handle_tg_callback)
+    assert "board_click" in cb_src
+    assert "take_issue(" not in cb_src
+    assert "queue_add(" not in cb_src
+    assert "send_to_qa(" not in cb_src
+    assert "get_issue(" not in cb_src
+    assert "close_issue(" not in cb_src
+    assert "board_click" in inspect.getsource(corp.handle_tg_reply)
+    assert "close_issue(" not in inspect.getsource(corp.handle_tg_reply)
+    assert "get_issue(" not in inspect.getsource(corp.tg_issue_in_qa)
     card_view = corp.tg_board_text(board_cards, open_ref="corp#4")
     assert card_view.startswith("<b>Доска · corp#4</b>")
     assert "QA" in card_view
@@ -1634,6 +1650,8 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     old_get = corp.get_issue
     old_research = corp.research_report
     old_take = corp.take_issue
+    old_reg = corp.load_registry
+    old_send = corp.tg_send
     old_board_memo = dict(corp._board_memo)
     old_research_memo = dict(corp._research_memo)
 
@@ -1673,11 +1691,27 @@ Nodes (33): active_projects(), board_payload() (+31 more)
             assert corp.run_one_board_sync(reg2) is True
             assert synced == ["take"]
             assert f"{repo}#42" not in (corp.load_workshop().get("board_ov") or {})
+            notes = []
+            corp.load_registry = lambda: reg2
+            corp.tg_send = lambda *a, **k: notes.append(a[0] if a else "")
+            corp.take_issue = gh_boom
+            extra["column"] = "ready"
+            extra["runner"] = ""
+            data = corp.load_workshop()
+            data["board_snap"] = {"t": 1, "key": "corp", "cards": [extra], "warning": ""}
+            data["board_ov"] = {}
+            data["board_sync"] = []
+            corp.save_workshop(data)
+            corp.handle_tg_callback(f"t:{repo}#43")
+            assert any("взял себе" in str(n) for n in notes)
+            assert corp.load_workshop()["board_sync"][0]["action"] == "take"
     finally:
         corp.issues_for = old_issues
         corp.get_issue = old_get
         corp.research_report = old_research
         corp.take_issue = old_take
+        corp.load_registry = old_reg
+        corp.tg_send = old_send
         corp._board_memo.update(old_board_memo)
         corp._research_memo.update(old_research_memo)
     print("ok")
