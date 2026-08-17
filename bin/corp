@@ -43,6 +43,7 @@ TG_DEDUP_TTL = 90
 TG_QUEUE_NEXT = 3
 TG_P0_MAX = 5
 TG_BOARD_MAX = 5
+TG_BOARD_PAGE = 6
 TG_MENU_MAX = 6
 QUEUE_STALE_SEC = 90
 QUEUE_MAX_ATTEMPTS = 4
@@ -1580,11 +1581,14 @@ def notify(
     buttons: list | None = None,
     keyboard: list | None = None,
     force_reply: bool = False,
+    parse_mode: str = "",
 ) -> dict:
     _, chat = tg_creds()
     if not chat:
         die("telegram not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in ~/.config/corp/env")
     payload = {"chat_id": chat, "text": redact_secrets(text), "disable_web_page_preview": "true"}
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     if force_reply:
         payload["reply_markup"] = json.dumps({"force_reply": True, "selective": True})
     elif buttons:
@@ -1605,9 +1609,10 @@ def notify_safe(
     buttons: list | None = None,
     keyboard: list | None = None,
     force_reply: bool = False,
+    parse_mode: str = "",
 ) -> dict:
     try:
-        return notify(text, buttons=buttons, keyboard=keyboard, force_reply=force_reply) or {}
+        return notify(text, buttons=buttons, keyboard=keyboard, force_reply=force_reply, parse_mode=parse_mode) or {}
     except (SystemExit, CorpError):
         print("telegram skipped", file=sys.stderr)
         return {}
@@ -1650,6 +1655,7 @@ def default_workshop() -> dict:
         "tg_offset": 0,
         "tg_reply": {},
         "tg_status": {},
+        "tg_board": {},
         "registry": {},
         "auto_queue_on_approve": True,
         "queue_retries": QUEUE_MAX_ATTEMPTS,
@@ -1675,6 +1681,7 @@ def load_workshop() -> dict:
     data.setdefault("tg_offset", 0)
     data.setdefault("tg_reply", {})
     data.setdefault("tg_status", {})
+    data.setdefault("tg_board", {})
     data.setdefault("registry", {})
     data.setdefault("auto_queue_on_approve", True)
     data.setdefault("queue_retries", QUEUE_MAX_ATTEMPTS)
@@ -2784,7 +2791,7 @@ def tg_status_body(data: dict | None = None) -> str:
     )
 
 
-def tg_edit_status(message_id: int, text: str, buttons: list | None = None) -> bool:
+def tg_edit_message(message_id: int, text: str, buttons: list | None = None, parse_mode: str = "") -> bool:
     _, chat = tg_creds()
     if not chat:
         return False
@@ -2794,6 +2801,8 @@ def tg_edit_status(message_id: int, text: str, buttons: list | None = None) -> b
         "text": redact_secrets(text),
         "disable_web_page_preview": "true",
     }
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
     if buttons:
         payload["reply_markup"] = json.dumps({"inline_keyboard": buttons})
     try:
@@ -2803,6 +2812,10 @@ def tg_edit_status(message_id: int, text: str, buttons: list | None = None) -> b
     if result.get("ok"):
         return True
     return "not modified" in (result.get("description") or "").lower()
+
+
+def tg_edit_status(message_id: int, text: str, buttons: list | None = None) -> bool:
+    return tg_edit_message(message_id, text, buttons)
 
 
 def tg_upsert_status(process_key: str = "", *, keep_card: bool = False) -> None:
@@ -3053,6 +3066,16 @@ def tg_card_labels(card: dict) -> set[str]:
     return out
 
 
+def tg_html(text: str) -> str:
+    import html
+
+    return html.escape(text or "", quote=False)
+
+
+def tg_card_project(card: dict) -> str:
+    return (card.get("project") or (card.get("repo") or "").rsplit("/", 1)[-1] or "").strip()
+
+
 def tg_board_open(cards: list) -> list:
     out = []
     for card in cards or []:
@@ -3064,70 +3087,236 @@ def tg_board_open(cards: list) -> list:
     return out
 
 
-def tg_board_pick(cards: list, cap: int = TG_BOARD_MAX) -> list:
+def tg_board_filter(cards: list, project: str = "") -> list:
+    opened = tg_board_open(cards)
+    key = (project or "").strip().lower()
+    if not key:
+        return opened
+    return [card for card in opened if tg_card_project(card).lower() == key]
+
+
+def tg_board_rank(cards: list) -> list:
     def rank(card: dict) -> tuple:
         col = card.get("column") or "backlog"
         p0 = 0 if "P0" in tg_card_labels(card) else 1
         order = {"qa": 0, "in-progress": 1, "ready": 2, "backlog": 3}.get(col, 9)
         return (order, p0)
-    return sorted(tg_board_open(cards), key=rank)[: max(0, int(cap))]
+
+    return sorted(cards, key=rank)
 
 
-def tg_board_text(cards: list) -> str:
+def tg_board_pick(cards: list, cap: int = TG_BOARD_MAX) -> list:
+    return tg_board_rank(tg_board_open(cards))[: max(0, int(cap))]
+
+
+def tg_board_page_bounds(n: int, page: int, size: int = TG_BOARD_PAGE) -> tuple[int, int]:
+    n = max(0, int(n))
+    size = max(1, int(size))
+    pages = max(1, (n + size - 1) // size) if n else 1
+    try:
+        page = int(page or 1)
+    except (TypeError, ValueError):
+        page = 1
+    return min(max(1, page), pages), pages
+
+
+def tg_board_slice(cards: list, page: int = 1, size: int = TG_BOARD_PAGE) -> tuple[list, int, int]:
+    page, pages = tg_board_page_bounds(len(cards or []), page, size)
+    start = (page - 1) * size
+    return list(cards or [])[start : start + size], page, pages
+
+
+def tg_board_find(cards: list, ref: str) -> dict | None:
+    want = (ref or "").strip().lower()
+    if not want:
+        return None
+    for card in cards or []:
+        number = card.get("number")
+        if number in (None, ""):
+            continue
+        repo = card.get("repo") or ""
+        short = tg_short_ref(repo or card.get("project") or "", number).lower()
+        full = f"{repo}#{number}".lower()
+        if want in {short, full, f"#{number}"}:
+            return card
+    return None
+
+
+def tg_board_counts(cards: list) -> dict[str, int]:
     counts = {"backlog": 0, "ready": 0, "in-progress": 0, "qa": 0, "done": 0}
     for card in cards or []:
         col = card.get("column") or "backlog"
         if col in counts:
             counts[col] += 1
-    picked = tg_board_pick(cards)
-    lines = [
-        "Доска",
-        "",
-        f"Готово {counts['ready']} · Ход {counts['in-progress']} · QA {counts['qa']}",
-    ]
-    if not picked:
-        lines.extend(["", "Открытых карточек нет.", "", "Дальше: запусти цикл или открой мастерскую."])
+    return counts
+
+
+def tg_board_pin_names(pins: list | None, cards: list | None = None) -> list[str]:
+    names: list[str] = []
+    src = pins
+    if src is None:
+        seen: set[str] = set()
+        src = []
+        for card in cards or []:
+            name = tg_card_project(card)
+            if name and name not in seen:
+                seen.add(name)
+                src.append({"name": name})
+    for item in src:
+        name = (item.get("name") if isinstance(item, dict) else str(item or "")).strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _tg_rows(items: list, n: int) -> list:
+    return [items[i : i + n] for i in range(0, len(items), n)] if items else []
+
+
+def tg_board_text(cards: list, project: str = "", page: int = 1, open_ref: str = "") -> str:
+    ranked = tg_board_rank(tg_board_filter(cards, project))
+    opened = tg_board_find(cards, open_ref) if open_ref else None
+    if opened:
+        ref = tg_short_ref(opened.get("repo") or opened.get("project") or "", opened.get("number"))
+        col = tg_col_ru(opened.get("column") or "backlog")
+        title = tg_clip(opened.get("title") or "", 80)
+        nxt = "QA прошёл или QA не принял." if (opened.get("column") or "") == "qa" else "возьми себе или поставь в очередь."
+        lines = [f"<b>Доска</b> · <b>{tg_html(ref)}</b>", tg_html(col), ""]
+        if title:
+            lines.append(tg_html(title))
+            lines.append("")
+        lines.append(f"Дальше: {nxt}")
         return "\n".join(lines)
-    for card in picked:
+    counts = tg_board_counts(ranked)
+    label = (project or "").strip()
+    head = f"<b>Доска</b> · <b>{tg_html(label)}</b>" if label else "<b>Доска</b>"
+    lines = [head, "", f"Готово {counts['ready']} · Ход {counts['in-progress']} · QA {counts['qa']}"]
+    page_cards, page, pages = tg_board_slice(ranked, page)
+    if not page_cards:
+        lines.extend(["", "Открытых карточек нет.", "", "Дальше: запусти цикл или смени фильтр."])
+        return "\n".join(lines)
+    for card in page_cards:
         ref = tg_short_ref(card.get("repo") or card.get("project") or "", card.get("number"))
-        title = tg_clip(card.get("title") or "", 28)
+        title = tg_clip(card.get("title") or "", 40)
         col = tg_col_ru(card.get("column") or "backlog")
         lines.append("")
-        lines.append(f"{ref} · {col}")
+        lines.append(f"<b>{tg_html(ref)}</b> · {tg_html(col)}")
         if title:
-            lines.append(title)
-    lines.extend(["", "Дальше: открой карточку или возьми себе."])
+            lines.append(tg_html(title))
+    if pages > 1:
+        lines.extend(["", f"{page}/{pages}"])
+    lines.extend(["", "Дальше: открой карточку или смени проект."])
     return "\n".join(lines)
 
 
-def tg_board_buttons(cards: list) -> list:
+def tg_board_card_buttons(card: dict, shop: str = "") -> list:
+    repo = card.get("repo") or ""
+    number = card.get("number")
+    if not repo or number in (None, ""):
+        return [[{"text": "К доске", "callback_data": "b:b"}]]
+    key = issue_ref(repo, int(number))
+    col = card.get("column") or "backlog"
+    labels = tg_card_labels(card)
+    open_url = tg_workshop_issue_url(repo, int(number), key) or shop
     rows = []
-    for card in tg_board_pick(cards):
-        repo = card.get("repo") or ""
-        number = card.get("number")
-        if not repo or number in (None, ""):
-            continue
-        key = issue_ref(repo, int(number))
-        col = card.get("column") or "backlog"
-        labels = tg_card_labels(card)
-        open_url = tg_workshop_issue_url(repo, int(number), key)
-        row = []
-        if open_url:
-            row.append({"text": "Открыть карточку", "url": open_url})
-        if col == "qa":
-            row.append({"text": "QA прошёл", "callback_data": f"qap:{key}"})
-            row.append({"text": "QA не принял", "callback_data": f"qaf:{key}"})
-        else:
-            if "self" in labels:
-                row.append({"text": "Снять с себя", "callback_data": f"d:{key}"})
-            else:
-                row.append({"text": "Я сам", "callback_data": f"t:{key}"})
-            row.append({"text": "В очередь", "callback_data": f"u:{key}"})
-            if col in {"ready", "in-progress", "backlog"}:
-                row.append({"text": "На QA", "callback_data": f"m:{key}"})
-        if row:
-            rows.append(row[:4])
+    if open_url:
+        rows.append([{"text": "Открыть", "url": open_url}])
+    if col == "qa":
+        rows.append([
+            {"text": "QA прошёл", "callback_data": f"qap:{key}"},
+            {"text": "QA не принял", "callback_data": f"qaf:{key}"},
+        ])
+    else:
+        take = {"text": "Снять", "callback_data": f"d:{key}"} if "self" in labels else {"text": "Себе", "callback_data": f"t:{key}"}
+        rows.append([take, {"text": "Очередь", "callback_data": f"u:{key}"}])
+    rows.append([{"text": "К доске", "callback_data": "b:b"}])
     return rows
+
+
+def tg_board_buttons(
+    cards: list,
+    project: str = "",
+    page: int = 1,
+    pins: list | None = None,
+    open_ref: str = "",
+    shop: str = "",
+) -> list:
+    opened = tg_board_find(cards, open_ref) if open_ref else None
+    if opened:
+        return tg_board_card_buttons(opened, shop=shop)
+    ranked = tg_board_rank(tg_board_filter(cards, project))
+    page_cards, page, pages = tg_board_slice(ranked, page)
+    chips = [{"text": "· Все" if not (project or "").strip() else "Все", "callback_data": "b:f:"}]
+    for name in tg_board_pin_names(pins, cards):
+        chips.append({"text": f"· {name}" if (project or "").strip() == name else name, "callback_data": f"b:f:{name}"})
+    rows = _tg_rows(chips, 4)
+    opens = []
+    for card in page_cards:
+        short = tg_short_ref(card.get("repo") or card.get("project") or "", card.get("number"))
+        opens.append({"text": short, "callback_data": f"b:o:{short}"})
+    rows.extend(_tg_rows(opens, 2))
+    if pages > 1:
+        nav = []
+        if page > 1:
+            nav.append({"text": "←", "callback_data": f"b:p:{page - 1}"})
+        nav.append({"text": f"{page}/{pages}", "callback_data": f"b:p:{page}"})
+        if page < pages:
+            nav.append({"text": "→", "callback_data": f"b:p:{page + 1}"})
+        rows.append(nav)
+    if shop:
+        rows.append([{"text": "Мастерская", "url": shop}])
+    return rows
+
+
+def tg_save_board(message_id: int, filt: str, page: int, opened: str) -> None:
+    with workshop_lock():
+        data = load_workshop()
+        data["tg_board"] = {
+            "message_id": int(message_id),
+            "filter": filt,
+            "page": int(page),
+            "open": opened,
+        }
+        save_workshop(data)
+
+
+def tg_upsert_board(
+    *,
+    project: str | None = None,
+    page: int | None = None,
+    open_ref: str | None = None,
+    reset_open: bool = False,
+) -> None:
+    data = load_workshop()
+    state = data.get("tg_board") or {}
+    if project is not None:
+        filt = (project or "").strip()
+        pg = 1 if page is None else int(page)
+    else:
+        filt = str(state.get("filter") or "")
+        pg = int(state.get("page") or 1) if page is None else int(page)
+    if reset_open:
+        opened = ""
+    elif open_ref is not None:
+        opened = (open_ref or "").strip()
+    else:
+        opened = str(state.get("open") or "")
+    cards = board_payload(load_registry()).get("cards") or []
+    pins = pinned_projects(load_registry())
+    ranked = tg_board_rank(tg_board_filter(cards, filt))
+    _, pg, _ = tg_board_slice(ranked, pg)
+    text = tg_board_text(cards, project=filt, page=pg, open_ref=opened)
+    buttons = tg_board_buttons(
+        cards, project=filt, page=pg, pins=pins, open_ref=opened, shop=workshop_public_url()
+    )
+    mid = state.get("message_id")
+    if mid and tg_edit_message(int(mid), text, buttons, parse_mode="HTML"):
+        tg_save_board(int(mid), filt, pg, opened)
+        return
+    result = notify_safe(text, buttons=buttons or None, parse_mode="HTML")
+    new_id = ((result or {}).get("result") or {}).get("message_id")
+    if new_id:
+        tg_save_board(int(new_id), filt, pg, opened)
 
 
 def tg_drafts_text(drafts: list) -> str:
@@ -4132,8 +4321,7 @@ def tg_cmd_doctor(arg: str = "") -> None:
 
 
 def tg_cmd_board(_arg: str = "") -> None:
-    cards = board_payload(load_registry()).get("cards") or []
-    notify_safe(tg_board_text(cards), buttons=tg_board_buttons(cards) or tg_home_buttons())
+    tg_upsert_board(project="", page=1, reset_open=True)
 
 
 def tg_cmd_drafts(_arg: str = "") -> None:
@@ -4326,6 +4514,22 @@ def handle_tg_callback(code: str) -> None:
         return
     if raw == "h:p":
         tg_cmd_help("")
+        return
+    if raw.startswith("b:f:"):
+        tg_upsert_board(project=raw[4:], page=1, reset_open=True)
+        return
+    if raw.startswith("b:p:"):
+        try:
+            page = int(raw[4:])
+        except ValueError:
+            page = 1
+        tg_upsert_board(page=page, reset_open=True)
+        return
+    if raw.startswith("b:o:"):
+        tg_upsert_board(open_ref=raw[4:])
+        return
+    if raw == "b:b":
+        tg_upsert_board(reset_open=True)
         return
     if raw == "?g":
         tg_cmd_go("")

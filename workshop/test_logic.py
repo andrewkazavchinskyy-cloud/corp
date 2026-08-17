@@ -357,14 +357,68 @@ Nodes (33): active_projects(), board_payload() (+31 more)
         {"column": "ready", "repo": "o/corp", "number": 6, "title": "wall of text " * 20, "labels": []},
     ]
     board = corp.tg_board_text(board_cards)
-    assert board.startswith("Доска")
+    assert board.startswith("<b>Доска</b>")
     assert "Готово 2 · Ход 1 · QA 1" in board
-    assert "corp#2" in board and "corp#4" in board
+    assert "<b>corp#2</b>" in board and "<b>corp#4</b>" in board
     assert "corp#5" not in board
-    assert board.count("wall of text") <= 2
+    assert board.count("wall of text") <= 3
     picked = corp.tg_board_pick(board_cards)
     assert len(picked) <= 5
     assert picked[0]["column"] == "qa"
+    assert [c["number"] for c in corp.tg_board_filter(board_cards, "clarity")] == [3]
+    assert {c["number"] for c in corp.tg_board_filter(board_cards, "corp")} == {1, 2, 4, 6}
+    assert 5 not in [c["number"] for c in corp.tg_board_filter(board_cards, "")]
+    assert corp.tg_board_text(board_cards, project="clarity").startswith("<b>Доска</b> · <b>clarity</b>")
+    assert "Готово 0 · Ход 1 · QA 0" in corp.tg_board_text(board_cards, project="clarity")
+    assert corp.tg_html("a <b>x</b> & y") == "a &lt;b&gt;x&lt;/b&gt; &amp; y"
+    dirty_board = corp.tg_board_text(
+        [{"column": "ready", "repo": "o/corp", "number": 8, "title": "fix <b>bold</b> & copy", "labels": []}]
+    )
+    assert "&lt;b&gt;bold&lt;/b&gt; &amp; copy" in dirty_board
+    assert "fix <b>bold</b>" not in dirty_board
+    assert "<b>Доска</b>" in dirty_board
+    page, pages = corp.tg_board_page_bounds(13, 0, 6)
+    assert page == 1 and pages == 3
+    page, pages = corp.tg_board_page_bounds(13, 99, 6)
+    assert page == 3 and pages == 3
+    page, pages = corp.tg_board_page_bounds(0, 5, 6)
+    assert page == 1 and pages == 1
+    many = [{"column": "ready", "repo": "o/corp", "number": n, "title": f"t{n}", "labels": []} for n in range(1, 14)]
+    slice1, page, pages = corp.tg_board_slice(many, 2, 6)
+    assert page == 2 and pages == 3 and [c["number"] for c in slice1] == [7, 8, 9, 10, 11, 12]
+    pins = [{"name": "corp"}, {"name": "clarity"}]
+    list_btns = corp.tg_board_buttons(board_cards, pins=pins)
+    list_cbs = [b["callback_data"] for row in list_btns for b in row if "callback_data" in b]
+    list_txt = [b["text"] for row in list_btns for b in row]
+    assert "b:f:" in list_cbs and "b:f:corp" in list_cbs and "b:f:clarity" in list_cbs
+    assert "· Все" in list_txt and "corp" in list_txt
+    assert all(c.startswith("b:") for c in list_cbs)
+    assert not any(c.startswith(("t:", "d:", "u:", "qap:", "qaf:", "m:")) for c in list_cbs)
+    assert all(len(c.encode()) <= 64 for c in list_cbs)
+    corp_only = corp.tg_board_buttons(board_cards, project="corp", pins=[{"name": "corp"}])
+    corp_txt = [b["text"] for row in corp_only for b in row]
+    corp_cbs = [b["callback_data"] for row in corp_only for b in row if "callback_data" in b]
+    assert "· corp" in corp_txt and "Все" in corp_txt
+    assert "b:f:corp" in corp_cbs
+    paged = corp.tg_board_buttons(many, page=2, pins=[{"name": "corp"}])
+    page_cbs = [b["callback_data"] for row in paged for b in row if "callback_data" in b]
+    page_txt = [b["text"] for row in paged for b in row]
+    assert "b:p:1" in page_cbs and "b:p:2" in page_cbs and "b:p:3" in page_cbs
+    assert "2/3" in page_txt
+    assert all(len(c.encode()) <= 64 for c in page_cbs)
+    assert len(corp.tg_board_text(many).encode()) <= 4096
+    qa_btns = corp.tg_board_buttons(board_cards, open_ref="corp#4")
+    qa_cbs = [b["callback_data"] for row in qa_btns for b in row if "callback_data" in b]
+    assert any(c.startswith("qap:") for c in qa_cbs) and any(c.startswith("qaf:") for c in qa_cbs)
+    assert "b:b" in qa_cbs
+    assert all(len(c.encode()) <= 64 for c in qa_cbs)
+    take_btns = corp.tg_board_buttons(board_cards, open_ref="corp#2")
+    take_cbs = [b["callback_data"] for row in take_btns for b in row if "callback_data" in b]
+    assert any(c.startswith("t:") for c in take_cbs) and any(c.startswith("u:") for c in take_cbs)
+    assert not any(c.startswith(("qap:", "qaf:", "m:")) for c in take_cbs)
+    card_view = corp.tg_board_text(board_cards, open_ref="corp#4")
+    assert card_view.startswith("<b>Доска</b> · <b>corp#4</b>")
+    assert "QA" in card_view
     drafts_text = corp.tg_drafts_text(
         [{"id": "d1", "project": "corp", "title": "First"}, {"id": "d2", "project": "clarity", "title": "Second"}]
     )
