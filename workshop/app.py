@@ -167,7 +167,10 @@ def call(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except corp.CorpError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        msg = str(exc)
+        if corp.github_transient(msg):
+            raise HTTPException(503, "GitHub временно не отвечает. Обнови через пару секунд.") from exc
+        raise HTTPException(400, msg) from exc
 
 
 def check_origin(request: Request) -> None:
