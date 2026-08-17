@@ -165,6 +165,13 @@ def main() -> None:
     assert "--dangerously-skip-permissions" not in claude and "--allowedTools" in claude
     codex = corp.agent_argv("codex", "p", Path("/tmp"), readonly=True)
     assert "read-only" in codex and "--dangerously-bypass-approvals-and-sandbox" not in codex
+    assert "--ask-for-approval" not in codex
+    assert "-C" in codex and "/tmp" in codex
+    assert "--color" in codex
+    coded = corp.agent_argv("codex", "p", Path("/tmp"), readonly=True, last_message=Path("/tmp/orch.json"))
+    assert "-o" in coded and "/tmp/orch.json" in coded
+    assert corp.strip_log_prefix("orch clarity [{\"title\":\"x\"}]", "orch clarity") == "[{\"title\":\"x\"}]"
+    assert corp.parse_json_array(corp.strip_log_prefix("orch clarity [{\"title\":\"x\"}]\norch clarity tail", "orch clarity")) == [{"title": "x"}]
     try:
         corp.agent_argv("grok", "p", Path("/tmp"), readonly=True)
         raise AssertionError("grok readonly should die")
@@ -201,6 +208,13 @@ def main() -> None:
         "clarity",
     )
     assert "#20 [ready] SHIP-4" in lines and "old" not in lines and "other" not in lines
+    with tempfile.TemporaryDirectory() as tmp:
+        dest = Path(tmp)
+        (dest / "docs").mkdir()
+        (dest / "docs" / "SPEC.md").write_text("spec")
+        (dest / "docs" / "DESIGN.md").write_text("design")
+        rels = corp.orch_spec_rels(dest, ["docs/SPEC.md"])
+        assert "docs/SPEC.md" in rels and "docs/DESIGN.md" in rels
     prompt = corp.orch_prompt(Path("/tmp/clarity"), Path("/tmp/orch.json"), ["docs/SPEC.md"], lines, "clarity")
     assert "docs/SPEC.md" in prompt and "#20" in prompt and "do not duplicate" in prompt.lower()
     assert "vs_prd" in prompt and "vs_open" in prompt

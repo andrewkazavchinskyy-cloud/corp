@@ -2460,7 +2460,15 @@ def orch_spec_rels(dest: Path | None, research_files: list[str] | None = None) -
     if dest is None or not dest.is_dir():
         return []
     names = list(research_files or [])
-    for rel in ("docs/PRD.md", "docs/SPEC.md", "docs/SHIP.md", "docs/roadmap.md", "PRD.md", "SPEC.md"):
+    for rel in (
+        "docs/PRD.md",
+        "docs/SPEC.md",
+        "docs/SHIP.md",
+        "docs/DESIGN.md",
+        "docs/roadmap.md",
+        "PRD.md",
+        "SPEC.md",
+    ):
         if rel not in names:
             names.append(rel)
     return [rel for rel in names if (dest / rel).is_file()]
@@ -2557,23 +2565,33 @@ def orchestrate(reg: dict, repo: str) -> dict:
             effort=slot.get("effort") or "",
             fast=bool(slot.get("fast")),
             readonly=True,
+            last_message=out,
         )
+        capture = config_dir() / f"orch-{project['name']}.out"
         if have("tmux"):
-            pipe = (
-                f"{shlex.join(cmd)} 2>&1 | while IFS= read -r line || [ -n \"$line\" ]; do "
-                f"printf '%s %s\\n' {shlex.quote(prefix)} \"$line\"; done"
+            script = (
+                f"cd {shlex.quote(str(dest))} && set +e; "
+                f"{shlex.join(cmd)} >{shlex.quote(str(capture))} 2>&1; rc=$?; "
+                f"awk -v p={shlex.quote(prefix + ' ')} '{{print p $0}}' {shlex.quote(str(capture))} "
+                f"| tee -a {shlex.quote(str(RUN_LOG))}; "
+                f"echo {shlex.quote(prefix)} EXIT:$rc | tee -a {shlex.quote(str(RUN_LOG))}"
             )
-            script = f"cd {shlex.quote(str(dest))} && {pipe} | tee -a {shlex.quote(str(RUN_LOG))}"
             subprocess.run(["tmux", "new-session", "-d", "-s", session, "bash", "-lc", script], check=False)
             while tmux_has(session):
                 time.sleep(3)
         else:
-            subprocess.run(cmd, cwd=dest, check=False)
+            proc = subprocess.run(cmd, cwd=dest, check=False, capture_output=True, text=True)
+            capture.write_text((proc.stdout or "") + (proc.stderr or ""))
+            for line in capture.read_text().splitlines():
+                append_log(f"{prefix} {line}\n")
+            append_log(f"{prefix} EXIT:{proc.returncode}\n")
         payload = []
         if out.is_file():
             payload = parse_json_array(out.read_text())
+        if not payload and capture.is_file():
+            payload = parse_json_array(capture.read_text())
         if not payload and RUN_LOG.is_file():
-            payload = parse_json_array(RUN_LOG.read_text()[-20000:])
+            payload = parse_json_array(strip_log_prefix(RUN_LOG.read_text()[-20000:], prefix))
         for item in payload[:12]:
             if not isinstance(item, dict) or not item.get("title"):
                 continue
@@ -2589,13 +2607,30 @@ def orchestrate(reg: dict, repo: str) -> dict:
                     vs_open=item.get("vs_open") or "",
                 )
             )
+        log = last_log_lines(20, prefix=prefix)
+        blob = capture.read_text()[-8000:] if capture.is_file() else ""
+        exits = [line for line in log.splitlines() if "EXIT:" in line]
+        crashed = (
+            "unexpected argument" in log
+            or "unexpected argument" in blob
+            or bool(exits and not exits[-1].rstrip().endswith("EXIT:0"))
+        )
         if not drafts:
             stage = project_stage(reg, project["name"])
             if stage["stage"] == "нет спеки":
                 drafts.append(new_draft(repo, "написать SPEC", "В репо нет SPEC/PRD. Написать минимальную спеку.", "ready", "build"))
-        set_orch_state(project["name"], "done", drafts=len(drafts), kind=kind)
-    except Exception:
-        set_orch_state(project["name"], "failed", drafts=len(drafts), kind=kind)
+        if crashed and not drafts:
+            set_orch_state(
+                project["name"],
+                "failed",
+                drafts=0,
+                kind=kind,
+                error=tg_clip(log.replace("\n", " "), 160),
+            )
+        else:
+            set_orch_state(project["name"], "done", drafts=len(drafts), kind=kind, error="")
+    except Exception as exc:
+        set_orch_state(project["name"], "failed", drafts=len(drafts), kind=kind, error=tg_clip(str(exc), 160))
         raise
     tg_notify_event(
         "drafts",
@@ -2624,6 +2659,16 @@ def set_tg_offset(offset: int) -> None:
         data = load_workshop()
         data["tg_offset"] = int(offset)
         save_workshop(data)
+
+
+def strip_log_prefix(text: str, prefix: str) -> str:
+    lead = (prefix or "").rstrip() + " "
+    if lead == " ":
+        return text or ""
+    return "\n".join(
+        line[len(lead) :] if line.startswith(lead) else line
+        for line in (text or "").splitlines()
+    )
 
 
 def parse_json_array(text: str) -> list:
@@ -5345,7 +5390,7 @@ def agent_prompt(repo: str, number: int, title: str, url: str, dest: Path, proje
     )
 
 
-def agent_argv(kind: str, prompt: str, dest: Path, model: str = "", effort: str = "", fast: bool = False, readonly: bool = False) -> list[str]:
+def agent_argv(kind: str, prompt: str, dest: Path, model: str = "", effort: str = "", fast: bool = False, readonly: bool = False, last_message: Path | None = None) -> list[str]:
     workspace_root = workspace()
     if readonly:
         if kind == "claude":
@@ -5370,7 +5415,19 @@ def agent_argv(kind: str, prompt: str, dest: Path, model: str = "", effort: str 
                 cmd += ["--effort", "low"]
             return cmd
         if kind == "codex":
-            cmd = ["codex", "exec", "--sandbox", "read-only", "--ask-for-approval", "never"]
+            cmd = [
+                "codex",
+                "exec",
+                "--sandbox",
+                "read-only",
+                "--skip-git-repo-check",
+                "--color",
+                "never",
+                "-C",
+                str(dest),
+            ]
+            if last_message:
+                cmd += ["-o", str(last_message)]
             if model:
                 cmd += ["--model", model]
             if effort:
