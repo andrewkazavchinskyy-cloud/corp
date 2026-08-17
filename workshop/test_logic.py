@@ -506,6 +506,80 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     conn.execute("INSERT INTO sessions(token, created) VALUES('other', ?)", (now,))
     assert auth.delete_all_sessions(conn) >= 1
     assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+    spec_text = (
+        "## Goal\n"
+        "- Ship the billing path for invoices\n"
+        "- Keep the workshop phone dock\n"
+    )
+    spec_issues = [{"title": "Keep the workshop phone dock", "state": "OPEN", "column": "ready"}]
+    gaps = corp.spec_gaps(spec_text, spec_issues)
+    assert any("billing" in item.lower() for item in gaps)
+    assert not any("phone dock" in item.lower() for item in gaps)
+    fixture = Path(tempfile.mkdtemp(prefix="corp-research-"))
+    (fixture / "docs").mkdir()
+    (fixture / "docs" / "SPEC.md").write_text(spec_text)
+    (fixture / ".git").mkdir()
+    (fixture / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    research_reg = {
+        "research_files": ["docs/SPEC.md", "docs/PRD.md"],
+        "projects": [
+            {
+                "name": "demo",
+                "repo": "o/demo",
+                "workshop": True,
+                "status": "active",
+                "roots": [str(fixture)],
+            }
+        ],
+    }
+    report = corp.research_report(
+        research_reg,
+        issues=[
+            {
+                "title": "Keep the workshop phone dock",
+                "project": "demo",
+                "repo": "o/demo",
+                "number": 2,
+                "state": "OPEN",
+                "column": "ready",
+            }
+        ],
+    )
+    assert report[0]["spec_present"] and not report[0]["prd_present"]
+    assert report[0]["gap"] == "частично"
+    assert any("billing" in item.lower() for item in report[0]["unshipped"])
+    git_reg = {
+        "projects": [
+            {"name": "corp", "repo": "o/corp", "workshop": True, "status": "active"},
+            {"name": "LifeBalance", "repo": "o/lb", "status": "active"},
+        ]
+    }
+    merged = corp.merge_registry(
+        git_reg,
+        {
+            "pins": {"LifeBalance": True},
+            "projects": [{"name": "ghost", "repo": "o/ghost", "workshop": True, "status": "active"}],
+        },
+    )
+    pinned_names = [p["name"] for p in corp.pinned_projects(merged)]
+    assert pinned_names == ["corp", "LifeBalance", "ghost"]
+    shadowed = corp.merge_registry(
+        git_reg,
+        {"projects": [{"name": "corp", "repo": "o/corp", "workshop": False, "status": "active"}]},
+    )
+    assert corp.is_pinned(corp.project_by_name(shadowed, "corp"))
+    seed_dir = Path(tempfile.mkdtemp(prefix="corp-seed-"))
+    written = corp.write_project_seed(seed_dir, "demo", workspace_path="/tmp/workspace")
+    assert "docs/SPEC.md" in written and "AGENTS.md" in written
+    agents_text = (seed_dir / "AGENTS.md").read_text()
+    spec_stub = (seed_dir / "docs" / "SPEC.md").read_text()
+    assert "gh repo clone andrewkazavchinskyy-cloud/corp" in agents_text
+    assert "https://github.com/andrewkazavchinskyy-cloud/corp" in agents_text
+    assert "/tmp/workspace" in agents_text
+    assert "iCloud" in agents_text
+    assert (seed_dir / "memory" / "sessions" / ".gitkeep").is_file()
+    assert "hello world" not in spec_stub.lower()
+    assert "First slice" in spec_stub
     live = corp.WORKSHOP_JSON
     before = live.read_text() if live.is_file() else None
     report = corp.run_autopilot_e2e()

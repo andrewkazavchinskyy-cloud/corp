@@ -1324,8 +1324,12 @@ function renderMap(data) {
   ).join("");
   const live = (data.live || []).join(", ") || "тихо";
   const orch = (data.orch || []).join(", ") || "тихо";
+  const registryWarn = data.uncommitted_registry
+    ? `<p class="err">uncommitted registry — git registry.json канон, workshop.json overlay только авария</p>`
+    : "";
   $("map").innerHTML = `
     <article><h2>Контур</h2><p class="meta">/opt/corp · Tailscale · GitHub Issues</p>
+      ${registryWarn}
       <ul>${checks}</ul></article>
     <article><h2>Сейчас</h2>
       <div class="map-now">
@@ -1403,7 +1407,8 @@ async function renderProject() {
     $("project-box").innerHTML = `
       <article class="card"><h3>${escapeHtml(stageLine(s))}</h3>
         <p class="meta">открыто ${s.open || 0} · готово ${s.ready || 0} · P0 ${s.p0 || 0} · ход ${s.in_progress || 0} · QA ${s.qa || 0}</p>
-        <p class="meta">граф ${escapeHtml(s.graph_age || "нет")} · ${(s.docs || []).join(", ") || "нет спеки"}</p>
+        <p class="meta">SPEC ${s.spec_present ? "есть" : "нет"} · PRD ${s.prd_present ? "есть" : "нет"} · разрыв ${escapeHtml(s.gap || "нет")} · граф ${escapeHtml(s.graph_age || "нет")}${s.dirty || s.unpushed ? ` · git ${[s.dirty ? "dirty" : "", s.unpushed ? "unpushed" : ""].filter(Boolean).join("/")}` : ""}</p>
+        <p class="meta">${(s.unshipped || []).map((b) => escapeHtml(b)).join(" · ") || (s.docs || []).join(", ") || "нет спеки"}</p>
       </article>
       ${orchCard(orch, name)}
       ${drafts.map(draftCard).join("") || (researching ? "" : '<p class="meta">Черновиков нет</p>')}`;
@@ -1465,7 +1470,27 @@ function modelField(kind, selected, slot, role) {
   return `${select}<input ${attrs} data-k="model-custom" placeholder="свой id с CLI" value="${escapeHtml(selected || "")}">`;
 }
 
+function paintRegistryWarn() {
+  const room = $("room-repos");
+  if (!room) return;
+  let el = $("registry-warn");
+  if (!el) {
+    el = document.createElement("p");
+    el.id = "registry-warn";
+    el.className = "err";
+    room.insertBefore(el, room.firstChild);
+  }
+  if (state.uncommitted_registry) {
+    el.textContent = "uncommitted registry — git registry.json канон, workshop.json overlay только авария. Пины не бросаем.";
+    el.classList.remove("hidden");
+  } else {
+    el.textContent = "";
+    el.classList.add("hidden");
+  }
+}
+
 function renderSettings() {
+  paintRegistryWarn();
   $("max-parallel").value = state.max_parallel || 3;
   if ($("queue-retries")) $("queue-retries").value = state.queue_retries ?? 2;
   const catalog = (state.catalog && state.catalog.kinds) || {};

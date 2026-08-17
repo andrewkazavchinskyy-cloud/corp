@@ -68,8 +68,13 @@ corp workshop-token
 ```
 
 The unit PATH must include `/home/corp/.local/bin` so Claude/Codex/Grok/`agent`
-are visible. If `registry.json` is not writable by `corp`, pins and new
-repos persist in `~/.config/corp/workshop.json`.
+are visible.
+
+**Registry rule:** git `registry.json` is canonical. If that file is not
+writable, pins and new repos persist in `~/.config/corp/workshop.json` as
+an emergency overlay only. Overlay must not delete git projects or silently
+drop pins. Workshop Settings and Map show `uncommitted registry` until the
+git file is writable again and the overlay is cleared.
 
 **Passkey:** add another key in Настройки while logged in — other
 sessions stay. Recover-token enroll (`corp workshop-token` on the gate)

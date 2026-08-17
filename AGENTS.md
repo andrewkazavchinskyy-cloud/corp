@@ -18,6 +18,8 @@ They must not weaken the Git preservation boundary.
 ## Source of truth
 
 - GitHub is canonical for code, Issues, decisions, roadmap, and safe project memory.
+- git `registry.json` is canonical for projects. `workshop.json` overlay is
+  emergency-only and must surface as uncommitted registry. Do not silently drop pins.
 - Planner is GitHub Issues. Label `ready` means work may be claimed. `self` means the human has it. `queued` is the VPS autonomous queue. `in-progress` plus `via:*` is a VPS runner. `blocked` means skip. Optional tools (Linear, Jira, local boards) are views, not sources of truth.
 - Graphify output lives in each product repo as `graphify-out/` and is committed (except `cache/`). Refresh with `graphify update` after an Issue is closed.
 - Do not commit credentials, tokens, `.env`, server access data, or global agent contracts.
@@ -42,4 +44,7 @@ They must not weaken the Git preservation boundary.
 ## New projects
 
 - Create the project under the user's GitHub folder, then a private repo on `andrewkazavchinskyy-cloud`, then add it to `registry.json`.
+- `create_project` seeds `docs/SPEC.md`, `AGENTS.md` (clone URL for corp, not
+  iCloud paths), and optional `memory/sessions/`. No first GitHub Issue.
+  Workspace is `$CORP_WORKSPACE` or the documented checkout folder.
 - Do not create extra repos for `src/`, `docs/`, `tests/`, `data/`, or `memory/`.

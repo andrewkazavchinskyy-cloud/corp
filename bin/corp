@@ -95,31 +95,83 @@ def _registry_overlay() -> dict:
         return {}
 
 
+def overlay_active(extra: dict | None = None) -> bool:
+    data = extra if extra is not None else _registry_overlay()
+    return bool(data.get("projects") or data.get("pins"))
+
+
+def registry_status() -> dict:
+    extra = _registry_overlay()
+    return {
+        "canonical": "git",
+        "overlay": "emergency",
+        "uncommitted_registry": overlay_active(extra),
+        "registry_writable": os.access(REGISTRY_PATH, os.W_OK),
+        "registry_path": str(REGISTRY_PATH),
+        "overlay_path": str(WORKSHOP_JSON),
+    }
+
+
+def merge_registry(raw: dict, extra: dict) -> dict:
+    """git registry.json is canonical. Overlay is emergency-only.
+
+    Overlay may add local-only projects and apply explicit pin overrides.
+    It must not delete git projects or silently drop git pins.
+    """
+    extra = extra or {}
+    pins = extra.get("pins") or {}
+    by_name: dict[str, dict] = {}
+    ordered: list[dict] = []
+    seen: set[str] = set()
+
+    def take(row: dict, *, overlay_only: bool) -> None:
+        name = row.get("name")
+        if not name or name in seen:
+            return
+        item = dict(row)
+        if name in pins:
+            item["workshop"] = bool(pins[name])
+        elif not overlay_only:
+            item["workshop"] = bool(row.get("workshop"))
+        by_name[name] = item
+        ordered.append(item)
+        seen.add(name)
+
+    for project in raw.get("projects") or []:
+        take(project, overlay_only=False)
+    for project in extra.get("projects") or []:
+        name = project.get("name")
+        if name in seen:
+            continue
+        take(project, overlay_only=True)
+    for name, pinned in pins.items():
+        if not name or name in seen:
+            continue
+        take({"name": name, "status": "active", "workshop": bool(pinned)}, overlay_only=True)
+    out = dict(raw)
+    out["projects"] = ordered
+    return out
+
+
 def load_registry() -> dict:
     raw = json.loads(REGISTRY_PATH.read_text())
     extra = _registry_overlay()
-    if not extra:
+    if not overlay_active(extra):
         return raw
-    by_name = {p.get("name"): dict(p) for p in raw.get("projects") or [] if p.get("name")}
-    for project in extra.get("projects") or []:
-        name = project.get("name")
-        if name:
-            by_name[name] = {**by_name.get(name, {}), **project}
-    pins = extra.get("pins") or {}
-    projects = []
-    seen = set()
-    for project in list(raw.get("projects") or []) + list(extra.get("projects") or []):
-        name = project.get("name")
-        if not name or name in seen:
-            continue
-        row = by_name[name]
-        if name in pins:
-            row["workshop"] = bool(pins[name])
-        projects.append(row)
-        seen.add(name)
-    out = dict(raw)
-    out["projects"] = projects
-    return out
+    return merge_registry(raw, extra)
+
+
+def _clear_registry_overlay() -> None:
+    if not WORKSHOP_JSON.is_file():
+        return
+    try:
+        data = json.loads(WORKSHOP_JSON.read_text())
+    except (OSError, json.JSONDecodeError):
+        return
+    if not data.get("registry"):
+        return
+    data["registry"] = {}
+    save_workshop(data)
 
 
 def workspace() -> Path:
@@ -188,13 +240,20 @@ def save_registry(reg: dict) -> None:
     text = json.dumps(reg, indent=2) + "\n"
     try:
         REGISTRY_PATH.write_text(text)
+        _clear_registry_overlay()
         return
     except OSError:
         pass
+    git_names: set[str] = set()
+    try:
+        git_raw = json.loads(REGISTRY_PATH.read_text())
+        git_names = {p.get("name") for p in git_raw.get("projects") or [] if p.get("name")}
+    except (OSError, json.JSONDecodeError):
+        git_names = set()
     data = load_workshop()
     data["registry"] = {
         "pins": {p.get("name"): bool(p.get("workshop")) for p in reg.get("projects") or [] if p.get("name")},
-        "projects": [dict(p) for p in reg.get("projects") or [] if p.get("name")],
+        "projects": [dict(p) for p in reg.get("projects") or [] if p.get("name") and p.get("name") not in git_names],
     }
     save_workshop(data)
 
@@ -439,26 +498,176 @@ def split_ready(reg: dict, issues: list[dict]) -> tuple[list[dict], list[dict]]:
     return ready, other
 
 
-def research_report(reg: dict) -> list[dict]:
+_SPEC_SKIP_HEADINGS = {
+    "non-goals",
+    "не цели",
+    "handoff",
+    "who this is for",
+    "compare shipped vs this spec",
+}
+_SPEC_STOP = {
+    "this",
+    "that",
+    "with",
+    "from",
+    "have",
+    "been",
+    "will",
+    "only",
+    "must",
+    "does",
+    "into",
+    "over",
+    "after",
+    "before",
+    "project",
+    "github",
+    "issue",
+    "issues",
+}
+
+
+def spec_bullets(text: str, limit: int = 24) -> list[str]:
+    bullets: list[str] = []
+    heading = ""
+    for line in (text or "").splitlines():
+        if line.startswith("#"):
+            heading = line.lstrip("#").strip().lower()
+            continue
+        if heading in _SPEC_SKIP_HEADINGS:
+            continue
+        match = re.match(r"^\s*(?:[-*]|\d+\.)\s+(.+)", line)
+        if not match:
+            continue
+        item = match.group(1).strip()
+        item = re.sub(r"\*\*(.+?)\*\*", r"\1", item)
+        item = re.sub(r"`([^`]+)`", r"\1", item)
+        if len(item) < 12:
+            continue
+        bullets.append(item)
+        if len(bullets) >= limit:
+            break
+    return bullets
+
+
+def _norm_words(text: str) -> set[str]:
+    raw = re.sub(r"[^a-z0-9а-яё]+", " ", (text or "").lower())
+    return {word for word in raw.split() if len(word) >= 4 and word not in _SPEC_STOP}
+
+
+def bullet_covered(bullet: str, issues: list[dict]) -> bool:
+    needle = re.sub(r"[^a-z0-9а-яё]+", " ", (bullet or "").lower()).strip()
+    words = _norm_words(bullet)
+    for issue in issues or []:
+        title = (issue.get("title") or "").strip()
+        if not title:
+            continue
+        hay = re.sub(r"[^a-z0-9а-яё]+", " ", title.lower()).strip()
+        if needle and (needle in hay or hay in needle):
+            return True
+        other = _norm_words(title)
+        if words and other and len(words & other) >= 2:
+            return True
+    return False
+
+
+def spec_gaps(spec_text: str, issues: list[dict], limit: int = 5) -> list[str]:
+    out = []
+    for bullet in spec_bullets(spec_text):
+        if not bullet_covered(bullet, issues):
+            out.append(bullet)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def git_worktree_hint(dest: Path | None) -> dict:
+    if dest is None or not (dest / ".git").exists():
+        return {"dirty": False, "unpushed": False}
+    dirty = bool((run(["git", "status", "--porcelain"], cwd=dest, check=False).stdout or "").strip())
+    ahead = run(["git", "rev-list", "--count", "@{u}..HEAD"], cwd=dest, check=False)
+    unpushed = ahead.returncode == 0 and (ahead.stdout or "").strip() not in {"", "0"}
+    return {"dirty": dirty, "unpushed": unpushed}
+
+
+def graph_age_of(dest: Path | None) -> str:
+    report = dest / "graphify-out" / "GRAPH_REPORT.md" if dest else None
+    if report and report.is_file():
+        return time.strftime("%Y-%m-%d", time.localtime(report.stat().st_mtime))
+    return ""
+
+
+def _issue_ready(issue: dict) -> bool:
+    if (issue.get("column") or "") == "ready":
+        return True
+    labels = issue.get("labels")
+    if not labels:
+        return False
+    return "ready" in label_names(issue)
+
+
+def pin_research(project: dict, dest: Path | None, research_files: list[str], issues: list[dict] | None = None) -> dict:
+    issues = issues or []
+    docs = []
+    spec_rel = ""
+    prd_rel = ""
+    for rel in research_files or []:
+        if dest is not None and (dest / rel).is_file():
+            docs.append(rel)
+            name = Path(rel).name.lower()
+            if name == "spec.md" and not spec_rel:
+                spec_rel = rel
+            if name == "prd.md" and not prd_rel:
+                prd_rel = rel
+    text = ""
+    if dest and spec_rel:
+        text = (dest / spec_rel).read_text()
+    elif dest and prd_rel:
+        text = (dest / prd_rel).read_text()
+    unshipped = spec_gaps(text, issues) if text else []
+    open_items = [item for item in issues if (item.get("state") or "OPEN").upper() != "CLOSED"]
+    open_non_ready = [item for item in open_items if not _issue_ready(item)]
+    spec_present = bool(spec_rel)
+    prd_present = bool(prd_rel)
+    if not spec_present and not prd_present:
+        gap = "нет"
+    elif unshipped or (text and not spec_bullets(text) and open_non_ready):
+        gap = "частично"
+    else:
+        gap = "есть"
+    hint = git_worktree_hint(dest)
+    graph = dest / "graphify-out" / "GRAPH_REPORT.md" if dest else None
+    return {
+        "name": project.get("name"),
+        "repo": project.get("repo"),
+        "cwd": str(dest) if dest else None,
+        "docs": docs,
+        "graphify": bool(graph and graph.is_file()),
+        "graph_age": graph_age_of(dest),
+        "spec_present": spec_present,
+        "prd_present": prd_present,
+        "gap": gap,
+        "unshipped": unshipped,
+        "open_non_ready": [
+            f"{item.get('repo') or ''}#{item.get('number') or ''} {item.get('title') or ''}".strip()
+            for item in open_non_ready[:5]
+        ],
+        "dirty": hint["dirty"],
+        "unpushed": hint["unpushed"],
+    }
+
+
+def research_report(reg: dict, issues: list[dict] | None = None) -> list[dict]:
     files = reg.get("research_files") or []
     rows = []
     for project in pinned_projects(reg) or active_projects(reg):
         dest = project_dir(project)
-        present = []
-        if dest is not None:
-            for rel in files:
-                if (dest / rel).is_file():
-                    present.append(rel)
-        graph = bool(dest and (dest / "graphify-out" / "GRAPH_REPORT.md").is_file())
-        rows.append(
-            {
-                "name": project["name"],
-                "repo": project["repo"],
-                "cwd": str(dest) if dest else None,
-                "docs": present,
-                "graphify": graph,
-            }
-        )
+        mine = [
+            item
+            for item in (issues or [])
+            if item.get("project") == project.get("name") or item.get("repo") == project.get("repo")
+        ]
+        rows.append(pin_research(project, dest, files, mine))
     return rows
 
 
@@ -588,10 +797,11 @@ def cycle_payload(reg: dict) -> dict:
         "mode": "research",
         "next": None,
         "open_unblocked": other[:20],
-        "research": research_report(reg),
+        "research": research_report(reg, issues),
         "instruction": (
             "No ready Issues. Follow HARNESS.md research loop. "
-            "File concrete ready Issues. Do not start greenfield work."
+            "Compare SPEC/PRD to the board. File concrete Issues for gaps. "
+            "Do not mint a fake backlog. Do not auto-Approve drafts."
         ),
     }
 
@@ -627,10 +837,23 @@ def render(payload: dict) -> str:
             lines.append(f"- {item['repo']}#{item['number']} {item['title']}")
     lines += ["", "PROJECTS"]
     for row in payload.get("research") or []:
-        docs = ", ".join(row["docs"]) if row["docs"] else "no planning docs"
-        graph = "graphify yes" if row["graphify"] else "graphify no"
-        cwd = row["cwd"] or "not cloned"
-        lines.append(f"- {row['name']}: {cwd} | {graph} | {docs}")
+        spec = "SPEC yes" if row.get("spec_present") else "SPEC no"
+        prd = "PRD yes" if row.get("prd_present") else "PRD no"
+        gap = row.get("gap") or "нет"
+        graph = f"graph {row.get('graph_age') or 'no'}"
+        git_bits = []
+        if row.get("dirty"):
+            git_bits.append("dirty")
+        if row.get("unpushed"):
+            git_bits.append("unpushed")
+        git = ", ".join(git_bits) if git_bits else "clean"
+        cwd = row.get("cwd") or "not cloned"
+        lines.append(f"- {row.get('name')}: {cwd} | {spec} | {prd} | gap {gap} | {graph} | {git}")
+        for bullet in row.get("unshipped") or []:
+            lines.append(f"  unshipped: {bullet[:120]}")
+        if not row.get("unshipped"):
+            for item in row.get("open_non_ready") or []:
+                lines.append(f"  open not ready: {item[:120]}")
     return "\n".join(lines) + "\n"
 
 
@@ -1273,6 +1496,59 @@ def add_existing(reg: dict, repo: str) -> dict:
     return {"ok": True, "project": found, "cwd": str(dest)}
 
 
+CORP_CLONE = "https://github.com/andrewkazavchinskyy-cloud/corp"
+
+
+def project_seed_files(name: str, workspace_path: str | None = None) -> dict[str, str]:
+    ws = workspace_path or str(workspace())
+    return {
+        "README.md": (
+            f"# {name}\n\n"
+            "Follow the corp harness. Clone it by URL, not a machine path:\n\n"
+            f"    gh repo clone andrewkazavchinskyy-cloud/corp\n"
+            f"    # {CORP_CLONE}\n\n"
+            f"Workspace for checkouts on this machine: `{ws}` "
+            "(or `$CORP_WORKSPACE`).\n"
+        ),
+        "AGENTS.md": (
+            f"# {name}\n\n"
+            "This is a corp project. Find the harness by clone URL, "
+            "not an iCloud or other machine path:\n\n"
+            "    gh repo clone andrewkazavchinskyy-cloud/corp\n"
+            f"    # {CORP_CLONE}\n\n"
+            "Then `cd corp && ./bin/corp bootstrap && ./bin/corp cycle`.\n"
+            "Read `AGENTS.md` and `HARNESS.md` in that clone.\n\n"
+            f"Workspace for product checkouts: `{ws}` (or `$CORP_WORKSPACE`).\n\n"
+            "Take a `ready` GitHub Issue before inventing work.\n"
+            "Never delete repos or rewrite Git history.\n"
+        ),
+        "docs/SPEC.md": (
+            f"# {name}\n\n"
+            "## Goal\n\n"
+            "The smallest useful product this repo should become. Replace this stub.\n\n"
+            "## Non-goals\n\n"
+            "- Not a company, billing surface, or multi-tenant app.\n"
+            "- Not a fake backlog. File Issues only for concrete gaps in this spec.\n\n"
+            "## First slice\n\n"
+            "After clone, `corp cycle` should enter research, see this stub, and let a\n"
+            "stranger file ready Issues against it. No hello-world Issue is minted.\n"
+        ),
+        "memory/sessions/.gitkeep": "",
+    }
+
+
+def write_project_seed(dest: Path, name: str, workspace_path: str | None = None) -> list[str]:
+    written = []
+    for rel, text in project_seed_files(name, workspace_path).items():
+        path = dest / rel
+        if path.exists():
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text if text.endswith("\n") or text == "" else text + "\n")
+        written.append(rel)
+    return written
+
+
 def create_project(reg: dict, name: str) -> dict:
     org = org_name(reg)
     if not name or "/" in name or name != name.strip():
@@ -1282,17 +1558,12 @@ def create_project(reg: dict, name: str) -> dict:
     if proc.returncode != 0 and "already exists" not in (proc.stderr or "").lower():
         die((proc.stderr or proc.stdout or "create failed").strip())
     dest = _clone_to_workspace(repo, name)
-    readme = dest / "README.md"
-    agents = dest / "AGENTS.md"
-    if not readme.exists():
-        readme.write_text(f"# {name}\n\nFollow the corp harness. See corp `AGENTS.md` and `HARNESS.md`.\n")
-    if not agents.exists():
-        agents.write_text(
-            "Follow `corp/AGENTS.md` and `corp/HARNESS.md`.\n\n"
-            "Take a `ready` GitHub Issue before inventing work. "
-            "Never delete repos or rewrite Git history.\n"
-        )
-    run(["git", "add", "README.md", "AGENTS.md"], cwd=dest, check=False)
+    write_project_seed(dest, name)
+    run(
+        ["git", "add", "README.md", "AGENTS.md", "docs/SPEC.md", "memory/sessions"],
+        cwd=dest,
+        check=False,
+    )
     run(["git", "commit", "-m", "corp: thin seed"], cwd=dest, check=False)
     run(["git", "push", "-u", "origin", "HEAD"], cwd=dest, check=False)
     ensure_seed_labels(repo)
@@ -1304,16 +1575,8 @@ def project_stage(reg: dict, name: str) -> dict:
     dest = project_dir(project)
     cards = [c for c in board_payload(reg)["cards"] if c["project"] == name]
     open_cards = [c for c in cards if (c.get("state") or "OPEN").upper() != "CLOSED"]
-    docs = []
-    if dest:
-        for rel in reg.get("research_files") or []:
-            if (dest / rel).is_file():
-                docs.append(rel)
-    graph = dest / "graphify-out" / "GRAPH_REPORT.md" if dest else None
-    graph_age = ""
-    if graph and graph.is_file():
-        graph_age = time.strftime("%Y-%m-%d", time.localtime(graph.stat().st_mtime))
-    has_spec = any(path.endswith(("SPEC.md", "PRD.md")) for path in docs)
+    snap = pin_research(project, dest, reg.get("research_files") or [], cards)
+    has_spec = snap["spec_present"] or snap["prd_present"]
     p0 = sum(1 for c in open_cards if any(l.get("name") == "P0" for l in c.get("labels") or []))
     ready_n = sum(1 for c in open_cards if c["column"] == "ready")
     doing = sum(1 for c in open_cards if c["column"] == "in-progress")
@@ -1339,9 +1602,16 @@ def project_stage(reg: dict, name: str) -> dict:
         "p0": p0,
         "in_progress": doing,
         "qa": qa_n,
-        "docs": docs,
-        "graph_age": graph_age,
+        "docs": snap["docs"],
+        "graph_age": snap["graph_age"],
         "cwd": str(dest) if dest else None,
+        "spec_present": snap["spec_present"],
+        "prd_present": snap["prd_present"],
+        "gap": snap["gap"],
+        "unshipped": snap["unshipped"],
+        "open_non_ready": snap["open_non_ready"],
+        "dirty": snap["dirty"],
+        "unpushed": snap["unpushed"],
     }
 
 
