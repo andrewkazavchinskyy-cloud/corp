@@ -37,12 +37,16 @@ cd corp
 ./bin/corp orchestrate --repo owner/name
 ```
 
-Сервер: [`SERVER.md`](SERVER.md). Мастерская: [`docs/WORKSHOP.md`](docs/WORKSHOP.md).
+Сервер: [`SERVER.md`](SERVER.md). Спека: [`docs/SPEC.md`](docs/SPEC.md).
+Мастерская: [`docs/WORKSHOP.md`](docs/WORKSHOP.md).
 
 ## Документы
 
+- [`docs/SPEC.md`](docs/SPEC.md) — что это за продукт (P0)
 - [`AGENTS.md`](AGENTS.md) — контракт для любого агента
 - [`HARNESS.md`](HARNESS.md) — цикл, Graphify, планер, runner
 - [`docs/WORKSHOP.md`](docs/WORKSHOP.md) — pin, оркестратор, слоты, Telegram
+- [`docs/HANDOFF.md`](docs/HANDOFF.md) — Tailscale → Passkey → песочница; два дерева
 - [`docs/AGENT_ISOLATION.md`](docs/AGENT_ISOLATION.md) — writing agents vs secrets/control plane
+- [`SERVER.md`](SERVER.md) — VPS, live `/opt/corp` vs writers
 - [`registry.json`](registry.json) — проекты корпорации
