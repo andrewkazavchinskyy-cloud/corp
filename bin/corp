@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import re
@@ -14,6 +15,7 @@ import subprocess
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -27,13 +29,19 @@ ENV_PATHS = (
 KIND_BIN = {"claude": "claude", "codex": "codex", "grok": "grok", "cursor": "agent"}
 VIA = {kind: f"via:{kind}" for kind in KIND_BIN}
 STATE_LABELS = ("ready", "blocked", "in-progress", "self", "queued", *VIA.values())
-SEED_LABELS = (*STATE_LABELS, "P0", "P1", "P2", "design", "qa", "qa-fail")
+SEED_LABELS = (*STATE_LABELS, "P0", "P1", "P2", "design", "qa", "qa-fail", "in-qa")
 SLOT_ROLES = ("orchestrator", "build", "design", "qa")
 PULSE_SEC = 15 * 60
+QUEUE_STALE_SEC = 90
+QUEUE_MAX_ATTEMPTS = 4
+QA_ROUNDS = 3
+RETRY_COOLDOWN_SEC = 600
 CONFIG_DIR = Path.home() / ".config" / "corp"
 WORKSHOP_JSON = Path(os.environ["CORP_WORKSHOP_JSON"]) if os.environ.get("CORP_WORKSHOP_JSON") else CONFIG_DIR / "workshop.json"
 TOKEN_PATH = CONFIG_DIR / "workshop-setup-token"
 RUN_LOG = CONFIG_DIR / "run.log"
+CONTROL_PLANE_SECRET_KEYS = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
+AGENT_WRAPPER_DEFAULT = "/usr/local/sbin/corp-agent-exec"
 DEFAULT_PROFILES = [
     {"id": "claude", "kind": "claude", "label": "Claude", "model": "sonnet", "effort": "high", "fast": False},
     {"id": "codex", "kind": "codex", "label": "Codex", "model": "", "effort": "high", "fast": False},
@@ -248,7 +256,59 @@ def issues_enabled(project: dict) -> bool:
     return project.get("issues", True)
 
 
-def issues_for(repo: str, state: str = "open", limit: int = 50) -> list[dict]:
+def github_transient(err: str) -> bool:
+    text = (err or "").lower()
+    needles = (
+        "http 502",
+        "http 503",
+        "http 504",
+        "http 429",
+        "no server is currently available",
+        "something went wrong while executing your query",
+        "timed out",
+        "timeout",
+        "secondary rate limit",
+        "abuse detection",
+    )
+    return any(n in text for n in needles)
+
+
+def github_issues_disabled(err: str) -> bool:
+    text = (err or "").lower()
+    return "disabled issues" in text or "issues are disabled" in text
+
+
+def _parse_issue_list(repo: str, raw: str) -> list[dict]:
+    try:
+        data = json.loads(raw or "[]")
+    except json.JSONDecodeError as exc:
+        die(f"github list parse failed {repo}: {exc}")
+    if not isinstance(data, list):
+        die(f"github list parse failed {repo}: not a list")
+    return data
+
+
+def _normalize_rest_issue(item: dict):
+    if item.get("pull_request"):
+        return None
+    labels = []
+    for label in item.get("labels") or []:
+        if isinstance(label, dict):
+            labels.append({"name": label.get("name") or ""})
+        elif label:
+            labels.append({"name": str(label)})
+    return {
+        "number": item.get("number"),
+        "title": item.get("title") or "",
+        "url": item.get("html_url") or item.get("url") or "",
+        "labels": labels,
+        "updatedAt": item.get("updated_at") or item.get("updatedAt") or "",
+        "state": (item.get("state") or "open").upper(),
+        "closedAt": item.get("closed_at") or item.get("closedAt"),
+    }
+
+
+def _issues_via_graphql(repo: str, state: str, limit: int):
     proc = run(
         [
             "gh",
@@ -265,13 +325,52 @@ def issues_for(repo: str, state: str = "open", limit: int = 50) -> list[dict]:
         ],
         check=False,
     )
+    if proc.returncode == 0:
+        return _parse_issue_list(repo, proc.stdout), ""
+    return None, (proc.stderr or proc.stdout or "").strip()
+
+
+def _issues_via_rest(repo: str, state: str, limit: int):
+    proc = run(
+        [
+            "gh",
+            "api",
+            "-X",
+            "GET",
+            f"repos/{repo}/issues?state={state}&per_page={min(int(limit), 100)}",
+        ],
+        check=False,
+    )
     if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout).strip()
-        if "disabled issues" in err.lower():
+        return None, (proc.stderr or proc.stdout or "").strip()
+    rows = []
+    for item in _parse_issue_list(repo, proc.stdout):
+        if not isinstance(item, dict):
+            continue
+        row = _normalize_rest_issue(item)
+        if row is not None:
+            rows.append(row)
+    return rows, ""
+
+
+def issues_for(repo: str, state: str = "open", limit: int = 50) -> list[dict]:
+    last_err = ""
+    for attempt in range(3):
+        rows, err = _issues_via_graphql(repo, state, limit)
+        if rows is not None:
+            return rows
+        last_err = err
+        if github_issues_disabled(err):
             return []
-        print(f"{repo}: {err}", file=sys.stderr)
+        if not github_transient(err):
+            die(f"github list failed {repo}: {err}")
+        time.sleep(min(0.35 * (attempt + 1), 1.0))
+    rows, rest_err = _issues_via_rest(repo, state, limit)
+    if rows is not None:
+        return rows
+    if github_issues_disabled(rest_err):
         return []
-    return json.loads(proc.stdout or "[]")
+    die(f"github list failed {repo}: {last_err or rest_err}")
 
 
 def label_names(issue: dict) -> set[str]:
@@ -558,6 +657,7 @@ def doctor_payload() -> dict:
         ("tmux", have("tmux")),
         ("telegram token", bool(os.environ.get("TELEGRAM_BOT_TOKEN"))),
         ("telegram chat", bool(os.environ.get("TELEGRAM_CHAT_ID"))),
+        ("agent identity isolated", agent_identity_ready()),
     ]
     return {
         "corp": str(ROOT),
@@ -595,22 +695,32 @@ def tg_post(method: str, payload: dict) -> dict:
     return json.loads(raw.decode() or "{}")
 
 
-def notify(text: str, buttons: list | None = None) -> None:
+def notify(text: str, buttons: list | None = None, keyboard: list | None = None) -> None:
     _, chat = tg_creds()
     if not chat:
         die("telegram not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in ~/.config/corp/env")
     payload = {"chat_id": chat, "text": text, "disable_web_page_preview": "true"}
     if buttons:
         payload["reply_markup"] = json.dumps({"inline_keyboard": buttons})
+    elif keyboard:
+        payload["reply_markup"] = json.dumps({
+            "keyboard": keyboard,
+            "resize_keyboard": True,
+            "is_persistent": True,
+        })
     tg_post("sendMessage", payload)
     print("notified")
 
 
-def notify_safe(text: str, buttons: list | None = None) -> None:
+def notify_safe(text: str, buttons: list | None = None, keyboard: list | None = None) -> None:
     try:
-        notify(text, buttons=buttons)
+        notify(text, buttons=buttons, keyboard=keyboard)
     except (SystemExit, CorpError):
         print("telegram skipped", file=sys.stderr)
+
+
+def need_human(text: str, buttons: list | None = None) -> None:
+    notify_safe("Нужно твоё действие\n" + text, buttons=buttons)
 
 
 def config_dir() -> Path:
@@ -634,6 +744,8 @@ def default_workshop() -> dict:
         "orch": {},
         "tg_offset": 0,
         "registry": {},
+        "auto_queue_on_approve": True,
+        "queue_retries": QUEUE_MAX_ATTEMPTS,
     }
 
 
@@ -654,13 +766,29 @@ def load_workshop() -> dict:
     data.setdefault("orch", {})
     data.setdefault("tg_offset", 0)
     data.setdefault("registry", {})
+    data.setdefault("auto_queue_on_approve", True)
+    data.setdefault("queue_retries", QUEUE_MAX_ATTEMPTS)
     return data
+
+
+@contextmanager
+def workshop_lock():
+    config_dir()
+    handle = open(CONFIG_DIR / "workshop.lock", "a+")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
 
 
 def save_workshop(data: dict) -> None:
     config_dir()
-    WORKSHOP_JSON.write_text(json.dumps(data, indent=2) + "\n")
-    os.chmod(WORKSHOP_JSON, 0o600)
+    tmp = WORKSHOP_JSON.with_name(".workshop.json.tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n")
+    os.chmod(tmp, 0o600)
+    tmp.replace(WORKSHOP_JSON)
 
 
 def profile_by_id(profile_id: str) -> dict:
@@ -693,10 +821,12 @@ def save_slots(name: str, slots: dict) -> dict:
 def slot_for_issue(name: str, issue: dict) -> tuple[str, dict]:
     names = label_names(issue)
     slots = slots_for(name)
-    if "qa" in names and "design" not in names:
+    if "in-qa" in names and "qa-fail" not in names:
         return "qa", slots["qa"]
     if "design" in names:
         return "design", slots["design"]
+    if "qa" in names and "qa-fail" not in names:
+        return "qa", slots["qa"]
     return "build", slots["build"]
 
 
@@ -1047,10 +1177,13 @@ def project_stage(reg: dict, name: str) -> dict:
     p0 = sum(1 for c in open_cards if any(l.get("name") == "P0" for l in c.get("labels") or []))
     ready_n = sum(1 for c in open_cards if c["column"] == "ready")
     doing = sum(1 for c in open_cards if c["column"] == "in-progress")
+    qa_n = sum(1 for c in open_cards if c["column"] == "qa")
     if not has_spec:
         stage = "нет спеки"
     elif p0:
         stage = "горит"
+    elif qa_n:
+        stage = "на QA"
     elif doing:
         stage = "в работе"
     elif ready_n:
@@ -1065,6 +1198,7 @@ def project_stage(reg: dict, name: str) -> dict:
         "ready": ready_n,
         "p0": p0,
         "in_progress": doing,
+        "qa": qa_n,
         "docs": docs,
         "graph_age": graph_age,
         "cwd": str(dest) if dest else None,
@@ -1139,6 +1273,8 @@ def approve_draft(draft_id: str) -> dict:
     labels = [draft.get("label") or "blocked"]
     if draft.get("kind") in {"design", "qa"}:
         labels.append(draft["kind"])
+    for name in labels:
+        ensure_label(draft["repo"], name)
     args = [
         "gh", "issue", "create", "-R", draft["repo"],
         "--title", draft["title"],
@@ -1151,8 +1287,23 @@ def approve_draft(draft_id: str) -> dict:
     drop_draft(draft_id)
     url = (proc.stdout or "").strip()
     invalidate_board()
-    notify_safe(f"{draft['repo']} · завёл · {draft['title']}\n{url}")
-    return {"ok": True, "url": url, "draft": draft}
+    queued = False
+    number = None
+    if "/issues/" in url:
+        try:
+            number = int(url.rstrip("/").split("/")[-1])
+        except ValueError:
+            number = None
+    data = load_workshop()
+    if number and data.get("auto_queue_on_approve", True):
+        try:
+            profile = ((data.get("profiles") or DEFAULT_PROFILES)[0] or {}).get("id") or "claude"
+            queue_add(load_registry(), draft["repo"], number, profile)
+            queued = True
+        except CorpError as exc:
+            notify_safe(f"{draft['repo']} · ишью есть, в очередь не легла: {exc}\n{url}")
+    notify_safe(f"{draft['repo']} · завёл · {draft['title']}\n{url}" + (" · в очередь" if queued else ""))
+    return {"ok": True, "url": url, "draft": draft, "queued": queued, "issue": number}
 
 
 def skip_draft(draft_id: str) -> dict:
@@ -1321,9 +1472,10 @@ def maybe_orchestrate(reg: dict, name: str) -> None:
 
 
 def set_tg_offset(offset: int) -> None:
-    data = load_workshop()
-    data["tg_offset"] = int(offset)
-    save_workshop(data)
+    with workshop_lock():
+        data = load_workshop()
+        data["tg_offset"] = int(offset)
+        save_workshop(data)
 
 
 def parse_json_array(text: str) -> list:
@@ -1363,27 +1515,326 @@ def telegram_tick() -> None:
     for upd in payload.get("result") or []:
         new_offset = int(upd.get("update_id") or 0) + 1
         cb = upd.get("callback_query") or {}
-        msg_chat = str(((cb.get("message") or {}).get("chat") or {}).get("id") or "")
+        msg = upd.get("message") or upd.get("edited_message") or {}
+        if cb:
+            msg_chat = str(((cb.get("message") or {}).get("chat") or {}).get("id") or "")
+            if msg_chat == str(chat):
+                try:
+                    handle_tg_callback(cb.get("data") or "")
+                except CorpError as exc:
+                    notify_safe(str(exc), buttons=tg_menu_buttons())
+            if cb.get("id"):
+                try:
+                    tg_post("answerCallbackQuery", {"callback_query_id": cb["id"]})
+                except CorpError:
+                    pass
+            continue
+        msg_chat = str((msg.get("chat") or {}).get("id") or "")
         if msg_chat != str(chat):
             continue
-        code = (cb.get("data") or "")
-        if code.startswith("a:"):
+        text = (msg.get("text") or "").strip()
+        if text:
             try:
-                approve_draft(code[2:])
+                handle_tg_text(text)
             except CorpError as exc:
-                notify_safe(str(exc))
-        elif code.startswith("s:"):
-            try:
-                skip_draft(code[2:])
-            except CorpError as exc:
-                notify_safe(str(exc))
-        if cb.get("id"):
-            try:
-                tg_post("answerCallbackQuery", {"callback_query_id": cb["id"]})
-            except CorpError:
-                pass
+                notify_safe(str(exc), buttons=tg_menu_buttons())
     if new_offset != offset:
         set_tg_offset(new_offset)
+
+
+def tg_menu_buttons() -> list:
+    return [
+        [{"text": "Сейчас", "callback_data": "c:status"}, {"text": "Очередь", "callback_data": "c:queue"}],
+        [{"text": "Бежит", "callback_data": "c:running"}, {"text": "Сервер", "callback_data": "c:doctor"}],
+        [{"text": "Доска", "callback_data": "c:board"}, {"text": "Черновики", "callback_data": "c:drafts"}],
+        [{"text": "Автоном ▶", "callback_data": "c:go"}, {"text": "Пауза", "callback_data": "c:pause"}],
+    ]
+
+
+def tg_reply_keyboard() -> list:
+    return [
+        [{"text": "Сейчас"}, {"text": "Очередь"}],
+        [{"text": "Бежит"}, {"text": "Сервер"}],
+        [{"text": "Доска"}, {"text": "Черновики"}],
+        [{"text": "Автоном ▶"}, {"text": "Пауза"}],
+    ]
+
+
+def tg_install_commands() -> None:
+    cmds = [
+        {"command": "start", "description": "Меню"},
+        {"command": "status", "description": "Что сейчас"},
+        {"command": "queue", "description": "Очередь"},
+        {"command": "running", "description": "Кто бежит"},
+        {"command": "doctor", "description": "Сервер"},
+        {"command": "board", "description": "Доска"},
+        {"command": "go", "description": "Запустить автоном"},
+        {"command": "pause", "description": "Пауза автонома"},
+        {"command": "retry", "description": "Перезапуск #n"},
+        {"command": "abort", "description": "Откатить #n"},
+        {"command": "drafts", "description": "Черновики"},
+        {"command": "help", "description": "Команды"},
+    ]
+    try:
+        tg_post("setMyCommands", {"commands": json.dumps(cmds)})
+    except (CorpError, SystemExit):
+        pass
+
+
+def tg_parse_command(text: str) -> tuple[str, str]:
+    line = (text or "").strip()
+    if not line:
+        return "", ""
+    if line.startswith("/"):
+        parts = line[1:].split(maxsplit=1)
+        name = (parts[0].split("@")[0] or "").lower()
+        return name, parts[1] if len(parts) > 1 else ""
+    aliases = {
+        "меню": "start",
+        "сейчас": "status",
+        "статус": "status",
+        "очередь": "queue",
+        "бежит": "running",
+        "сервер": "doctor",
+        "доктор": "doctor",
+        "доска": "board",
+        "черновики": "drafts",
+        "старт": "go",
+        "автоном": "go",
+        "автоном ▶": "go",
+        "пауза": "pause",
+        "помощь": "help",
+    }
+    low = line.lower()
+    if low in aliases:
+        return aliases[low], ""
+    for prefix, name in (
+        ("retry ", "retry"),
+        ("/retry ", "retry"),
+        ("перезапуск ", "retry"),
+        ("abort ", "abort"),
+        ("откатить ", "abort"),
+    ):
+        if low.startswith(prefix):
+            return name, line[len(prefix):].strip()
+    return "", ""
+
+
+def tg_parse_issue_arg(raw: str) -> tuple[str, int]:
+    text = (raw or "").strip()
+    if not text:
+        die("укажи #n или owner/repo#n")
+    if text.startswith("#") and text[1:].isdigit():
+        return f"{org_name(load_registry())}/corp", int(text[1:])
+    if text.isdigit():
+        return f"{org_name(load_registry())}/corp", int(text)
+    if "#" in text and "/" not in text:
+        name, number = text.split("#", 1)
+        if number.isdigit():
+            project = project_by_name(load_registry(), name)
+            if project.get("repo"):
+                return project["repo"], int(number)
+    return parse_issue_ref(text)
+
+
+def tg_live_names(reg: dict) -> list[str]:
+    live = []
+    for project in pinned_projects(reg):
+        if tmux_alive(project["name"]):
+            live.append(project["name"])
+        if orch_alive(project["name"]):
+            live.append(f"orch:{project['name']}")
+    return live
+
+
+def tg_cmd_start(_arg: str = "") -> None:
+    notify_safe(
+        "Мастерская\n"
+        "Кнопки внизу или команда.\n"
+        "/status — что сейчас · /queue — очередь · /running — кто бежит\n"
+        "/doctor — сервер · /retry #n — снова · /abort #n — откатить",
+        keyboard=tg_reply_keyboard(),
+    )
+
+
+def tg_cmd_help(arg: str = "") -> None:
+    tg_cmd_start(arg)
+
+
+def tg_cmd_status(_arg: str = "") -> None:
+    data = load_workshop()
+    reg = load_registry()
+    queue = data.get("queue") or []
+    waiting = sum(1 for item in queue if item.get("status") == "waiting")
+    failed = sum(1 for item in queue if item.get("status") == "failed")
+    running = [item for item in queue if item.get("status") == "running"]
+    live = tg_live_names(reg)
+    lines = [
+        "Сейчас",
+        f"автоном: {'идёт' if data.get('queue_running') else 'пауза'}",
+        f"бежит: {', '.join(live) or 'тихо'}",
+        f"очередь: ждут {waiting} · упали {failed}",
+    ]
+    for item in running:
+        lines.append(f"· {item.get('repo')}#{item.get('issue')} {item.get('title') or ''}")
+    notify_safe("\n".join(lines), buttons=tg_menu_buttons())
+
+
+def tg_cmd_queue(_arg: str = "") -> None:
+    queue = load_workshop().get("queue") or []
+    if not queue:
+        notify_safe("Очередь пуста", buttons=tg_menu_buttons())
+        return
+    lines = ["Очередь"]
+    buttons = []
+    for item in queue[:8]:
+        err = f" · {item.get('last_error')}" if item.get("last_error") else ""
+        lines.append(f"{item.get('status')} {item.get('repo')}#{item.get('issue')} {item.get('title') or ''}{err}")
+        if item.get("status") in {"failed", "done"}:
+            key = issue_ref(item["repo"], item["issue"])
+            buttons.append([
+                {"text": f"↻ #{item['issue']}", "callback_data": f"q:{key}"},
+                {"text": f"↩ #{item['issue']}", "callback_data": f"k:{key}"},
+            ])
+    notify_safe("\n".join(lines), buttons=buttons or tg_menu_buttons())
+
+
+def tg_cmd_running(_arg: str = "") -> None:
+    reg = load_registry()
+    live = tg_live_names(reg)
+    running = [item for item in load_workshop().get("queue") or [] if item.get("status") == "running"]
+    lines = ["Бежит", ", ".join(live) or "тихо"]
+    for item in running:
+        lines.append(f"{item.get('repo')}#{item.get('issue')} {item.get('title') or ''}")
+    notify_safe("\n".join(lines), buttons=tg_menu_buttons())
+
+
+def tg_host_lines() -> list[str]:
+    load = os.getloadavg()
+    disk = shutil.disk_usage("/")
+    data = load_workshop()
+    live = tg_live_names(load_registry())
+    return [
+        f"автоном: {'идёт' if data.get('queue_running') else 'пауза'}",
+        f"бежит: {', '.join(live) or 'тихо'}",
+        f"нагрузка {load[0]:.2f} {load[1]:.2f} {load[2]:.2f}",
+        f"диск {disk.free / 1024**3:.0f} ГБ свободно из {disk.total / 1024**3:.0f}",
+    ]
+
+
+def tg_cmd_doctor(_arg: str = "") -> None:
+    rows = tg_host_lines()
+    for item in doctor_payload().get("checks") or []:
+        rows.append(f"{'ok' if item.get('ok') else 'нет'}  {item.get('name')}")
+    notify_safe("Сервер\n" + "\n".join(rows), buttons=tg_menu_buttons())
+
+
+def tg_cmd_board(_arg: str = "") -> None:
+    cards = board_payload(load_registry()).get("cards") or []
+    open_cards = [c for c in cards if (c.get("state") or "OPEN").upper() != "CLOSED"]
+    counts = {name: 0 for name in ("backlog", "ready", "in-progress", "qa")}
+    for card in open_cards:
+        col = card.get("column") or "backlog"
+        if col in counts:
+            counts[col] += 1
+    doing = [c for c in open_cards if c.get("column") in {"in-progress", "qa"}]
+    lines = [
+        "Доска",
+        f"ready {counts['ready']} · ход {counts['in-progress']} · QA {counts['qa']} · backlog {counts['backlog']}",
+    ]
+    for card in doing[:5]:
+        lines.append(f"· {card.get('project')}#{card.get('number')} {card.get('runner') or ''} {card.get('title') or ''}")
+    notify_safe("\n".join(lines), buttons=tg_menu_buttons())
+
+
+def tg_cmd_drafts(_arg: str = "") -> None:
+    prune_drafts()
+    drafts = load_workshop().get("drafts") or []
+    if not drafts:
+        notify_safe("Черновиков нет", buttons=tg_menu_buttons())
+        return
+    lines = ["Черновики"]
+    buttons = []
+    for item in drafts[:6]:
+        lines.append(f"{item.get('label')} {item.get('title')}")
+        buttons.append([
+            {"text": f"Approve {item.get('id')}", "callback_data": f"a:{item.get('id')}"},
+            {"text": "Skip", "callback_data": f"s:{item.get('id')}"},
+        ])
+    notify_safe("\n".join(lines), buttons=buttons)
+
+
+def tg_cmd_go(_arg: str = "") -> None:
+    queue_set_running(True)
+    notify_safe("Автоном запущен", buttons=tg_menu_buttons())
+
+
+def tg_cmd_pause(_arg: str = "") -> None:
+    queue_set_running(False)
+
+
+def tg_cmd_retry(arg: str) -> None:
+    repo, number = tg_parse_issue_arg(arg)
+    queue_retry(repo, number)
+    notify_safe(f"{repo}#{number} · снова в очереди", buttons=tg_menu_buttons())
+
+
+def tg_cmd_abort(arg: str) -> None:
+    repo, number = tg_parse_issue_arg(arg)
+    queue_abort(repo, number)
+    notify_safe(f"{repo}#{number} · откатил на ready", buttons=tg_menu_buttons())
+
+
+TG_HANDLERS = {
+    "start": tg_cmd_start,
+    "help": tg_cmd_help,
+    "menu": tg_cmd_start,
+    "status": tg_cmd_status,
+    "queue": tg_cmd_queue,
+    "running": tg_cmd_running,
+    "doctor": tg_cmd_doctor,
+    "board": tg_cmd_board,
+    "drafts": tg_cmd_drafts,
+    "go": tg_cmd_go,
+    "pause": tg_cmd_pause,
+    "retry": tg_cmd_retry,
+    "abort": tg_cmd_abort,
+}
+
+
+def handle_tg_text(text: str) -> None:
+    name, arg = tg_parse_command(text)
+    handler = TG_HANDLERS.get(name)
+    if handler is None:
+        notify_safe("Не понял. /start — меню.", buttons=tg_menu_buttons())
+        return
+    handler(arg)
+
+
+def handle_tg_callback(code: str) -> None:
+    if code.startswith("c:"):
+        handle_tg_text("/" + code[2:])
+        return
+    if code.startswith("a:"):
+        approve_draft(code[2:])
+        return
+    if code.startswith("s:"):
+        skip_draft(code[2:])
+        return
+    if code.startswith("q:") or code.startswith("qx:"):
+        repo, number = parse_issue_ref(code.split(":", 1)[1])
+        queue_retry(repo, number)
+        notify_safe(f"{repo}#{number} · снова в очереди")
+        return
+    if code.startswith("x:"):
+        repo, number = parse_issue_ref(code[2:])
+        queue_rm(repo, number)
+        notify_safe(f"{repo}#{number} · снял с очереди")
+        return
+    if code.startswith("k:") or code.startswith("qb:"):
+        repo, number = parse_issue_ref(code.split(":", 1)[1])
+        queue_abort(repo, number)
+        notify_safe(f"{repo}#{number} · откатил на ready")
 
 
 def parse_issue_ref(raw: str) -> tuple[str, int]:
@@ -1429,26 +1880,73 @@ def ensure_label(repo: str, name: str) -> None:
             print(f"label {name} on {repo}: {(proc.stderr or '').strip()}", file=sys.stderr)
 
 
+def _gh_ok(proc: subprocess.CompletedProcess, what: str) -> None:
+    if proc.returncode != 0:
+        die(f"{what} failed: {(proc.stderr or proc.stdout or 'github error').strip()}")
+
+
 def add_labels(repo: str, number: int, labels: list[str]) -> None:
     if not labels:
         return
     for name in labels:
         ensure_label(repo, name)
-    run(["gh", "issue", "edit", str(number), "-R", repo, "--add-label", ",".join(labels)], check=False)
+    _gh_ok(
+        run(["gh", "issue", "edit", str(number), "-R", repo, "--add-label", ",".join(labels)], check=False),
+        f"add labels {repo}#{number}",
+    )
 
 
 def remove_labels(repo: str, number: int, labels: list[str]) -> None:
     if not labels:
         return
-    run(["gh", "issue", "edit", str(number), "-R", repo, "--remove-label", ",".join(labels)], check=False)
+    proc = run(["gh", "issue", "edit", str(number), "-R", repo, "--remove-label", ",".join(labels)], check=False)
+    err = (proc.stderr or proc.stdout or "").lower()
+    if proc.returncode != 0 and "not found" not in err and "does not exist" not in err:
+        die(f"remove labels {repo}#{number} failed: {(proc.stderr or proc.stdout or '').strip()}")
 
 
 def comment(repo: str, number: int, body: str) -> None:
-    run(["gh", "issue", "comment", str(number), "-R", repo, "--body", body], check=False)
+    _gh_ok(
+        run(["gh", "issue", "comment", str(number), "-R", repo, "--body", body], check=False),
+        f"comment {repo}#{number}",
+    )
 
 
 def assign_me(repo: str, number: int) -> None:
-    run(["gh", "issue", "edit", str(number), "-R", repo, "--add-assignee", "@me"], check=False)
+    _gh_ok(
+        run(["gh", "issue", "edit", str(number), "-R", repo, "--add-assignee", "@me"], check=False),
+        f"assign {repo}#{number}",
+    )
+
+
+def issue_eligibility(reg: dict, repo: str, number: int, issue: dict | None = None, cards: list | None = None) -> str:
+    issue = issue or get_issue(repo, number)
+    if (issue.get("state") or "").upper() == "CLOSED":
+        return f"{repo}#{number} закрыта"
+    names = label_names(issue)
+    if "blocked" in names:
+        return f"{repo}#{number} blocked"
+    if "self" in names:
+        return f"{repo}#{number} claimed as self"
+    runner = runner_of(issue)
+    if column_of(issue) in {"in-progress", "qa"} and runner not in {"", "queued"}:
+        return f"{repo}#{number} already claimed ({runner})"
+    project = project_by_repo(reg, repo)
+    if cards is not None:
+        blocked = write_block_reason(cards, project["name"], number)
+    else:
+        blocked = pin_write_block(reg, project["name"], except_issue=number)
+    if blocked:
+        return blocked
+    return ""
+
+
+def require_eligible(reg: dict, repo: str, number: int, issue: dict | None = None) -> dict:
+    issue = issue or get_issue(repo, number)
+    reason = issue_eligibility(reg, repo, number, issue)
+    if reason:
+        die(reason)
+    return issue
 
 
 def runner_of(issue: dict) -> str:
@@ -1468,6 +1966,8 @@ def column_of(issue: dict) -> str:
     if state == "CLOSED":
         return "done"
     names = label_names(issue)
+    if "in-qa" in names and "qa-fail" not in names:
+        return "qa"
     if "in-progress" in names:
         return "in-progress"
     if "ready" in names:
@@ -1489,17 +1989,30 @@ def board_payload(reg: dict) -> dict:
     if _board_memo["data"] is not None and _board_memo["key"] == cache_key and now - _board_memo["t"] < 20:
         return _board_memo["data"]
     cards = []
+    warnings = []
     for project in pinned_projects(reg):
         if not issues_enabled(project):
             continue
-        open_issues = issues_for(project["repo"], "open", 80)
-        closed = issues_for(project["repo"], "closed", 20)
+        try:
+            open_issues = issues_for(project["repo"], "open", 80)
+            closed = issues_for(project["repo"], "closed", 20)
+        except CorpError as exc:
+            msg = str(exc)
+            if github_transient(msg) and _board_memo["data"] is not None and _board_memo["key"] == cache_key:
+                stale = dict(_board_memo["data"])
+                stale["github_warning"] = "GitHub временно не отвечает. Показываю последнее."
+                return stale
+            if github_transient(msg):
+                warnings.append(project["name"])
+                continue
+            raise
         seen = set()
         for issue in open_issues + closed:
             number = issue.get("number")
             if number in seen:
                 continue
             seen.add(number)
+            role, _slot = slot_for_issue(project["name"], issue)
             row = {
                 **issue,
                 "project": project["name"],
@@ -1508,13 +2021,25 @@ def board_payload(reg: dict) -> dict:
                 "runner": runner_of(issue),
                 "queued": "queued" in label_names(issue),
                 "blocked": "blocked" in label_names(issue),
+                "role": role,
             }
             cards.append(row)
+    for row in cards:
+        reason = issue_eligibility(reg, row["repo"], row["number"], row, cards=cards)
+        row["block_reason"] = reason
+        row["can_run"] = not reason
     cards.sort(key=lambda item: (item["column"], rank(item)))
     pins = [{"name": p["name"], "repo": p.get("repo")} for p in pinned_projects(reg)]
     drafts = draft_summaries(reg)
-    payload = {"cards": cards, "projects": research_report(reg), "pins": pins, "drafts": drafts}
-    _board_memo.update({"t": time.time(), "key": cache_key, "data": payload})
+    payload = {
+        "cards": cards,
+        "projects": research_report(reg),
+        "pins": pins,
+        "drafts": drafts,
+        "github_warning": "GitHub временно не отвечает. Обнови через пару секунд." if warnings else "",
+    }
+    if cards or not warnings:
+        _board_memo.update({"t": time.time(), "key": cache_key, "data": payload})
     return payload
 
 
@@ -1562,8 +2087,11 @@ def write_block_reason(cards: list, project_name: str, except_issue: int | None 
             continue
         if card.get("runner") == "self":
             return f"{project_name} is claimed as self"
-        if card.get("column") == "in-progress" and card.get("runner") not in {"", "self", "queued"}:
+        col = card.get("column")
+        if col in {"in-progress", "qa"} and card.get("runner") not in {"", "self"}:
             return f"VPS is writing {project_name}"
+        if col == "qa":
+            return f"{project_name} is in QA"
     return ""
 
 
@@ -1587,6 +2115,12 @@ def tmux_has(session: str) -> bool:
 
 def tmux_alive(project: str) -> bool:
     return tmux_has(tmux_session(project))
+
+
+def tmux_kill(project: str) -> None:
+    if not have("tmux") or not tmux_alive(project):
+        return
+    run(["tmux", "kill-session", "-t", tmux_session(project)], check=False)
 
 
 def orch_alive(project: str) -> bool:
@@ -1640,14 +2174,11 @@ def claim(repo: str, number: int, kind: str, note: str) -> None:
 
 
 def take_issue(reg: dict, repo: str, number: int) -> dict:
-    project = project_by_repo(reg, repo)
-    issue = get_issue(repo, number)
-    if (issue.get("state") or "").upper() == "CLOSED":
-        die(f"{repo}#{number} is closed")
-    blocked = pin_write_block(reg, project["name"], except_issue=number)
-    if blocked:
-        die(blocked)
+    require_eligible(reg, repo, number)
     claim(repo, number, "self", "corp-claim: self")
+    latest = get_issue(repo, number)
+    if "in-progress" not in label_names(latest) or "self" not in label_names(latest):
+        die(f"{repo}#{number} claim did not stick on GitHub")
     invalidate_board()
     return {"ok": True, "repo": repo, "issue": number, "runner": "self"}
 
@@ -1688,19 +2219,42 @@ def close_issue(reg: dict, repo: str, number: int) -> dict:
     return {"ok": True, "repo": repo, "issue": number, "graph": graph}
 
 
+def send_to_qa(reg: dict, repo: str, number: int, enqueue: bool = True) -> dict:
+    issue = get_issue(repo, number)
+    if (issue.get("state") or "").upper() == "CLOSED":
+        die(f"{repo}#{number} is closed")
+    remove_labels(repo, number, ["ready", "qa-fail", "in-progress", "self", *VIA.values()])
+    add_labels(repo, number, ["in-qa"])
+    invalidate_board()
+    queued = False
+    if enqueue:
+        profile = ((load_workshop().get("profiles") or DEFAULT_PROFILES)[0] or {}).get("id") or "claude"
+        try:
+            queue_add(reg, repo, number, profile)
+            queued = True
+        except CorpError:
+            try:
+                queue_retry(repo, number)
+                queued = True
+            except CorpError:
+                pass
+    notify_safe(f"{repo}#{number} · на QA · {issue.get('title') or ''}\n{issue.get('url') or ''}")
+    return {"ok": True, "repo": repo, "issue": number, "column": "qa", "queued": queued}
+
+
 def move_issue(reg: dict, repo: str, number: int, column: str) -> dict:
-    if column not in {"backlog", "ready", "in-progress", "done"}:
-        die("column must be backlog|ready|in-progress|done")
-    if column == "done":
-        return close_issue(reg, repo, number)
+    if column not in {"backlog", "ready", "in-progress", "qa", "done"}:
+        die("column must be backlog|ready|in-progress|qa|done")
+    if column in {"done", "qa"}:
+        return send_to_qa(reg, repo, number)
     issue = get_issue(repo, number)
     if (issue.get("state") or "").upper() == "CLOSED":
         run(["gh", "issue", "reopen", str(number), "-R", repo], check=False)
     via_all = list(VIA.values())
     if column == "backlog":
-        remove_labels(repo, number, ["ready", "in-progress", "self", "queued", *via_all])
+        remove_labels(repo, number, ["ready", "in-qa", "qa-fail", "in-progress", "self", "queued", *via_all])
     elif column == "ready":
-        remove_labels(repo, number, ["in-progress", "self", "queued", *via_all])
+        remove_labels(repo, number, ["in-qa", "in-progress", "self", "queued", *via_all])
         add_labels(repo, number, ["ready"])
     else:
         add_labels(repo, number, ["in-progress"])
@@ -1741,8 +2295,9 @@ def agent_prompt(repo: str, number: int, title: str, url: str, dest: Path, proje
         f"{workshop} "
         f"If graphify-out/GRAPH_REPORT.md exists, read it, then run "
         f'`graphify query` for this issue before broad file reads. '
-        f"Commit and push in this product repo. After the issue is closed, "
-        f"graphify update will run — do not rebuild the whole graph yourself unless missing. "
+        f"Commit and push in this product repo. Do not close the issue — "
+        f"QA reviews next and only QA closes it. After close, graphify update "
+        f"will run — do not rebuild the whole graph yourself unless missing. "
         f"Never rewrite git history."
     )
 
@@ -1837,6 +2392,42 @@ def append_log(text: str) -> None:
             handle.write("\n")
 
 
+def agent_user_name() -> str:
+    return os.environ.get("CORP_AGENT_USER", "").strip()
+
+
+def agent_home_dir() -> Path:
+    custom = os.environ.get("CORP_AGENT_HOME", "").strip()
+    if custom:
+        return Path(custom)
+    return Path(f"/home/{agent_user_name()}")
+
+
+def agent_wrapper_path() -> Path:
+    return Path(os.environ.get("CORP_AGENT_WRAPPER", "").strip() or AGENT_WRAPPER_DEFAULT)
+
+
+def agent_identity_ready() -> bool:
+    user = agent_user_name()
+    if not user or not agent_wrapper_path().is_file():
+        return False
+    return run(["sudo", "-n", "-u", user, "true"], check=False).returncode == 0
+
+
+def transitional_env() -> dict[str, str]:
+    return {k: v for k, v in os.environ.items() if k not in CONTROL_PLANE_SECRET_KEYS}
+
+
+def wrap_isolated(cmd: list[str], dest: Path) -> list[str]:
+    if agent_identity_ready():
+        user = agent_user_name()
+        home = agent_home_dir()
+        binary = f"{home}/.local/bin/{cmd[0]}"
+        return ["sudo", "-n", "-u", user, str(agent_wrapper_path()), str(dest), binary, *cmd[1:]]
+    env = transitional_env()
+    return ["env", "-i"] + [f"{k}={v}" for k, v in sorted(env.items())] + cmd
+
+
 def wait_tmux(project: str) -> int:
     session = tmux_session(project)
     while run(["tmux", "has-session", "-t", session], check=False).returncode == 0:
@@ -1847,6 +2438,7 @@ def wait_tmux(project: str) -> int:
 def launch_agent(kind: str, cmd: list[str], dest: Path, project: str, prefix: str = "") -> int:
     tag = prefix or project
     append_log(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} {tag} via {kind} ===\n")
+    cmd = wrap_isolated(cmd, dest)
     if have("tmux"):
         session = tmux_session(project)
         if tmux_alive(project):
@@ -1869,6 +2461,32 @@ def launch_agent(kind: str, cmd: list[str], dest: Path, project: str, prefix: st
     return proc.returncode
 
 
+def _role_prompt(role: str, project: str, names: set[str]) -> str:
+    rework = " Label qa-fail is set: read the latest QA comments and fix those items first." if "qa-fail" in names else ""
+    if role == "design":
+        if project == "corp":
+            return (
+                " This is a workshop design issue: change workshop/static for phone and desktop. "
+                "workshop/preview.html is a reference, not a dump. Do not close the issue. QA reviews next."
+                + rework
+            )
+        return (
+            " This is a design issue: change only preview/docs, not production code. "
+            "Do not close the issue. QA reviews next."
+            + rework
+        )
+    if role == "qa":
+        return (
+            " This is mandatory QA. Review the pushed work against the issue. "
+            "If it passes: comment briefly and close the issue. "
+            "If it fails: leave it open and comment concrete fixes. Do not close."
+        )
+    return (
+        " Implement, commit, and push. Do not close the issue — QA closes it after review."
+        + rework
+    )
+
+
 def run_issue(
     reg: dict,
     repo: str,
@@ -1877,19 +2495,15 @@ def run_issue(
     model: str = "",
     effort: str = "",
     fast: bool = False,
+    _qa_round: int = 0,
 ) -> dict:
     load_env()
     project = project_by_repo(reg, repo)
     dest = project_dir(project)
     if dest is None or not dest.is_dir():
         die(f"project not cloned: {project['name']}. Run ./bin/corp bootstrap")
-    issue = get_issue(repo, number)
+    issue = require_eligible(reg, repo, number)
     names = label_names(issue)
-    if "self" in names:
-        die(f"{repo}#{number} is claimed as self")
-    blocked = pin_write_block(reg, project["name"], except_issue=number)
-    if blocked:
-        die(blocked)
     if tmux_alive(project["name"]):
         die(f"VPS already running {project['name']}")
     role, slot = slot_for_issue(project["name"], issue)
@@ -1901,26 +2515,12 @@ def run_issue(
         die(f"unknown agent {kind}")
     if not have(KIND_BIN[kind]):
         die(f"{kind} CLI is not installed ({KIND_BIN[kind]})")
-    names = label_names(issue)
-    if role == "design":
-        if project["name"] == "corp":
-            extra = (
-                " This is a workshop design issue: change workshop/static for phone and desktop. "
-                "workshop/preview.html is a reference, not a dump. Do not close the issue."
-            )
-        else:
-            extra = " This is a design issue: change only preview/docs, not production code. Do not close the issue."
-    elif role == "qa":
-        extra = " This is QA. If it passes, close the issue. If it fails, leave it open and say qa-fail."
-    elif "qa" in names:
-        extra = " Label qa is set: implement but do not close. QA runs next."
-    else:
-        extra = ""
-    claim(repo, number, kind, f"corp-claim: vps {kind}")
+    extra = _role_prompt(role, project["name"], names)
+    claim(repo, number, kind, f"corp-claim: vps {kind} · {role}")
     prompt = agent_prompt(repo, number, issue.get("title") or "", issue.get("url") or "", dest, project["name"]) + extra
-    notify_safe(f"{repo}#{number} · {kind} · старт · {issue.get('title')}\n{issue.get('url')}")
+    notify_safe(f"{repo}#{number} · {kind} · {role} · старт · {issue.get('title')}\n{issue.get('url')}")
     cmd = agent_argv(kind, prompt, dest, model=model, effort=effort, fast=fast)
-    print(f"running: {cmd[0]} {repo}#{number}", file=sys.stderr)
+    print(f"running: {cmd[0]} {repo}#{number} {role}", file=sys.stderr)
     stop = threading.Event()
     threading.Thread(target=pulse_loop, args=(repo, number, kind, time.time(), stop, model), daemon=True).start()
     try:
@@ -1929,48 +2529,104 @@ def run_issue(
         stop.set()
     latest = get_issue(repo, number)
     closed = (latest.get("state") or "").upper() == "CLOSED"
-    graph = ""
-    if role == "design":
+    if role in {"build", "design"}:
         if closed:
             run(["gh", "issue", "reopen", str(number), "-R", repo], check=False)
             closed = False
-        remove_labels(repo, number, ["in-progress", *VIA.values()])
-        add_labels(repo, number, ["ready"])
-        notify_safe(f"{repo}#{number} · {kind} · design · {latest.get('title')}\n{latest.get('url')}")
-        return {"ok": code == 0, "code": code, "repo": repo, "issue": number, "kind": kind, "graph": "", "closed": False}
-    if role == "build" and "qa" in names:
-        if closed:
-            run(["gh", "issue", "reopen", str(number), "-R", repo], check=False)
-            closed = False
+        if code != 0:
+            reason = f"{role} упал · exit {code}"
+            release_runner(repo, number)
+            notify_safe(f"{repo}#{number} · {kind} · {reason}\n{latest.get('url')}")
+            return {
+                "ok": False,
+                "code": code,
+                "repo": repo,
+                "issue": number,
+                "kind": kind,
+                "graph": "",
+                "closed": False,
+                "error": reason,
+            }
+        remove_labels(repo, number, ["ready", "qa-fail", "in-progress", "self", *VIA.values()])
+        add_labels(repo, number, ["in-qa"])
+        invalidate_board()
+        notify_safe(f"{repo}#{number} · {kind} · {role} готов · на QA\n{latest.get('url')}")
         qa_slot = slots_for(project["name"])["qa"]
-        stop.set()
         return run_issue(
-            reg, repo, number, qa_slot.get("kind") or "claude",
-            model=qa_slot.get("model") or "", effort=qa_slot.get("effort") or "",
+            reg,
+            repo,
+            number,
+            qa_slot.get("kind") or "claude",
+            model=qa_slot.get("model") or "",
+            effort=qa_slot.get("effort") or "",
             fast=bool(qa_slot.get("fast")),
+            _qa_round=_qa_round,
         )
-    if role == "qa" and not (closed and code == 0):
+    if role == "qa":
+        if closed and code == 0:
+            graph = refresh_graph(dest, repo, number)
+            notify_safe(f"{repo}#{number} · {kind} · QA ок · закрыл · {latest.get('title')}\n{latest.get('url')}\n{graph}")
+            maybe_orchestrate(reg, project["name"])
+            return {
+                "ok": True,
+                "code": code,
+                "repo": repo,
+                "issue": number,
+                "kind": kind,
+                "graph": graph,
+                "closed": True,
+            }
         if closed:
             run(["gh", "issue", "reopen", str(number), "-R", repo], check=False)
-            closed = False
-        remove_labels(repo, number, ["in-progress", *VIA.values()])
+        notes = last_log_lines(8, prefix=issue_ref(repo, number))
+        remove_labels(repo, number, ["in-qa", "in-progress", *VIA.values()])
         add_labels(repo, number, ["ready", "qa-fail"])
-        notify_safe(f"{repo}#{number} · {kind} · qa-fail · {latest.get('title')}\n{latest.get('url')}")
-        return {"ok": False, "code": code, "repo": repo, "issue": number, "kind": kind, "graph": "", "closed": False}
-    if closed:
-        graph = refresh_graph(dest, repo, number)
-        notify_safe(f"{repo}#{number} · {kind} · закрыл · {latest.get('title')}\n{latest.get('url')}\n{graph}")
-        maybe_orchestrate(reg, project["name"])
-    elif code != 0:
-        notify_safe(f"{repo}#{number} · {kind} · упал · exit {code}\n{latest.get('url')}")
+        comment(
+            repo,
+            number,
+            "QA не принял. Доработки:\n\n"
+            f"{notes}\n\n"
+            "Исправь по комментариям и не закрывай — карточка снова пойдёт на QA.",
+        )
+        notify_safe(f"{repo}#{number} · {kind} · QA не принял · ещё круг\n{latest.get('url')}\n{notes}")
+        if _qa_round + 1 < QA_ROUNDS:
+            latest = get_issue(repo, number)
+            rework_role, rework = slot_for_issue(project["name"], latest)
+            return run_issue(
+                reg,
+                repo,
+                number,
+                rework.get("kind") or kind,
+                model=rework.get("model") or "",
+                effort=rework.get("effort") or "",
+                fast=bool(rework.get("fast")),
+                _qa_round=_qa_round + 1,
+            )
+        release_runner(repo, number)
+        return {
+            "ok": False,
+            "code": code,
+            "repo": repo,
+            "issue": number,
+            "kind": kind,
+            "graph": "",
+            "closed": False,
+            "qa_fail": True,
+            "error": "QA не принял",
+        }
+    release_runner(repo, number)
+    reason = f"упал · exit {code}" if code != 0 else "не закрыл ишью"
+    notify_safe(f"{repo}#{number} · {kind} · {reason}\n{latest.get('url')}")
     return {
-        "ok": code == 0,
+        "ok": False,
         "code": code,
         "repo": repo,
         "issue": number,
         "kind": kind,
-        "graph": graph,
-        "closed": closed,
+        "graph": "",
+        "closed": False,
+        "incomplete": code == 0,
+        "error": reason,
     }
 
 
@@ -2006,63 +2662,263 @@ def run_next(reg: dict, args: argparse.Namespace) -> None:
     raise SystemExit(0 if result["ok"] else result["code"] or 1)
 
 
-def queue_add(reg: dict, repo: str, number: int, profile_id: str) -> dict:
-    issue = get_issue(repo, number)
-    if "self" in label_names(issue) or column_of(issue) == "in-progress" and runner_of(issue) not in {"", "queued"}:
-        die(f"{repo}#{number} is already claimed")
-    project = project_by_repo(reg, repo)
-    blocked = pin_write_block(reg, project["name"], except_issue=number)
-    if blocked:
-        die(blocked)
-    profile_by_id(profile_id)
-    data = load_workshop()
+def queue_action_buttons(repo: str, number: int) -> list:
     key = issue_ref(repo, number)
-    for item in data["queue"]:
-        if issue_ref(item["repo"], item["issue"]) == key and item.get("status") in {"waiting", "running"}:
-            die(f"{key} is already queued")
+    return [[
+        {"text": "Перезапустить", "callback_data": f"q:{key}"},
+        {"text": "Откатить", "callback_data": f"k:{key}"},
+        {"text": "Снять", "callback_data": f"x:{key}"},
+    ]]
+
+
+def release_runner(repo: str, number: int) -> None:
+    remove_labels(repo, number, ["in-progress", "queued", "self", *VIA.values()])
+    add_labels(repo, number, ["ready"])
+    invalidate_board()
+
+
+def queue_decision(
+    item: dict,
+    *,
+    now: float,
+    tmux_on: bool,
+    issue: dict | None,
+    max_attempts: int = QUEUE_MAX_ATTEMPTS,
+    stale_sec: int = QUEUE_STALE_SEC,
+) -> str:
+    status = item.get("status") or ""
+    attempts = int(item.get("attempts") or 0)
+    started = float(item.get("started_at") or 0)
+    names = label_names(issue) if issue else set()
+    open_issue = bool(issue) and (issue.get("state") or "OPEN").upper() != "CLOSED"
+    claimed = bool(names & ({"in-progress", "queued"} | set(VIA.values())))
+    if status == "done" and open_issue:
+        if claimed or "in-qa" in names or "qa-fail" in names:
+            return "retry" if attempts < max_attempts else "fail"
+        return "fail"
+    if status != "running":
+        return "keep"
+    if tmux_on:
+        return "keep"
+    if issue and not open_issue:
+        return "closed"
+    if started and now - started < min(25, stale_sec):
+        return "keep"
+    return "retry" if attempts < max_attempts else "fail"
+
+
+def reap_queue(
+    data: dict,
+    now: float | None = None,
+    tmux=None,
+    fetch_issue=None,
+) -> list[dict]:
+    now = time.time() if now is None else now
+    tmux = tmux or tmux_alive
+    fetch_issue = fetch_issue or (lambda repo, number: get_issue(repo, number))
+    max_attempts = int(data.get("queue_retries") or QUEUE_MAX_ATTEMPTS)
+    events = []
+    for item in data.get("queue") or []:
+        status = item.get("status") or ""
+        issue = None
+        if status in {"running", "done"}:
+            try:
+                issue = fetch_issue(item["repo"], item["issue"])
+            except Exception:
+                issue = None
+        action = queue_decision(
+            item,
+            now=now,
+            tmux_on=bool(tmux(item.get("project") or "")),
+            issue=issue,
+            max_attempts=max_attempts,
+        )
+        if action == "keep":
+            continue
+        if action == "closed":
+            item["status"] = "done"
+            item["last_error"] = ""
+            events.append({"kind": "closed", "item": item})
+            continue
+        try:
+            release_runner(item["repo"], item["issue"])
+        except Exception:
+            pass
+        item["last_error"] = "раннер умер, ишью не закрыта" if status == "done" else "завис без сессии"
+        item["status"] = "waiting"
+        if action == "fail":
+            item["attempts"] = 0
+            item["retry_after"] = now + RETRY_COOLDOWN_SEC
+        events.append({"kind": "retry", "item": item})
+    return events
+
+
+def propose_draft(reg: dict, project_name: str, title: str, body: str, label: str = "ready") -> dict:
+    project = project_by_name(reg, project_name)
+    if not is_pinned(project) or not project.get("repo"):
+        die("выберите corp или clarity")
+    if not (title or "").strip():
+        die("нужен заголовок")
+    return new_draft(
+        project["repo"],
+        title.strip(),
+        (body or "").strip() or title.strip(),
+        label if label in {"ready", "blocked"} else "ready",
+        "build",
+        why="предложение из мастерской",
+    )
+
+
+def queue_add(
+    reg: dict,
+    repo: str,
+    number: int,
+    profile_id: str,
+    model: str = "",
+    effort: str = "",
+    fast: bool | None = None,
+    kind: str = "",
+) -> dict:
+    issue = get_issue(repo, number)
+    reason = issue_eligibility(reg, repo, number, issue)
+    if reason and "self" in reason:
+        die(reason)
+    if (issue.get("state") or "").upper() == "CLOSED":
+        die(reason or f"{repo}#{number} закрыта")
+    if "blocked" in label_names(issue):
+        die(f"{repo}#{number} blocked")
+    project = project_by_repo(reg, repo)
+    profile = profile_by_id(profile_id) if profile_id else {}
+    kind = (kind or profile.get("kind") or "").strip()
+    model = model or profile.get("model") or ""
+    key = issue_ref(repo, number)
     add_labels(repo, number, ["ready", "queued"])
     comment(repo, number, "corp-claim: queue")
-    data["queue"].append(
-        {
+    with workshop_lock():
+        data = load_workshop()
+        existing = None
+        for item in data["queue"]:
+            if issue_ref(item["repo"], item["issue"]) == key:
+                existing = item
+                break
+        if existing and existing.get("status") in {"waiting", "running"}:
+            die(f"{key} is already queued")
+        row = {
             "repo": repo,
             "issue": number,
             "project": project["name"],
             "title": issue.get("title") or "",
             "url": issue.get("url") or "",
             "profile": profile_id,
+            "kind": kind,
+            "model": model,
+            "effort": effort or profile.get("effort") or "",
+            "fast": bool(fast) if fast is not None else None,
             "status": "waiting",
+            "attempts": int((existing or {}).get("attempts") or 0),
+            "last_error": "",
+            "retry_after": 0,
         }
-    )
-    save_workshop(data)
+        if existing:
+            existing.update(row)
+        else:
+            data["queue"].append(row)
+        save_workshop(data)
     return {"ok": True, "queue": data["queue"]}
 
 
 def queue_rm(repo: str, number: int) -> dict:
-    data = load_workshop()
-    kept = []
-    removed = False
-    for item in data["queue"]:
-        if item["repo"] == repo and item["issue"] == number and item.get("status") != "running":
-            removed = True
-            continue
-        kept.append(item)
-    if not removed:
-        die(f"not in queue: {repo}#{number}")
-    data["queue"] = kept
-    save_workshop(data)
-    remove_labels(repo, number, ["queued"])
+    with workshop_lock():
+        data = load_workshop()
+        kept = []
+        removed = None
+        for item in data["queue"]:
+            if item["repo"] == repo and item["issue"] == number:
+                if item.get("status") == "running" and tmux_alive(item.get("project") or ""):
+                    die(f"{repo}#{number} ещё идёт")
+                removed = item
+                continue
+            kept.append(item)
+        if removed is None:
+            die(f"not in queue: {repo}#{number}")
+        data["queue"] = kept
+        save_workshop(data)
+    try:
+        release_runner(repo, number)
+    except Exception:
+        remove_labels(repo, number, ["queued"])
     return {"ok": True, "queue": kept}
 
 
+def queue_abort(repo: str, number: int) -> dict:
+    with workshop_lock():
+        data = load_workshop()
+        found = None
+        for item in data["queue"]:
+            if item["repo"] == repo and item["issue"] == number:
+                found = item
+                break
+        if found is None:
+            release_runner(repo, number)
+            return {"ok": True, "queue": data["queue"], "aborted": True}
+        tmux_kill(found.get("project") or "")
+        data["queue"] = [item for item in data["queue"] if item is not found]
+        save_workshop(data)
+    release_runner(repo, number)
+    notify_safe(f"{repo}#{number} · откатил на ready")
+    return {"ok": True, "queue": data["queue"], "aborted": True}
+
+
+def queue_retry(repo: str, number: int) -> dict:
+    with workshop_lock():
+        data = load_workshop()
+        found = None
+        for item in data["queue"]:
+            if item["repo"] == repo and item["issue"] == number:
+                found = item
+                break
+        if found is None:
+            die(f"not in queue: {repo}#{number}")
+        if found.get("status") == "running" and tmux_alive(found.get("project") or ""):
+            die(f"{repo}#{number} ещё идёт")
+        try:
+            release_runner(repo, number)
+        except Exception:
+            pass
+        add_labels(repo, number, ["ready", "queued"])
+        found["status"] = "waiting"
+        found["last_error"] = ""
+        found["retry_after"] = 0
+        save_workshop(data)
+    return {"ok": True, "queue": data["queue"]}
+
+
 def queue_set_running(running: bool) -> dict:
-    data = load_workshop()
-    data["queue_running"] = running
-    save_workshop(data)
+    with workshop_lock():
+        data = load_workshop()
+        data["queue_running"] = running
+        save_workshop(data)
+    if not running:
+        waiting = sum(1 for item in data.get("queue") or [] if item.get("status") == "waiting")
+        extra = f" · ждут {waiting}" if waiting else ""
+        notify_safe(f"Автоном на паузе{extra}", buttons=tg_menu_buttons())
     return {"ok": True, "queue_running": running, "queue": data["queue"]}
 
 
 def queue_status() -> dict:
-    return load_workshop()
+    data = load_workshop()
+    try:
+        registry = load_registry()
+    except Exception:
+        return data
+    for item in data.get("queue") or []:
+        if item.get("status") == "waiting":
+            item["blocked_reason"] = pin_write_block(
+                registry, item.get("project") or "", except_issue=item.get("issue")
+            )
+        else:
+            item["blocked_reason"] = ""
+    return data
 
 
 def setup_token_ok(token: str, path: Path | None = None) -> bool:
@@ -2095,7 +2951,7 @@ def cmd_queue(reg: dict, args: argparse.Namespace) -> None:
     if action == "pause":
         print(json.dumps(queue_set_running(False), indent=2))
         return
-    if action in {"add", "rm"}:
+    if action in {"add", "rm", "retry", "abort", "restart", "rollback"}:
         if not args.issue:
             die(f"usage: corp queue {action} --issue owner/repo#n")
         repo, number = parse_issue_ref(args.issue)
@@ -2104,9 +2960,15 @@ def cmd_queue(reg: dict, args: argparse.Namespace) -> None:
                 die("usage: corp queue add --issue owner/repo#n --profile id")
             print(json.dumps(queue_add(reg, repo, number, args.profile), indent=2))
             return
+        if action in {"retry", "restart"}:
+            print(json.dumps(queue_retry(repo, number), indent=2))
+            return
+        if action in {"abort", "rollback"}:
+            print(json.dumps(queue_abort(repo, number), indent=2))
+            return
         print(json.dumps(queue_rm(repo, number), indent=2))
         return
-    die("usage: corp queue add|rm|start|pause|status")
+    die("usage: corp queue add|rm|retry|abort|restart|rollback|start|pause|status")
 
 
 def main() -> None:

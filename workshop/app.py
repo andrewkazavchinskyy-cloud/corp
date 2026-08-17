@@ -114,7 +114,10 @@ def call(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
     except corp.CorpError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        msg = str(exc)
+        if corp.github_transient(msg):
+            raise HTTPException(503, "GitHub временно не отвечает. Обнови через пару секунд.") from exc
+        raise HTTPException(400, msg) from exc
 
 
 def check_origin(request: Request) -> None:
@@ -354,6 +357,10 @@ async def api_settings_save(request: Request) -> dict:
             data["profiles"] = body["profiles"]
         if "max_parallel" in body:
             data["max_parallel"] = max(1, min(3, int(body["max_parallel"])))
+        if "auto_queue_on_approve" in body:
+            data["auto_queue_on_approve"] = bool(body["auto_queue_on_approve"])
+        if "queue_retries" in body:
+            data["queue_retries"] = max(0, min(5, int(body["queue_retries"])))
         if "slots" in body and isinstance(body["slots"], dict):
             data["slots"] = body["slots"]
         corp.save_workshop(data)
@@ -442,11 +449,20 @@ async def api_draft(request: Request) -> dict:
     body = await request.json()
     action = body.get("action") or ""
     draft_id = body.get("id") or ""
+    if action == "propose":
+        return call(
+            corp.propose_draft,
+            corp.load_registry(),
+            body.get("project") or "",
+            body.get("title") or "",
+            body.get("body") or "",
+            body.get("label") or "ready",
+        )
     if action == "approve":
         return call(corp.approve_draft, draft_id)
     if action == "skip":
         return call(corp.skip_draft, draft_id)
-    raise HTTPException(400, "action must be approve|skip")
+    raise HTTPException(400, "action must be propose|approve|skip")
 
 
 @app.post("/api/take")
@@ -479,20 +495,21 @@ async def api_run(request: Request) -> dict:
     model = body.get("model") or ""
     effort = body.get("effort") or ""
     fast = bool(body.get("fast"))
-    if profile_id:
+    if body.get("override") and profile_id:
         profile = call(corp.profile_by_id, profile_id)
         kind = kind or profile.get("kind") or ""
         model = model or profile.get("model") or ""
         effort = effort or profile.get("effort") or ""
         fast = fast or bool(profile.get("fast"))
-    if not kind:
-        raise HTTPException(400, "pick a profile")
     threading.Thread(
         target=_run_job,
         args=(repo, number, kind, model, effort, fast),
         daemon=True,
     ).start()
-    return {"ok": True, "started": True}
+    issue = call(corp.get_issue, repo, number)
+    project = call(corp.project_by_repo, corp.load_registry(), repo)
+    role, slot = corp.slot_for_issue(project["name"], issue)
+    return {"ok": True, "started": True, "role": role, "slot": {"kind": slot.get("kind"), "model": slot.get("model")}}
 
 
 def _run_job(repo: str, number: int, kind: str, model: str, effort: str, fast: bool) -> None:
@@ -507,9 +524,33 @@ def _run_job(repo: str, number: int, kind: str, model: str, effort: str, fast: b
 @app.post("/api/queue/add")
 async def api_queue_add(request: Request) -> dict:
     body = await request.json()
-    repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
+    refs = body.get("issues") or []
+    if body.get("issue"):
+        refs = [body.get("issue"), *refs]
+    if not refs:
+        raise HTTPException(400, "issue required")
+    profile = body.get("profile") or ""
+    model = body.get("model") or ""
+    effort = body.get("effort") or ""
+    fast = body.get("fast")
+    added = []
     with LOCK:
-        return call(corp.queue_add, corp.load_registry(), repo, number, body.get("profile") or "")
+        reg = corp.load_registry()
+        for raw in refs:
+            repo, number = call(corp.parse_issue_ref, raw)
+            row = call(
+                corp.queue_add,
+                reg,
+                repo,
+                number,
+                body.get("profiles", {}).get(raw) or profile,
+                model,
+                effort,
+                fast,
+                body.get("kind") or "",
+            )
+            added.append(f"{repo}#{number}")
+    return {"ok": True, "added": added, "queue": (row or {}).get("queue")}
 
 
 @app.post("/api/queue/rm")
@@ -518,6 +559,22 @@ async def api_queue_rm(request: Request) -> dict:
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
     with LOCK:
         return call(corp.queue_rm, repo, number)
+
+
+@app.post("/api/queue/retry")
+async def api_queue_retry(request: Request) -> dict:
+    body = await request.json()
+    repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
+    with LOCK:
+        return call(corp.queue_retry, repo, number)
+
+
+@app.post("/api/queue/abort")
+async def api_queue_abort(request: Request) -> dict:
+    body = await request.json()
+    repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
+    with LOCK:
+        return call(corp.queue_abort, repo, number)
 
 
 @app.post("/api/queue/start")
@@ -538,29 +595,41 @@ def api_queue() -> dict:
 
 
 @app.get("/api/console")
-def api_console(project: str = "") -> dict:
+def api_console(project: str = "", issue: str = "") -> dict:
     log = ""
-    if corp.RUN_LOG.is_file():
+    if issue:
+        log = corp.last_log_lines(80, prefix=issue)
+        if log == "тишина":
+            log = ""
+    elif corp.RUN_LOG.is_file():
         log = corp.RUN_LOG.read_text()[-20000:]
     pane = ""
     kind = "log"
-    if project.startswith("orch:"):
-        name = project.split(":", 1)[1]
-        pane = corp.capture_pane(corp.orch_session(name), 80)
-        kind = "orch"
-    elif project and corp.tmux_alive(project):
-        pane = corp.capture_pane(corp.tmux_session(project), 80)
-        kind = "run"
-    elif project and corp.orch_alive(project):
-        pane = corp.capture_pane(corp.orch_session(project), 80)
-        kind = "orch"
+    if not issue:
+        if project.startswith("orch:"):
+            name = project.split(":", 1)[1]
+            pane = corp.capture_pane(corp.orch_session(name), 80)
+            kind = "orch"
+        elif project and corp.tmux_alive(project):
+            pane = corp.capture_pane(corp.tmux_session(project), 80)
+            kind = "run"
+        elif project and corp.orch_alive(project):
+            pane = corp.capture_pane(corp.orch_session(project), 80)
+            kind = "orch"
     live = []
     for p in corp.active_projects(corp.load_registry()):
         if corp.tmux_alive(p["name"]):
             live.append(p["name"])
         if corp.orch_alive(p["name"]):
             live.append(f"orch:{p['name']}")
-    return {"log": log, "pane": pane, "live": live, "kind": kind}
+    err = ""
+    if issue and not pane and not log:
+        data = corp.load_workshop()
+        for item in data.get("queue") or []:
+            if f"{item.get('repo')}#{item.get('issue')}" == issue:
+                err = item.get("last_error") or ""
+                break
+    return {"log": log, "pane": pane, "live": live, "kind": kind, "issue": issue, "last_error": err}
 
 
 @app.get("/api/console/stream")
@@ -574,9 +643,29 @@ def api_console_stream(project: str = "") -> StreamingResponse:
     return StreamingResponse(gen(), media_type="text/event-stream")
 
 
+def _notify_queue_event(event: dict) -> None:
+    item = event.get("item") or {}
+    repo = item.get("repo") or ""
+    number = item.get("issue")
+    title = item.get("title") or ""
+    if event.get("kind") == "retry":
+        corp.notify_safe(f"{repo}#{number} · завис · перезапуск\n{title}")
+    elif event.get("kind") == "closed":
+        corp.notify_safe(f"{repo}#{number} · закрыл, пока workshop перезапускался\n{title}")
+    else:
+        corp.notify_safe(f"{repo}#{number} · завис · сам перезапускаю\n{title}")
+
+
 def queue_tick() -> None:
     with LOCK:
+      with corp.workshop_lock():
         data = corp.load_workshop()
+        events = corp.reap_queue(data)
+        if events:
+            corp.save_workshop(data)
+            corp.invalidate_board()
+        for event in events:
+            _notify_queue_event(event)
         if not data.get("queue_running"):
             return
         running_projects = {
@@ -588,50 +677,108 @@ def queue_tick() -> None:
         for item in data["queue"]:
             if item.get("status") != "waiting":
                 continue
+            if float(item.get("retry_after") or 0) > time.time():
+                item["last_error"] = item.get("last_error") or "пауза перед повтором"
+                continue
             project = item["project"]
             if project in running_projects:
+                item["last_error"] = f"{project} уже занят"
                 continue
             if len(running_projects) >= cap:
+                item["last_error"] = "ждёт свободный слот"
                 break
-            issue = corp.get_issue(item["repo"], item["issue"])
-            if "self" in corp.label_names(issue):
+            try:
+                issue = corp.get_issue(item["repo"], item["issue"])
+            except Exception as exc:
+                item["last_error"] = str(exc)
+                if not item.get("alerted"):
+                    item["alerted"] = True
+                    corp.need_human(f"{item['repo']}#{item['issue']} · нет доступа к GitHub\n{exc}")
+                    corp.save_workshop(data)
+                continue
+            names = corp.label_names(issue)
+            if "self" in names or "blocked" in names:
                 item["status"] = "skipped"
+                item["last_error"] = "self" if "self" in names else "blocked"
                 corp.remove_labels(item["repo"], item["issue"], ["queued"])
                 continue
             blocked = corp.pin_write_block(corp.load_registry(), project, except_issue=item["issue"])
             if blocked:
+                item["last_error"] = blocked
+                if "self" in blocked and not item.get("alerted"):
+                    item["alerted"] = True
+                    corp.need_human(f"{item['repo']}#{item['issue']} · пин у тебя (self)\n{blocked}")
+                    corp.save_workshop(data)
                 continue
-            profile = next((p for p in data["profiles"] if p["id"] == item["profile"]), None)
+            profile = next((p for p in data["profiles"] if p["id"] == item.get("profile")), None)
             if not profile:
-                item["status"] = "failed"
-                continue
+                if item.get("kind"):
+                    profile = {"id": "", "kind": item.get("kind"), "model": item.get("model") or ""}
+                else:
+                    item["status"] = "failed"
+                    item["last_error"] = "нет модели"
+                    corp.need_human(f"{item['repo']}#{item['issue']} · нет модели")
+                    continue
             item["status"] = "running"
+            item["started_at"] = time.time()
+            item["attempts"] = int(item.get("attempts") or 0) + 1
+            item["last_error"] = ""
             running_projects.add(project)
             corp.save_workshop(data)
-            threading.Thread(target=_queue_job, args=(item["repo"], item["issue"], profile), daemon=True).start()
+            threading.Thread(target=_queue_job, args=(item, profile), daemon=True).start()
             return
 
 
-def _queue_job(repo: str, number: int, profile: dict) -> None:
+def _queue_job(item: dict, profile: dict) -> None:
+    repo, number = item["repo"], item["issue"]
+    model = item.get("model") or profile.get("model") or ""
+    effort = item.get("effort") or profile.get("effort") or ""
+    fast = profile.get("fast")
+    if item.get("fast") is not None:
+        fast = bool(item.get("fast"))
     try:
         result = corp.run_issue(
             corp.load_registry(),
             repo,
             number,
-            profile.get("kind") or "claude",
-            model=profile.get("model") or "",
-            effort=profile.get("effort") or "",
-            fast=bool(profile.get("fast")),
+            item.get("kind") or "",
+            model=model,
+            effort=effort,
+            fast=bool(fast),
         )
         status = "done" if result.get("ok") else "failed"
-    except Exception:
+        error = "" if result.get("ok") else (result.get("error") or ("не закрыл ишью" if result.get("incomplete") else "упал"))
+    except Exception as exc:
         status = "failed"
+        error = str(exc)
+        try:
+            corp.release_runner(repo, number)
+        except Exception:
+            pass
     with LOCK:
-        data = corp.load_workshop()
-        for item in data["queue"]:
-            if item["repo"] == repo and item["issue"] == number and item.get("status") == "running":
-                item["status"] = status
-        corp.save_workshop(data)
+        with corp.workshop_lock():
+            data = corp.load_workshop()
+            retries = int(data.get("queue_retries") or corp.QUEUE_MAX_ATTEMPTS)
+            for row in data["queue"]:
+                if row["repo"] == repo and row["issue"] == number and row.get("status") == "running":
+                    attempts = int(row.get("attempts") or 1)
+                    row["last_error"] = error
+                    if status == "done":
+                        row["status"] = "done"
+                    elif data.get("queue_running"):
+                        row["status"] = "waiting"
+                        if attempts < retries:
+                            corp.notify_safe(f"{repo}#{number} · {error} · сам перезапускаю")
+                        else:
+                            row["attempts"] = 0
+                            row["retry_after"] = time.time() + corp.RETRY_COOLDOWN_SEC
+                            corp.notify_safe(
+                                f"{repo}#{number} · {error} · {attempts} раз, пауза 10 мин и снова"
+                            )
+                    else:
+                        row["status"] = "failed"
+                        corp.notify_safe(f"{repo}#{number} · {error or 'упал'} · автоном на паузе")
+            corp.save_workshop(data)
 
 
 def queue_loop() -> None:
@@ -648,6 +795,10 @@ def queue_loop() -> None:
 def startup() -> None:
     db().close()
     corp.load_workshop()
+    try:
+        corp.tg_install_commands()
+    except Exception:
+        pass
     threading.Thread(target=queue_loop, daemon=True).start()
 
 

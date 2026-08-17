@@ -2,6 +2,7 @@
 import importlib.machinery
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -21,7 +22,15 @@ def main() -> None:
     assert corp.column_of(issue(["ready"])) == "ready"
     assert corp.column_of(issue(["ready", "queued"])) == "ready"
     assert corp.column_of(issue(["in-progress", "self"])) == "in-progress"
+    assert corp.column_of(issue(["qa"])) == "backlog"
+    assert corp.column_of(issue(["in-qa"])) == "qa"
+    assert corp.column_of(issue(["in-qa", "in-progress", "via:claude"])) == "qa"
+    assert corp.column_of(issue(["ready", "qa"])) == "ready"
+    assert corp.column_of(issue(["ready", "qa-fail"])) == "ready"
     assert corp.column_of(issue(["ready"], "CLOSED")) == "done"
+    assert corp.slot_for_issue("corp", issue(["design"]))[0] == "design"
+    assert corp.slot_for_issue("corp", issue(["in-qa", "design"]))[0] == "qa"
+    assert corp.slot_for_issue("corp", issue(["design", "qa-fail"]))[0] == "design"
     assert corp.runner_of(issue(["self"])) == "self"
     assert corp.runner_of(issue(["via:claude"])) == "claude"
     reg = {"labels": {"ready": "ready"}}
@@ -72,6 +81,8 @@ def main() -> None:
     assert corp.write_block_reason(cards, "corp", 1) == ""
     assert corp.write_block_reason(cards, "clarity", 9).startswith("VPS")
     assert corp.write_block_reason(cards, "missing") == ""
+    qa_cards = [{"project": "corp", "number": 4, "state": "OPEN", "column": "qa", "runner": "queued"}]
+    assert corp.write_block_reason(qa_cards, "corp", 9).startswith("VPS")
     drafts = [{"project": "corp", "title": "expand board"}]
     assert corp.next_move(cards, drafts, "corp") is None
     empty_ready = [c for c in cards if c["column"] != "ready"]
@@ -150,6 +161,79 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert parsed["groups"][0]["name"] == "main" and parsed["groups"][0]["size"] == 33
     assert parsed["groups"][0]["nodes"] == ["active_projects()", "board_payload()"]
     assert parsed["bridges"][0]["a"] == "run_issue()" and parsed["bridges"][0]["b"] == "pulse_loop()"
+    ghost = {
+        "status": "done",
+        "attempts": 1,
+        "started_at": 1,
+        "labels": [],
+    }
+    claimed = {"state": "OPEN", "labels": [{"name": "in-progress"}, {"name": "via:claude"}]}
+    open_free = {"state": "OPEN", "labels": [{"name": "ready"}]}
+    assert corp.queue_decision(ghost, now=100, tmux_on=False, issue=open_free, max_attempts=2) == "fail"
+    assert corp.queue_decision(ghost, now=100, tmux_on=False, issue=claimed, max_attempts=2) == "retry"
+    qa_open = {"state": "OPEN", "labels": [{"name": "in-qa"}]}
+    assert corp.queue_decision(ghost, now=100, tmux_on=False, issue=qa_open, max_attempts=2) == "retry"
+    ghost["attempts"] = 2
+    assert corp.queue_decision(ghost, now=100, tmux_on=False, issue=claimed, max_attempts=2) == "fail"
+    running = {"status": "running", "attempts": 1, "started_at": 1}
+    assert corp.queue_decision(running, now=10, tmux_on=False, issue=None, stale_sec=90) == "keep"
+    assert corp.queue_decision(running, now=200, tmux_on=False, issue=None, stale_sec=90) == "retry"
+    assert corp.queue_decision(running, now=200, tmux_on=True, issue=None) == "keep"
+    closed = {"state": "CLOSED", "labels": []}
+    assert corp.queue_decision(running, now=200, tmux_on=False, issue=closed) == "closed"
+    waiting = {"status": "waiting", "attempts": 0, "started_at": 0}
+    assert corp.queue_decision(waiting, now=200, tmux_on=False, issue=None) == "keep"
+    fail_open = {"state": "OPEN", "labels": [{"name": "qa-fail"}, {"name": "ready"}]}
+    ghost["attempts"] = 1
+    assert corp.queue_decision(ghost, now=100, tmux_on=False, issue=fail_open, max_attempts=2) == "retry"
+    assert corp.tg_parse_command("/status") == ("status", "")
+    assert corp.tg_parse_command("/retry #41") == ("retry", "#41")
+    assert corp.tg_parse_command("/retry@corpbot 41") == ("retry", "41")
+    assert corp.tg_parse_command("очередь") == ("queue", "")
+    assert corp.tg_parse_command("черновики") == ("drafts", "")
+    assert corp.tg_parse_command("retry 41") == ("retry", "41")
+    assert corp.tg_parse_command("непонятно") == ("", "")
+    repo, number = corp.tg_parse_issue_arg("#41")
+    assert number == 41 and repo.endswith("/corp")
+    repo = "andrewkazavchinskyy-cloud/corp"
+    assert corp.issue_eligibility(reg2, repo, 1, issue([], "CLOSED"), cards=[]) == f"{repo}#1 закрыта"
+    assert "blocked" in corp.issue_eligibility(reg2, repo, 1, issue(["blocked"]), cards=[])
+    assert "self" in corp.issue_eligibility(reg2, repo, 1, issue(["self"]), cards=[])
+    assert "self" in corp.issue_eligibility(reg2, repo, 2, issue(["ready"]), cards=cards)
+    free = [{"project": "corp", "number": 9, "state": "OPEN", "column": "ready", "runner": ""}]
+    assert corp.issue_eligibility(reg2, repo, 9, issue(["ready"]), cards=free) == ""
+    class _Proc:
+        def __init__(self, code, err="", out="[]"):
+            self.returncode = code
+            self.stderr = err
+            self.stdout = out
+    old_run = corp.run
+    try:
+        corp.run = lambda *a, **k: _Proc(1, "HTTP 401: Bad credentials")
+        raised = False
+        try:
+            corp.issues_for("o/r")
+        except corp.CorpError:
+            raised = True
+        assert raised
+        corp.run = lambda *a, **k: _Proc(1, "Issues are disabled for this repo")
+        assert corp.issues_for("o/r") == []
+        corp.run = lambda *a, **k: _Proc(0, out="[]")
+        assert corp.issues_for("o/r") == []
+    finally:
+        corp.run = old_run
+    old_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    os.environ["TELEGRAM_BOT_TOKEN"] = "secret-token"
+    try:
+        wrapped = corp.wrap_isolated(["claude", "-p", "x"], Path("/tmp"))
+        assert wrapped[0] == "env"
+        assert not any("TELEGRAM_BOT_TOKEN" in part for part in wrapped)
+        assert any(part.startswith("PATH=") for part in wrapped)
+    finally:
+        if old_token is None:
+            os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+        else:
+            os.environ["TELEGRAM_BOT_TOKEN"] = old_token
     print("ok")
 
 

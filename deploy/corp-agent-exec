@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# corp#41: the only thing sudoers lets the control-plane user (`corp`) run
+# as the writing-agent identity. Install root-owned, mode 0755, at
+# /usr/local/sbin/corp-agent-exec (never inside a repo an agent can edit --
+# see docs/AGENT_ISOLATION.md). Ignores the caller's environment entirely
+# and rebuilds a minimal one, so a writing agent's own edit to bin/corp
+# cannot smuggle extra env or a different target binary through argv.
+set -euo pipefail
+
+AGENT_HOME="/home/corp-agent"
+WORKSPACE_ROOT="/home/corp/projects"
+ALLOWED_BIN_DIR="$AGENT_HOME/.local/bin"
+
+usage() {
+  echo "usage: corp-agent-exec <dest-dir> <binary> [args...]" >&2
+  exit 1
+}
+
+[ $# -ge 2 ] || usage
+dest="$1"; shift
+binary="$1"; shift
+
+case "$dest" in
+  "$WORKSPACE_ROOT"/*) ;;
+  *) echo "corp-agent-exec: refusing dest outside $WORKSPACE_ROOT: $dest" >&2; exit 1 ;;
+esac
+[ -d "$dest" ] || { echo "corp-agent-exec: no such dest: $dest" >&2; exit 1; }
+
+case "$binary" in
+  "$ALLOWED_BIN_DIR"/claude|"$ALLOWED_BIN_DIR"/codex|"$ALLOWED_BIN_DIR"/grok|"$ALLOWED_BIN_DIR"/agent) ;;
+  *) echo "corp-agent-exec: refusing binary: $binary" >&2; exit 1 ;;
+esac
+[ -x "$binary" ] || { echo "corp-agent-exec: not installed for agent identity: $binary" >&2; exit 1; }
+
+adapter_env="$AGENT_HOME/.config/corp-agent/env"
+env_args=()
+if [ -f "$adapter_env" ]; then
+  while IFS='=' read -r key value; do
+    [ -z "$key" ] && continue
+    case "$key" in \#*) continue ;; esac
+    env_args+=("$key=$value")
+  done < "$adapter_env"
+fi
+
+cd "$dest"
+exec env -i \
+  HOME="$AGENT_HOME" \
+  USER="corp-agent" \
+  LOGNAME="corp-agent" \
+  PATH="$ALLOWED_BIN_DIR:/usr/local/bin:/usr/bin:/bin" \
+  LANG="${LANG:-C.UTF-8}" \
+  TERM="${TERM:-xterm}" \
+  "${env_args[@]}" \
+  "$binary" "$@"
