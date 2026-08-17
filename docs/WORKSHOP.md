@@ -138,6 +138,16 @@ Pulse every 15 minutes only if the log changed. One line.
 Inline: Открыть · Очередь+ · Пауза · QA. No duplicate menu under every reply.
 Dedup identical events. Workshop web uses the same formatter.
 
+`/цикл` and `/improve` (same) start a council: three Grok agents (QA, PM, Design)
+file up to 3 Issues each (`council` + role), then the existing queue takes them
+on Grok. After a council writer succeeds, automated Grok QA reviews the diff vs
+`origin/main`. Pass → ff-merge to `main` and additive deploy of `/opt/corp` +
+writers. Fail → `qa-fail`, no merge. Human QA buttons stay for non-council cards.
+This command is an explicit auto-take exception to «research writes drafts only».
+Автоном button **Команда** hits the same `corp council` / `POST /api/council`.
+Scope is the current pin if it is a real project, else corp. Cap 9. Dedup open
+issues + drafts. `/abort` is still a no-op unless that issue is in the queue.
+
 ## Autopilot
 
 Three steps on the Автоном tab: propose a draft (not GitHub), Approve, then

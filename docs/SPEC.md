@@ -41,7 +41,9 @@ A portable control plane in one Git repo:
 
 Work happens on two machines: the Mac (interactive, `self`) and the VPS
 (unattended CLI + Автоном). Telegram is status and short remote control,
-not the board.
+not the board. `/цикл` / `/improve` and Автоном **Команда** launch a
+three-agent council (QA / PM / Design) that files `council` Issues and
+takes them on Grok; automated QA may ff-merge those cards only.
 
 ## Pins vs registry
 

@@ -780,6 +780,16 @@ async def api_queue_abort(request: Request) -> dict:
         return call(corp.queue_abort, repo, number)
 
 
+@app.post("/api/council")
+async def api_council(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    project = (body.get("project") or "").strip()
+    return call(corp.council_start, corp.load_registry(), project)
+
+
 @app.post("/api/queue/start")
 def api_queue_start() -> dict:
     with LOCK:
@@ -1036,6 +1046,7 @@ def queue_loop() -> None:
     while True:
         try:
             queue_tick()
+            corp.council_tick()
             corp.telegram_tick()
         except Exception as exc:
             corp.append_log(f"queue: {exc}\n")

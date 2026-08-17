@@ -1211,6 +1211,7 @@ function autoStatusHtml(queued) {
   const pause = state.queue_running
     ? '<button type="button" class="btn" id="auto-pause">Пауза</button>'
     : "";
+  const council = '<button type="button" class="btn" id="auto-council">Команда</button>';
   const emptyHint = emptyPaused
     ? '<p class="empty-next">Очередь пуста и на паузе. Отметь карточки в колонке Готово ниже или прими черновик — «Продолжить» появится, когда будет что запускать.</p>'
     : "";
@@ -1218,7 +1219,7 @@ function autoStatusHtml(queued) {
     <h2>Статус</h2>
     <p class="meta">${bits.join(" · ")}${!queued.length && !stuck.length ? " · очередь пуста" : ""}</p>
     ${emptyHint}
-    <div class="row">${pause}${resume}</div>
+    <div class="row">${pause}${resume}${council}</div>
     <div class="stack" id="auto-queue">${rows || ""}</div>
     ${qaRows ? `<div class="stuck-qa"><h2>Застряли на QA</h2><div class="stack" id="auto-qa">${qaRows}</div></div>` : ""}
   </section>`;
@@ -1436,6 +1437,19 @@ function renderAuto() {
         const data = await api("/api/queue/start", {});
         state.queue_running = true;
         if (data.queue) state.queue = data.queue;
+        autoUi.err = "";
+      } catch (err) {
+        autoUi.err = err.message;
+      }
+      lastAutoKey = "";
+      renderAuto();
+    };
+  }
+  if ($("auto-council")) {
+    $("auto-council").onclick = async () => {
+      try {
+        const pin = currentFilter();
+        await write("/api/council", { project: isPin(pin) ? pin : "corp" }, "цикл");
         autoUi.err = "";
       } catch (err) {
         autoUi.err = err.message;

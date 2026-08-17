@@ -30,7 +30,13 @@ ENV_PATHS = (
 KIND_BIN = {"claude": "claude", "codex": "codex", "grok": "grok", "cursor": "agent"}
 VIA = {kind: f"via:{kind}" for kind in KIND_BIN}
 STATE_LABELS = ("ready", "blocked", "in-progress", "self", "queued", *VIA.values())
-SEED_LABELS = (*STATE_LABELS, "P0", "P1", "P2", "design", "qa", "qa-fail", "in-qa")
+SEED_LABELS = (*STATE_LABELS, "P0", "P1", "P2", "design", "qa", "qa-fail", "in-qa", "council")
+COUNCIL_ROLES = ("qa", "pm", "design")
+COUNCIL_ROLE_LABEL = {"qa": "qa", "pm": "build", "design": "design"}
+COUNCIL_ROLE_RU = {"qa": "QA", "pm": "PM", "design": "Дизайн"}
+COUNCIL_MAX_PER_ROLE = 3
+COUNCIL_LABEL = "council"
+COUNCIL_BUSY = {"analyze", "queue", "review"}
 SLOT_ROLES = ("orchestrator", "build", "design", "qa")
 PULSE_SEC = 15 * 60
 TG_DEDUP_TTL = 90
@@ -1600,6 +1606,7 @@ def default_workshop() -> dict:
         "registry": {},
         "auto_queue_on_approve": True,
         "queue_retries": QUEUE_MAX_ATTEMPTS,
+        "council": {},
     }
 
 
@@ -1622,6 +1629,7 @@ def load_workshop() -> dict:
     data.setdefault("registry", {})
     data.setdefault("auto_queue_on_approve", True)
     data.setdefault("queue_retries", QUEUE_MAX_ATTEMPTS)
+    data.setdefault("council", {})
     return sanitize_workshop(data)
 
 
@@ -2924,6 +2932,513 @@ def tg_agent_rows(reg: dict, queue: list | None = None) -> list[dict]:
     return rows
 
 
+def council_session(role: str) -> str:
+    return f"corp-council-{role}"
+
+
+def council_scope(reg: dict, pin: str = "") -> str:
+    name = (pin or "").strip()
+    if name.lower() in {"", "all", "все"}:
+        return "corp"
+    for project in pinned_projects(reg):
+        if project.get("name") == name:
+            return name
+    return "corp"
+
+
+def council_norm_title(title: str) -> str:
+    return re.sub(r"\s+", " ", (title or "").strip().lower())
+
+
+def council_is_dup(title: str, existing_titles: list[str]) -> bool:
+    norm = council_norm_title(title)
+    if not norm:
+        return True
+    for other in existing_titles:
+        o = council_norm_title(other)
+        if not o:
+            continue
+        if norm == o or norm in o or o in norm:
+            return True
+    return False
+
+
+def council_pick_items(items: list, existing_titles: list[str] | None = None, cap: int = COUNCIL_MAX_PER_ROLE) -> list[dict]:
+    out: list[dict] = []
+    seen = list(existing_titles or [])
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        title = (item.get("title") or "").strip()
+        if not title or council_is_dup(title, seen):
+            continue
+        out.append(item)
+        seen.append(title)
+        if len(out) >= max(0, int(cap)):
+            break
+    return out
+
+
+def council_tmux_map() -> dict[str, bool]:
+    return {role: tmux_has(council_session(role)) for role in COUNCIL_ROLES}
+
+
+def council_busy(data: dict | None = None, tmux_on: dict[str, bool] | None = None) -> bool:
+    row = (data or {}).get("council") or {}
+    if (row.get("status") or "") in COUNCIL_BUSY:
+        return True
+    live = tmux_on if tmux_on is not None else council_tmux_map()
+    return any(live.get(role) for role in COUNCIL_ROLES)
+
+
+def council_writer_kind() -> str:
+    if kind_cli_ok("grok"):
+        return "grok"
+    if kind_cli_ok("cursor"):
+        return "cursor"
+    die("нет Grok CLI (grok/agent)")
+
+
+def council_existing_titles(reg: dict, repo: str, issues: list | None = None, drafts: list | None = None) -> list[str]:
+    titles: list[str] = []
+    if issues is None:
+        try:
+            issues = issues_for(repo, "open", 80)
+        except (CorpError, SystemExit):
+            issues = []
+    for item in issues or []:
+        if item.get("title"):
+            titles.append(item["title"])
+    if drafts is None:
+        drafts = (load_workshop().get("drafts") or [])
+    for draft in drafts:
+        if draft.get("title"):
+            titles.append(draft["title"])
+    return titles
+
+
+def tg_help_text() -> str:
+    return (
+        "Мастерская\n"
+        "/status /queue /running /doctor /board /drafts\n"
+        "/go /pause /retry #n /abort #n\n"
+        "/цикл /improve — команда QA/PM/Дизайн"
+    )
+
+
+def tg_council_text(row: dict) -> str:
+    project = row.get("project") or "corp"
+    filed = row.get("filed") or []
+    status = row.get("status") or ""
+    roles = "/".join(COUNCIL_ROLE_RU[role] for role in COUNCIL_ROLES)
+    if status == "analyze":
+        return f"Цикл: {roles} · {project}\nанализ"
+    queued = sum(1 for item in filed if item.get("phase") in {"queue", "running"})
+    review = sum(1 for item in filed if item.get("phase") == "review")
+    done = sum(1 for item in filed if item.get("phase") == "main")
+    fail = sum(1 for item in filed if item.get("phase") == "fail")
+    extra = f" · QA нет {fail}" if fail else ""
+    return f"Цикл: {roles} · {project}\nзавели {len(filed)} · в работе {queued} · QA {review} · в main {done}{extra}"
+
+
+def council_role_brief(role: str) -> str:
+    if role == "qa":
+        return (
+            "You are the QA agent. Walk every Workshop design and the live app thoroughly: "
+            "bugs, lying UI, a11y, doctor, queue, Telegram. File only concrete defects."
+        )
+    if role == "pm":
+        return (
+            "You are the PM agent. Compare live Workshop + corp to docs/SPEC.md, "
+            "docs/HANDOFF.md, docs/WORKSHOP.md. File missing operator jobs and spec gaps. "
+            "Do not invent a new product."
+        )
+    return (
+        "You are the Design agent. Improve phone + desktop Workshop UI/UX as far as useful "
+        "(workshop/static). Not vibe-only. workshop/preview.html is a reference, not a dump."
+    )
+
+
+def council_analyze_prompt(role: str, dest: Path, repo: str, existing: list[str], out: Path) -> str:
+    seen = "\n".join(f"- {title}" for title in existing[:60]) or "(none)"
+    label = COUNCIL_ROLE_LABEL[role]
+    return (
+        f"Follow {ROOT}/AGENTS.md and {ROOT}/HARNESS.md. "
+        f"Live workshop tree is /opt/corp. Writers edit /home/corp/projects/corp. "
+        f"You are analyzing {dest} for {repo}. {council_role_brief(role)} "
+        f"GitHub is the planner. File at most {COUNCIL_MAX_PER_ROLE} Issues via `gh api` REST "
+        f"(POST repos/{repo}/issues). GraphQL `gh issue create --json` often 503s — do not use it. "
+        f"Labels must include ready,{COUNCIL_LABEL},{label}. Russian titles OK. "
+        f"Each body needs acceptance criteria. Dedup against open issues and drafts:\n{seen}\n"
+        f"No new product. No Funnel. Do not set CORP_AGENT_USER. Isolation stays transitional. "
+        f"Never rewrite git history. Do not edit files in {dest}. No git commit/push. "
+        f"Also write a JSON array to {out}: "
+        f'[{{"title":"...","body":"...","acceptance":"..."}}]. Cap {COUNCIL_MAX_PER_ROLE}.'
+    )
+
+
+def council_review_prompt(repo: str, number: int, dest: Path, diff: str) -> str:
+    return (
+        f"Follow {ROOT}/AGENTS.md. Automated QA for council-filed {repo}#{number}. "
+        f"Review this diff vs origin/main in {dest}. Live tree is /opt/corp; writers are "
+        f"/home/corp/projects/corp. No new product. No Funnel. Do not set CORP_AGENT_USER. "
+        f"Never rewrite history. Human QA buttons stay for non-council cards.\n\n"
+        f"{diff[:12000]}\n\n"
+        f"End with exactly one line: VERDICT: PASS or VERDICT: FAIL plus a short note."
+    )
+
+
+def council_qa_verdict(text: str) -> str:
+    blob = text or ""
+    for line in reversed(blob.splitlines()):
+        low = line.strip().upper()
+        if "VERDICT: FAIL" in low or "ВЕРДИКТ: FAIL" in low:
+            return "fail"
+        if "VERDICT: PASS" in low or "ВЕРДИКТ: PASS" in low:
+            return "pass"
+    upper = blob.upper()
+    if re.search(r"\bFAIL\b", upper) and not re.search(r"\bPASS\b", upper):
+        return "fail"
+    if re.search(r"\bPASS\b", upper) and not re.search(r"\bFAIL\b", upper):
+        return "pass"
+    return "fail"
+
+
+def council_should_auto_qa(names: set[str] | list[str]) -> bool:
+    return COUNCIL_LABEL in set(names)
+
+
+def create_issue_rest(repo: str, title: str, body: str, labels: list[str]) -> dict:
+    for name in labels:
+        ensure_label(repo, name)
+    args = ["gh", "api", "-X", "POST", f"repos/{repo}/issues", "-f", f"title={title}", "-f", f"body={body}"]
+    for name in labels:
+        args += ["-f", f"labels[]={name}"]
+    proc = run(args, check=False)
+    if proc.returncode != 0:
+        die((proc.stderr or proc.stdout or "create issue failed").strip())
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        die("create issue returned non-json")
+    number = payload.get("number")
+    if not number:
+        die("create issue missing number")
+    return {
+        "ok": True,
+        "repo": repo,
+        "number": int(number),
+        "url": payload.get("html_url") or payload.get("url") or "",
+        "title": title,
+    }
+
+
+def council_issue_body(item: dict) -> str:
+    parts = [(item.get("body") or item.get("title") or "").strip()]
+    accept = (item.get("acceptance") or "").strip()
+    if accept:
+        parts.append(f"## Приёмка\n{accept}")
+    return "\n\n".join(part for part in parts if part)
+
+
+def council_save(row: dict) -> dict:
+    with workshop_lock():
+        data = load_workshop()
+        data["council"] = row
+        save_workshop(data)
+    return row
+
+
+def council_load() -> dict:
+    return dict(load_workshop().get("council") or {})
+
+
+def council_spawn_role(role: str, dest: Path, repo: str, existing: list[str], kind: str) -> None:
+    out = config_dir() / f"council-{role}.json"
+    prompt = council_analyze_prompt(role, dest, repo, existing, out)
+    cmd = agent_argv(kind, prompt, dest)
+    session = council_session(role)
+    if tmux_has(session):
+        die(f"цикл уже идёт: {session}")
+    prefix = f"council {role}"
+    pipe = (
+        f"{shlex.join(cmd)} 2>&1 | while IFS= read -r line || [ -n \"$line\" ]; do "
+        f"printf '%s %s\\n' {shlex.quote(prefix)} \"$line\"; done"
+    )
+    script = tmux_agent_script(dest, pipe, prefix)
+    proc = subprocess.run(["tmux", "new-session", "-d", "-s", session, "bash", "-lc", script])
+    if proc.returncode != 0:
+        die(f"tmux {session} failed")
+
+
+def council_run_role_sync(role: str, dest: Path, repo: str, existing: list[str], kind: str) -> None:
+    out = config_dir() / f"council-{role}.json"
+    prompt = council_analyze_prompt(role, dest, repo, existing, out)
+    cmd = wrap_isolated(agent_argv(kind, prompt, dest), dest)
+    subprocess.run(cmd, cwd=dest, check=False)
+
+
+def council_launch_analyzers(reg: dict, row: dict, dest: Path | None = None, kind: str | None = None) -> None:
+    dest = dest or project_dir(project_by_name(reg, row["project"])) or writers_corp_path()
+    kind = kind or council_writer_kind()
+    existing = row.get("seen_titles") or council_existing_titles(reg, row["repo"])
+    if have("tmux"):
+        for role in COUNCIL_ROLES:
+            council_spawn_role(role, dest, row["repo"], existing, kind)
+        return
+    row["sync"] = True
+    council_save(row)
+
+    def _run() -> None:
+        try:
+            for role in COUNCIL_ROLES:
+                council_run_role_sync(role, dest, row["repo"], existing, kind)
+            latest = council_load()
+            latest["sync"] = False
+            council_save(latest)
+            council_finish_analyze(load_registry(), latest)
+        except Exception as exc:
+            append_log(f"council: {exc}\n")
+            failed = council_load()
+            failed["status"] = "failed"
+            failed["sync"] = False
+            council_save(failed)
+
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def council_start(
+    reg: dict,
+    project: str = "",
+    *,
+    now: float | None = None,
+    launch=None,
+    notify=None,
+    kind_ok=None,
+    tmux_on: dict[str, bool] | None = None,
+) -> dict:
+    kind_ok = kind_ok or kind_cli_ok
+    if not kind_ok("grok") and not kind_ok("cursor"):
+        die("нет Grok CLI (grok/agent)")
+    data = load_workshop()
+    if council_busy(data, tmux_on if tmux_on is not None else council_tmux_map()):
+        die("цикл уже идёт")
+    name = council_scope(reg, project)
+    project_row = project_by_name(reg, name)
+    repo = project_row.get("repo") or ""
+    if not is_pinned(project_row) or not repo:
+        die("выберите corp или clarity")
+    seen = council_existing_titles(reg, repo)
+    row = {
+        "status": "analyze",
+        "project": name,
+        "repo": repo,
+        "started_at": time.time() if now is None else now,
+        "roles": {role: {"status": "running", "filed": []} for role in COUNCIL_ROLES},
+        "filed": [],
+        "seen_titles": seen,
+        "sync": False,
+        "pulse": "",
+    }
+    with workshop_lock():
+        data = load_workshop()
+        if council_busy(data, tmux_on if tmux_on is not None else council_tmux_map()):
+            die("цикл уже идёт")
+        data["council"] = row
+        save_workshop(data)
+    record_event("council", name, "старт")
+    (notify or notify_safe)(tg_council_text(row))
+    (launch or council_launch_analyzers)(reg, row)
+    return {"ok": True, "project": name, "repo": repo, "status": "analyze"}
+
+
+def council_role_items(role: str) -> list[dict]:
+    path = config_dir() / f"council-{role}.json"
+    payload: list = []
+    if path.is_file():
+        payload = parse_json_array(path.read_text())
+    if not payload and RUN_LOG.is_file():
+        payload = parse_json_array(RUN_LOG.read_text()[-30000:])
+    return [item for item in payload if isinstance(item, dict) and item.get("title")]
+
+
+def council_enqueue_refs(reg: dict, refs: list[tuple[str, int]], enqueue=None, kind: str = "grok") -> tuple[list[str], list[str]]:
+    enqueue = enqueue or (
+        lambda repo, number: queue_add(reg, repo, number, kind, kind=kind)
+    )
+    added: list[str] = []
+    errors: list[str] = []
+    for repo, number in refs:
+        try:
+            enqueue(repo, number)
+            added.append(issue_ref(repo, number))
+        except CorpError as exc:
+            errors.append(redact_secrets(str(exc)))
+    return added, errors
+
+
+def council_finish_analyze(
+    reg: dict,
+    row: dict,
+    *,
+    load_role_items=None,
+    file_issue=None,
+    enqueue=None,
+    start_queue=None,
+    notify=None,
+) -> dict:
+    load_role_items = load_role_items or council_role_items
+    file_issue = file_issue or (
+        lambda repo, title, body, role: create_issue_rest(
+            repo, title, body, ["ready", COUNCIL_LABEL, COUNCIL_ROLE_LABEL[role]]
+        )
+    )
+    filed: list[dict] = []
+    seen = list(row.get("seen_titles") or [])
+    for role in COUNCIL_ROLES:
+        picked = council_pick_items(load_role_items(role), seen, COUNCIL_MAX_PER_ROLE)
+        role_filed = []
+        for item in picked:
+            created = file_issue(row["repo"], item["title"], council_issue_body(item), role)
+            number = int(created.get("number") or created.get("issue") or 0)
+            if not number:
+                continue
+            rec = {
+                "repo": row["repo"],
+                "number": number,
+                "role": role,
+                "title": item["title"],
+                "phase": "queue",
+            }
+            filed.append(rec)
+            role_filed.append(number)
+            seen.append(item["title"])
+        row.setdefault("roles", {}).setdefault(role, {})["status"] = "done"
+        row["roles"][role]["filed"] = role_filed
+    row["filed"] = filed
+    row["status"] = "queue" if filed else "done"
+    row["pulse"] = tg_council_text(row)
+    council_save(row)
+    refs = [(item["repo"], item["number"]) for item in filed]
+    added, errors = council_enqueue_refs(reg, refs, enqueue=enqueue, kind="grok")
+    if filed:
+        (start_queue or (lambda: queue_set_running(True)))()
+    (notify or notify_safe)(row["pulse"] + (f"\n{errors[0]}" if errors else ""))
+    record_event("council", row.get("project") or "", f"завели {len(added)}")
+    return {"ok": True, "filed": filed, "added": added, "errors": errors, "status": row["status"]}
+
+
+def council_tick(now: float | None = None) -> None:
+    row = council_load()
+    if (row.get("status") or "") != "analyze":
+        return
+    if row.get("sync"):
+        return
+    stamp = float(row.get("started_at") or 0)
+    age = (time.time() if now is None else now) - stamp
+    live = council_tmux_map()
+    if any(live.values()):
+        return
+    if age < 8:
+        return
+    try:
+        council_finish_analyze(load_registry(), row)
+    except Exception as exc:
+        append_log(f"council: {exc}\n")
+
+
+def council_mark_phase(repo: str, number: int, phase: str) -> None:
+    row = council_load()
+    for item in row.get("filed") or []:
+        if item.get("repo") == repo and int(item.get("number") or 0) == number:
+            item["phase"] = phase
+    row["pulse"] = tg_council_text(row)
+    council_save(row)
+
+
+def council_ff_merge_main(dest: Path, run_cmd=None) -> dict:
+    run_cmd = run_cmd or (lambda cmd: run(cmd, cwd=dest, check=False))
+    status = run_cmd(["git", "status", "--porcelain"])
+    if (getattr(status, "stdout", "") or "").strip():
+        return {"ok": False, "error": "dirty tree", "merged": False}
+    run_cmd(["git", "fetch", "origin"])
+    branch = (getattr(run_cmd(["git", "rev-parse", "--abbrev-ref", "HEAD"]), "stdout", "") or "").strip()
+    if branch in {"", "HEAD"}:
+        return {"ok": False, "error": "detached", "merged": False}
+    if branch == "main":
+        push = run_cmd(["git", "push", "origin", "main"])
+        return {"ok": push.returncode == 0, "merged": False, "on_main": True}
+    checkout = run_cmd(["git", "checkout", "main"])
+    if checkout.returncode != 0:
+        return {"ok": False, "error": "checkout main failed", "merged": False}
+    merge = run_cmd(["git", "merge", "--ff-only", branch])
+    if merge.returncode != 0:
+        return {"ok": False, "error": "ff-only merge failed", "merged": False}
+    push = run_cmd(["git", "push", "origin", "main"])
+    return {"ok": push.returncode == 0, "merged": True, "branch": branch}
+
+
+def council_deploy_trees(run_cmd=None, live: Path | None = None, writers: Path | None = None, restart: bool = True) -> dict:
+    run_cmd = run_cmd or (lambda cmd, cwd=None: run(cmd, cwd=cwd, check=False))
+    live = live or live_corp_path()
+    writers = writers or writers_corp_path()
+    rows = []
+    for path in (live, writers):
+        if not path.is_dir():
+            rows.append({"path": str(path), "ok": False, "error": "missing"})
+            continue
+        run_cmd(["git", "fetch", "origin"], cwd=path)
+        merge = run_cmd(["git", "merge", "--ff-only", "origin/main"], cwd=path)
+        rows.append({"path": str(path), "ok": merge.returncode == 0})
+    if restart and live.is_dir():
+        run_cmd(["systemctl", "restart", "workshop"], cwd=None)
+    return {"ok": all(row.get("ok") for row in rows if row.get("error") != "missing"), "trees": rows}
+
+
+def council_after_writer(
+    reg: dict,
+    repo: str,
+    number: int,
+    dest: Path,
+    *,
+    review=None,
+    merge=None,
+    deploy=None,
+    close=None,
+    reject=None,
+    notify=None,
+) -> dict:
+    council_mark_phase(repo, number, "review")
+    diff_proc = run(["git", "diff", "origin/main"], cwd=dest, check=False)
+    diff = (diff_proc.stdout or "") + "\n" + (diff_proc.stderr or "")
+    if review is None:
+        kind = council_writer_kind()
+        prompt = council_review_prompt(repo, number, dest, diff)
+        cmd = agent_argv(kind, prompt, dest)
+        code = launch_agent(kind, cmd, dest, project_by_repo(reg, repo)["name"], prefix=f"council-qa {repo}#{number}")
+        log_text = last_log_lines(40, prefix=f"council-qa {repo}#{number}")
+        verdict = council_qa_verdict(log_text if code == 0 else f"VERDICT: FAIL exit {code}\n{log_text}")
+    else:
+        verdict = review(diff)
+    note = "council QA"
+    if verdict != "pass":
+        council_mark_phase(repo, number, "fail")
+        result = (reject or reject_qa)(reg, repo, number, "council QA не принял. Смотри diff vs origin/main.")
+        (notify or notify_safe)(tg_council_text(council_load()))
+        result["council_qa"] = "fail"
+        return result
+    closed = (close or (lambda: close_issue(reg, repo, number, force=True, note=note)))()
+    merged = (merge or (lambda: council_ff_merge_main(dest)))()
+    deployed = {"ok": False}
+    if merged.get("ok"):
+        deployed = (deploy or council_deploy_trees)()
+    council_mark_phase(repo, number, "main" if merged.get("ok") else "fail")
+    (notify or notify_safe)(tg_council_text(council_load()))
+    closed = dict(closed or {})
+    closed.update({"ok": bool(closed.get("ok") and merged.get("ok")), "council_qa": "pass", "merged": merged, "deployed": deployed})
+    return closed
+
+
 def telegram_tick() -> None:
     token, chat = tg_creds()
     if not token or not chat:
@@ -2996,6 +3511,8 @@ def tg_install_commands() -> None:
         {"command": "abort", "description": "Откатить #n"},
         {"command": "drafts", "description": "Черновики"},
         {"command": "help", "description": "Клавиатура"},
+        {"command": "цикл", "description": "Команда QA/PM/Дизайн"},
+        {"command": "improve", "description": "Команда QA/PM/Дизайн"},
     ]
     try:
         tg_post("setMyCommands", {"commands": json.dumps(cmds)})
@@ -3010,6 +3527,8 @@ def tg_parse_command(text: str) -> tuple[str, str]:
     if line.startswith("/"):
         parts = line[1:].split(maxsplit=1)
         name = (parts[0].split("@")[0] or "").lower()
+        if name in {"цикл", "improve", "council"}:
+            name = "council"
         return name, parts[1] if len(parts) > 1 else ""
     aliases = {
         "меню": "start",
@@ -3027,6 +3546,9 @@ def tg_parse_command(text: str) -> tuple[str, str]:
         "автоном ▶": "go",
         "пауза": "pause",
         "помощь": "help",
+        "цикл": "council",
+        "improve": "council",
+        "команда": "council",
     }
     low = line.lower()
     if low in aliases:
@@ -3076,7 +3598,7 @@ def tg_cmd_start(_arg: str = "") -> None:
 
 
 def tg_cmd_help(arg: str = "") -> None:
-    tg_cmd_start(arg)
+    notify_safe(tg_help_text(), keyboard=tg_reply_keyboard())
 
 
 def tg_cmd_status(_arg: str = "") -> None:
@@ -3161,6 +3683,10 @@ def tg_cmd_abort(arg: str) -> None:
         notify_safe(tg_card(tg_short_ref(repo, number), "не в очереди"))
 
 
+def tg_cmd_council(arg: str = "") -> None:
+    council_start(load_registry(), arg)
+
+
 TG_HANDLERS = {
     "start": tg_cmd_start,
     "help": tg_cmd_help,
@@ -3176,6 +3702,9 @@ TG_HANDLERS = {
     "pause": tg_cmd_pause,
     "retry": tg_cmd_retry,
     "abort": tg_cmd_abort,
+    "council": tg_cmd_council,
+    "цикл": tg_cmd_council,
+    "improve": tg_cmd_council,
 }
 
 
@@ -4257,6 +4786,8 @@ def run_issue(
         add_labels(repo, number, ["in-qa"])
         invalidate_board()
         tg_notify_event("to_qa", tg_short_ref(repo, number), "на QA", url=latest.get("url") or "", action_ref=issue_ref(repo, number))
+        if council_should_auto_qa(names) or council_should_auto_qa(label_names(latest)):
+            return council_after_writer(reg, repo, number, dest)
         qa_slot = slots_for(project["name"])["qa"]
         return run_issue(
             reg,
@@ -4915,6 +5446,7 @@ def main() -> None:
             "orchestrate",
             "draft",
             "stage",
+            "council",
         ],
     )
     parser.add_argument("--project", help="project name")
@@ -5047,6 +5579,9 @@ def main() -> None:
         if not args.project:
             die("usage: corp stage --project name")
         print(json.dumps(project_stage(reg, args.project), indent=2))
+        return
+    if args.command == "council":
+        print(json.dumps(council_start(reg, args.project or args.message or ""), indent=2, ensure_ascii=False))
         return
 
     payload = cycle_payload(reg)

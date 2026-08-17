@@ -262,6 +262,13 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert corp.tg_parse_command("Старт") == ("go", "")
     assert corp.tg_parse_command("Автоном ▶") == ("go", "")
     assert corp.tg_parse_command("/agents") == ("agents", "")
+    assert corp.tg_parse_command("/цикл") == ("council", "")
+    assert corp.tg_parse_command("/improve") == ("council", "")
+    assert corp.tg_parse_command("/цикл@corpbot") == ("council", "")
+    assert corp.tg_parse_command("цикл") == ("council", "")
+    assert corp.tg_parse_command("improve") == ("council", "")
+    assert corp.tg_parse_command("команда") == ("council", "")
+    assert "/цикл" in corp.tg_help_text()
     keys = [btn["text"] for row in corp.tg_reply_keyboard() for btn in row]
     assert keys == ["Статус", "Очередь", "Агенты", "Сервер", "Доска", "Черновики", "Старт", "Пауза"]
     assert "Автоном ▶" not in keys
@@ -1068,6 +1075,8 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert api_logic.assert_in_qa(corp, repo, 85, waiting) == waiting
     app_src = (ROOT / "workshop" / "app.py").read_text()
     assert "/api/self/drop" in app_src and "/api/qa/start" in app_src
+    assert "/api/council" in app_src
+    assert "Команда" in (ROOT / "workshop" / "static" / "app.js").read_text()
     assert "approve_drafts_checked" in app_src and "console_log_for_issue" in app_src
     closed_only = [{"title": "Ship the billing path for invoices", "state": "CLOSED"}]
     assert not any("billing" in item.lower() for item in corp.spec_gaps(spec_text, closed_only))
@@ -1148,6 +1157,12 @@ Nodes (33): active_projects(), board_payload() (+31 more)
             raise AssertionError("in-qa should die")
         except corp.CorpError as exc:
             assert "QA" in str(exc)
+        added, errors = corp.council_enqueue_refs(
+            reg2,
+            [("andrewkazavchinskyy-cloud/corp", 9)],
+            enqueue=lambda repo, number: corp.queue_add(reg2, repo, number, "grok", kind="grok"),
+        )
+        assert added == [] and errors and "QA" in errors[0]
     finally:
         corp.get_issue = old_get
         corp.add_labels = old_add
@@ -1249,6 +1264,91 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     finally:
         corp.gh_ready = old_gh
         corp.collect_issues = old_collect
+    pins = {
+        "org": "andrewkazavchinskyy-cloud",
+        "projects": [
+            {"name": "corp", "repo": "andrewkazavchinskyy-cloud/corp", "workshop": True, "status": "active"},
+            {"name": "clarity", "repo": "andrewkazavchinskyy-cloud/clarity", "workshop": True, "status": "active"},
+            {"name": "LifeBalance", "repo": "andrewkazavchinskyy-cloud/LifeBalance", "status": "active"},
+        ],
+    }
+    assert corp.council_scope(pins, "") == "corp"
+    assert corp.council_scope(pins, "all") == "corp"
+    assert corp.council_scope(pins, "clarity") == "clarity"
+    assert corp.council_scope(pins, "LifeBalance") == "corp"
+    assert corp.council_scope(pins, "nope") == "corp"
+    picked = corp.council_pick_items([{"title": f"t{i}"} for i in range(5)], [], cap=3)
+    assert [item["title"] for item in picked] == ["t0", "t1", "t2"]
+    picked = corp.council_pick_items(
+        [{"title": "Foo"}, {"title": "foo"}, {"title": "Bar"}],
+        ["Foo already"],
+        cap=3,
+    )
+    assert [item["title"] for item in picked] == ["Bar"]
+    assert corp.council_is_dup("Doctor lying", ["doctor lying on map"])
+    assert not corp.council_is_dup("New a11y floor", ["doctor lying"])
+    assert corp.council_qa_verdict("looks good\nVERDICT: PASS") == "pass"
+    assert corp.council_qa_verdict("nope\nVERDICT: FAIL a11y") == "fail"
+    assert corp.council_qa_verdict("") == "fail"
+    assert corp.council_should_auto_qa({"ready", "council", "qa"})
+    assert not corp.council_should_auto_qa({"ready", "qa"})
+    assert "force" not in corp.council_ff_merge_main.__code__.co_names
+    pulse = corp.tg_council_text({"status": "analyze", "project": "corp", "filed": []})
+    assert "Цикл: QA/PM/Дизайн" in pulse and "анализ" in pulse
+    council_tmp = Path(tempfile.mkdtemp(prefix="corp-council-")) / "workshop.json"
+    notes = []
+    launched = []
+    old_titles = corp.council_existing_titles
+    try:
+        corp.council_existing_titles = lambda *a, **k: ["already open"]
+        with corp.workshop_json_override(council_tmp):
+            corp.save_workshop(corp.default_workshop())
+            started = corp.council_start(
+                pins,
+                "clarity",
+                launch=lambda *a, **k: launched.append(a[1]["project"]),
+                notify=lambda text, **k: notes.append(text),
+                kind_ok=lambda k: k == "grok",
+                tmux_on={role: False for role in corp.COUNCIL_ROLES},
+            )
+            assert started["project"] == "clarity" and started["status"] == "analyze"
+            assert launched == ["clarity"]
+            try:
+                corp.council_start(
+                    pins,
+                    "corp",
+                    launch=lambda *a, **k: None,
+                    notify=lambda *a, **k: None,
+                    kind_ok=lambda k: k == "grok",
+                    tmux_on={role: False for role in corp.COUNCIL_ROLES},
+                )
+                raise AssertionError("second council should die")
+            except corp.CorpError as exc:
+                assert "уже" in str(exc)
+            filed = []
+            finished = corp.council_finish_analyze(
+                pins,
+                corp.council_load(),
+                load_role_items=lambda role: [
+                    {"title": f"{role} one", "body": "x", "acceptance": "ok"},
+                    {"title": f"{role} two", "body": "y"},
+                    {"title": f"{role} three", "body": "z"},
+                    {"title": f"{role} four", "body": "skip"},
+                ],
+                file_issue=lambda repo, title, body, role: filed.append((role, title)) or {
+                    "number": len(filed),
+                    "repo": repo,
+                },
+                enqueue=lambda repo, number: None,
+                start_queue=lambda: notes.append("queue-on"),
+                notify=lambda text, **k: notes.append(text),
+            )
+            assert len(finished["filed"]) == 9
+            assert all(role in {item[0] for item in filed} for role in corp.COUNCIL_ROLES)
+            assert "queue-on" in notes
+            assert "завели 9" in corp.tg_council_text(corp.council_load())
+    finally:
+        corp.council_existing_titles = old_titles
     print("ok")
 
 
