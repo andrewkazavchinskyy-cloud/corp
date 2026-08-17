@@ -224,6 +224,11 @@ def main() -> None:
     assert [item["title"] for item in gap_items] == ["Welcome screen", "App icon → Calm splash"]
     assert gap_items[0]["label"] == "ready" and "спеки" in gap_items[0]["body"]
     assert corp.orch_gap_payload([], "(none)") == []
+    empty_reg = {"research_files": [], "projects": []}
+    corp._research_memo.update({"t": 0.0, "key": "", "data": None})
+    first = corp.cached_research(empty_reg)
+    second = corp.cached_research(empty_reg)
+    assert first is second
     built_body = corp.draft_issue_body({
         "title": "t",
         "body": "сделать x",
