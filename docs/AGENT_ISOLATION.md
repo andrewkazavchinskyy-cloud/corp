@@ -48,7 +48,8 @@ absolute path. This doc is the fix and the runbook for it.
 | `isolated` | Flag on **and** the probe is complete. Doctor `ok` only here. |
 
 Do not set `CORP_AGENT_USER` until doctor says `ready-to-arm`. A provisioned
-UID with an empty `~/.local/bin` is still `transitional`.
+UID with an empty `~/.local/bin` is still `transitional`. Doctor does not
+flip the flag or provision.
 
 ## Provisioning (root, once per VPS)
 
@@ -106,7 +107,7 @@ Restart the workshop service so it picks up the new env, then verify:
 
 ```bash
 bash deploy/agent-isolation-smoke.sh
-corp doctor   # mode: isolated — "ok  agent identity isolated"
+corp doctor   # isolation: isolated — "ok  agent identity isolated"
 ```
 
 ## Smoke check

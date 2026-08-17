@@ -444,6 +444,7 @@ def api_settings(probe: bool = False) -> dict:
     status = corp.registry_status()
     data["uncommitted_registry"] = status["uncommitted_registry"]
     data["registry_source"] = "overlay" if status["uncommitted_registry"] else "git"
+    data["doctor"] = corp.doctor_payload()
     return data
 
 

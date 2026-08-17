@@ -45,6 +45,13 @@ VPS, then register a new Passkey on the gate. Existing keys stay.
 Sheet: close, ready, backlog, and drop `self` on phone and desktop.
 Drag to in-progress is not a move — take or run from the sheet.
 
+`corp doctor` is fail-closed and does not repair: workshop unit, `/opt/corp`
+dirty/behind `origin/main`, the SHA uvicorn should serve, graphify on PATH,
+`workshop.db` mode 0600, Tailscale Serve with Funnel off, cursor via
+`kind_cli_ok` (not `have("agent")`), isolated vs transitional. Map and
+Настройки show the same NOs. Local `corp cycle` without `gh` auth prints
+doctor and `run gh auth login` instead of dying first.
+
 ## Filter
 
 Header: All / each pin. One choice for Board, Autopilot, Project, Console.
@@ -100,8 +107,11 @@ Drag to Done from ready/ход sends the card to QA, not close.
 
 ## Telegram
 
-Remote control + pager. One chat_id. Russian chrome. English only for
+Remote control + pager. One chat_id allowlist. Russian chrome. English only for
 product names (Claude, GitHub) and issue titles.
+`/abort` and `queue_abort` no-op unless that issue is in the queue. They
+do not kill another pin's runner. Pulse, `last_error`, and need-human
+redact token-like substrings.
 
 Keyboard: **Статус · Очередь · Агенты · Сервер · Доска · Черновики · Старт · Пауза**.
 Typed aliases keep old thumbs: Сейчас, Бежит, Автоном, Автоном ▶,

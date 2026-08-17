@@ -1323,10 +1323,28 @@ async function renderGraphs(force) {
   }
 }
 
-function renderMap(data) {
-  const checks = (data.doctor?.checks || []).map((c) =>
+function doctorChecksHtml(checks) {
+  return (checks || []).map((c) =>
     `<li><span class="${c.ok ? "okpill" : "nopill"}">${c.ok ? "ok" : "нет"}</span> ${escapeHtml(c.name)}</li>`
   ).join("");
+}
+
+function doctorMeta(doc) {
+  if (!doc) return "/opt/corp · Tailscale · GitHub Issues";
+  const sha = (doc.uvicorn_sha || "").slice(0, 7) || "—";
+  const iso = doc.isolation || "transitional";
+  return `/opt/corp · uvicorn ${sha} · ${iso}`;
+}
+
+function renderDoctor(doc) {
+  const box = $("doctor-checks");
+  const meta = $("doctor-meta");
+  if (meta) meta.textContent = doctorMeta(doc);
+  if (box) box.innerHTML = doctorChecksHtml(doc?.checks);
+}
+
+function renderMap(data) {
+  const checks = doctorChecksHtml(data.doctor?.checks);
   const projects = (data.projects || []).map((p) =>
     `<li>${escapeHtml(p.name)} — ${p.graphify ? "граф есть" : "графа нет"}</li>`
   ).join("");
@@ -1336,7 +1354,7 @@ function renderMap(data) {
     ? `<p class="err">uncommitted registry — git registry.json канон, workshop.json overlay только авария</p>`
     : "";
   $("map").innerHTML = `
-    <article><h2>Контур</h2><p class="meta">/opt/corp · Tailscale · GitHub Issues</p>
+    <article><h2>Контур</h2><p class="meta">${escapeHtml(doctorMeta(data.doctor))}</p>
       ${registryWarn}
       <ul>${checks}</ul></article>
     <article><h2>Сейчас</h2>
@@ -1499,6 +1517,7 @@ function paintRegistryWarn() {
 
 function renderSettings() {
   paintRegistryWarn();
+  renderDoctor(state.doctor || state._map?.doctor);
   $("max-parallel").value = state.max_parallel || 3;
   if ($("queue-retries")) $("queue-retries").value = state.queue_retries ?? 2;
   const catalog = (state.catalog && state.catalog.kinds) || {};
