@@ -65,10 +65,12 @@
     .brand small { display: block; color: var(--dim); letter-spacing: .14em; text-transform: uppercase; font-size: 10px; padding: 0 8px; }
     .brand strong { display: block; font-size: 20px; font-weight: 600; padding: 2px 8px 0; letter-spacing: -.03em; }
     .nav { display: grid; gap: 4px; }
+    .nav.quiet { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
     .nav button {
       display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
       border: 0; background: transparent; color: var(--dim); min-height: 40px; padding: 8px 10px; border-radius: 10px; font-weight: 500;
     }
+    .nav.quiet button { min-height: 34px; font-size: 13px; color: #b8b3aa; }
     .nav button.on { background: var(--lift2); color: var(--text); }
     .nav svg { width: 16px; height: 16px; }
     .rail-foot { margin-top: auto; padding: 10px; color: var(--dim); font-size: 12px; }
@@ -98,11 +100,12 @@
     }
     .chip.on { background: var(--lift2); color: var(--text); }
     .colnav { display: none; margin-bottom: 10px; }
-    .frame.phone .colnav { display: grid; grid-template-columns: repeat(5,1fr); gap: 4px; }
+    .frame.phone .colnav { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 6px; }
     .colnav button {
       border: 1px solid var(--line); background: var(--lift); color: var(--dim);
       border-radius: 10px; min-height: 44px; font-size: 13px; font-weight: 600;
     }
+    .frame.phone .colnav button:last-child { grid-column: 1 / -1; }
     .colnav button.on { background: var(--lift2); color: var(--text); }
 
     .board { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
@@ -146,8 +149,10 @@
     }
     .scrim { display: none; position: absolute; inset: 0; background: rgba(0,0,0,.45); z-index: 7; }
     .frame.phone.sheet .scrim { display: block; }
-    .btn:disabled { opacity: .45; cursor: not-allowed; }
-    .btn.primary:disabled { background: var(--lift2); color: var(--dim); }
+    .btn:disabled { opacity: 1; cursor: not-allowed; background: var(--lift2); color: #c8c2b4; }
+    .btn.primary:disabled { background: var(--lift2); color: #c8c2b4; }
+    .clocks { margin: 0 0 12px; padding-left: 18px; color: var(--text); font-size: 13px; line-height: 1.55; }
+    .q-preview { width: 100%; max-width: 280px; font-size: 16px; background: var(--lift); border: 1px solid var(--line); border-radius: 11px; min-height: 44px; padding: 8px 12px; }
     .drawer-h { display: flex; justify-content: space-between; align-items: start; gap: 12px; }
     .x { border: 0; background: var(--lift); color: var(--dim); width: 44px; height: 44px; border-radius: 10px; flex: 0 0 44px; }
     .kicker { color: var(--dim); font-size: 12px; margin: 0 0 4px; }
@@ -259,8 +264,8 @@
       <div class="seg" id="screens">
         <button type="button" data-s="board" class="on">Доска</button>
         <button type="button" data-s="auto">Автоном</button>
+        <button type="button" data-s="project">Проект</button>
         <button type="button" data-s="map">Карта</button>
-        <button type="button" data-s="console">Консоль</button>
         <button type="button" data-s="settings">Настройки</button>
         <button type="button" data-s="gate">Вход</button>
       </div>
@@ -271,10 +276,15 @@
         <div class="shell" id="shell">
           <aside class="rail">
             <div class="brand"><small>Корпорация</small><strong>Мастерская</strong></div>
-            <nav class="nav" id="nav">
+            <nav class="nav" id="nav" aria-label="Дома">
               <button type="button" data-s="board" class="on">Доска</button>
               <button type="button" data-s="auto">Автоном</button>
+              <button type="button" data-s="project">Проект</button>
+              <button type="button" data-s="graphs">Графы</button>
+            </nav>
+            <nav class="nav quiet" aria-label="Тихие комнаты">
               <button type="button" data-s="map">Карта</button>
+              <button type="button" data-s="journal">Журнал</button>
               <button type="button" data-s="console">Консоль</button>
               <button type="button" data-s="settings">Настройки</button>
             </nav>
@@ -287,6 +297,7 @@
                 <h1 id="title">Доска</h1>
                 <p id="sub">GitHub Issues · открытые</p>
               </div>
+              <input class="q-preview" type="search" placeholder="Название или репо и номер" aria-label="Поиск">
               <button type="button" class="live" id="live"><i class="pulse"></i><b>Clarity #20 · 12 мин</b></button>
             </header>
 
@@ -313,6 +324,28 @@
                 </div>
               </div>
 
+              <div id="view-project" class="hidden">
+                <div class="split">
+                  <div class="panel">
+                    <h2>Журнал</h2>
+                    <p class="note">Память сессий слева. Событий нет — возьми карточку или нажми Разобрать.</p>
+                  </div>
+                  <div>
+                    <div class="toolbar">
+                      <button type="button" class="btn primary">Принять выбранные</button>
+                      <button type="button" class="btn">Принять все видимые</button>
+                    </div>
+                    <label class="card pick"><input type="checkbox"> <div><div class="meta">corp · design</div><h3>Плотность доски</h3></div></label>
+                    <div class="toolbar"><button type="button" class="btn primary">Принять</button><button type="button" class="btn">Пропустить</button></div>
+                  </div>
+                </div>
+              </div>
+              <div id="view-graphs" class="hidden">
+                <div class="panel"><h2>Графы</h2><p class="note">Созвездие пинов. Не vis.js dump.</p></div>
+              </div>
+              <div id="view-journal" class="hidden">
+                <div class="panel"><h2>Журнал</h2><p class="note">Выберите пин в шапке — журнал читает memory/sessions. Или открой Проект и нажми Разобрать.</p></div>
+              </div>
               <div id="view-auto" class="hidden">
                 <div class="auto-status">
                   <p class="kicker">Статус</p>
@@ -336,6 +369,7 @@
                 </div>
                 <div class="auto-step">
                   <h2>3. Запуск</h2>
+                  <p class="note" style="color:var(--text)">Решение: 2 задачи · Claude · sonnet. Кнопка поставит их в очередь и стартует Автоном.</p>
                   <button type="button" class="btn primary" style="width:100%;text-align:center">Запустить выбранные</button>
                 </div>
               </div>
@@ -344,10 +378,10 @@
                 <div class="map-grid">
                   <div class="panel">
                     <h2>Контур</h2>
+                    <div class="nodebox"><b>живой /opt/corp</b><span>uvicorn · Tailscale Serve</span></div>
+                    <div class="nodebox"><b>писатели /home/corp/projects</b><span>агенты пишут сюда</span></div>
                     <div class="nodebox"><b>GitHub Issues</b><span>единственная доска</span></div>
-                    <div class="nodebox"><b>Мастерская · Tailscale</b><span>Passkey · 127.0.0.1:8787</span></div>
                     <div class="nodebox"><b>Claude · Codex · Grok · Cursor</b><span>один репо — один раннер</span></div>
-                    <div class="nodebox"><b>/home/corp/projects</b><span>graphify update после close</span></div>
                   </div>
                   <div>
                     <div class="stats">
@@ -358,7 +392,7 @@
                     </div>
                     <div class="panel" style="margin-top:12px">
                       <h2>Doctor</h2>
-                      <p class="note" style="margin:0">ok git · gh · claude · codex · grok · telegram<br>нет cursor CLI</p>
+                      <p class="note" style="margin:0">ok git · gh · claude · codex · grok · telegram<br>изоляция агента · переходный</p>
                     </div>
                   </div>
                 </div>
@@ -375,10 +409,10 @@
               </div>
 
               <div id="view-settings" class="hidden">
-                <div class="filters" id="set-tabs">
-                  <button type="button" class="chip on" data-panel="security">Доступ</button>
-                  <button type="button" class="chip" data-panel="subs">Агенты</button>
-                  <button type="button" class="chip" data-panel="projects">Репозитории</button>
+                <div class="filters" id="set-tabs" role="tablist" aria-label="Комнаты настроек">
+                  <button type="button" class="chip on" role="tab" aria-selected="true" data-panel="security">Доступ</button>
+                  <button type="button" class="chip" role="tab" aria-selected="false" data-panel="subs">Агенты</button>
+                  <button type="button" class="chip" role="tab" aria-selected="false" data-panel="projects">Репозитории</button>
                 </div>
                 <div id="panel-subs" class="hidden">
                   <article class="plan claude"><i class="accent"></i><div class="plan-b">
@@ -421,6 +455,11 @@
                   <div class="panel">
                     <h2>Доступ</h2>
                     <p class="note">Passkey на этом устройстве · Tailscale only · Funnel выключен</p>
+                    <ul class="clocks">
+                      <li>Сессия — 7 дней с создания</li>
+                      <li>Токен восстановления — 30 минут</li>
+                      <li>Диалог ключа — 5 минут</li>
+                    </ul>
                     <p class="note">Хост: vmi3510874.tailad6484.ts.net</p>
                     <button type="button" class="btn">Добавить ключ</button>
                   </div>
@@ -433,7 +472,8 @@
                     <small>Корпорация</small>
                     <h1>Мастерская</h1>
                     <p>Только Tailscale. Вход — Passkey.<br>Задачи живут в GitHub.</p>
-                    <button type="button" class="btn primary" style="width:100%;text-align:center">Продолжить с ключом</button>
+                    <button type="button" class="btn primary" style="width:100%;text-align:center">Войти</button>
+                    <p class="note">Токен восстановления живёт 30 минут. На VPS: corp workshop-token.</p>
                   </div>
                 </div>
               </div>
@@ -444,8 +484,8 @@
             <nav class="dock" id="dock">
               <button type="button" data-s="board" class="on">Доска</button>
               <button type="button" data-s="auto">Автоном</button>
-              <button type="button" data-s="settings" data-project-home>Проект</button>
-              <button type="button" data-s="map">Ещё</button>
+              <button type="button" data-s="project">Проект</button>
+              <button type="button" data-s="more" id="dock-more">Ещё</button>
             </nav>
           </section>
         </div>
@@ -455,12 +495,16 @@
   <script>
     const titles = {
       board: ["Доска", "GitHub Issues"],
-      auto: ["Автоном", "Задачи → модель → запуск"],
-      map: ["Карта", "Сервер и графы"],
+      auto: ["Автоном", "на паузе · очередь пуста"],
+      project: ["Проект", "Журнал слева · пакетное Принять сверху"],
+      graphs: ["Графы", "Все проекты"],
+      map: ["Карта", "живой /opt/corp · писатели отдельно"],
+      journal: ["Журнал", "Память и события"],
       console: ["Консоль", "tmux · clarity #20"],
       settings: ["Настройки", "Доступ · агенты · репозитории"],
       gate: ["Вход", "Passkey · Tailscale"],
     };
+    const moreRooms = { map: "Карта", journal: "Журнал", console: "Консоль", settings: "Настройки", graphs: "Графы" };
     const cards = [
       { col: "Бэклог", project: "clarity", n: 24, title: "Ship onboarding empty states", tags: ["ship"] },
       { col: "Бэклог", project: "LifeBalance", n: 11, title: "Weekly review export", tags: ["prd"] },
@@ -557,7 +601,7 @@
           <div class="swrow"><label for="fast-board">Fast (Codex / Grok)</label>
             <button type="button" class="sw" id="fast-board" role="switch" aria-checked="false"><i></i></button>
           </div>
-          <button type="button" class="btn primary">Подтвердить запуск</button>
+          <button type="button" class="btn primary">Запустить</button>
         </div>`;
       const go = document.getElementById("vps-go");
       if (go) go.onclick = () => document.getElementById("vps-box").classList.remove("hidden");
@@ -581,10 +625,17 @@
       });
     }
     function show(name) {
+      if (name === "more") name = "map";
       document.querySelectorAll("[id^='view-']").forEach((el) => el.classList.toggle("hidden", el.id !== "view-" + name));
-      document.querySelectorAll("[data-s]").forEach((el) => el.classList.toggle("on", el.dataset.s === name));
-      document.getElementById("title").textContent = titles[name][0];
-      document.getElementById("sub").textContent = titles[name][1];
+      document.querySelectorAll("[data-s]").forEach((el) => {
+        const on = el.dataset.s === name || (el.id === "dock-more" && moreRooms[name]);
+        el.classList.toggle("on", on);
+      });
+      const pair = titles[name] || titles.board;
+      document.getElementById("title").textContent = pair[0];
+      document.getElementById("sub").textContent = pair[1];
+      const more = document.getElementById("dock-more");
+      if (more) more.textContent = moreRooms[name] || "Ещё";
       shell.classList.toggle("gated", name === "gate");
       frame.classList.remove("sheet");
     }

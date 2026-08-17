@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Schibsted+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=35">
+  <link rel="stylesheet" href="/static/app.css?v=36">
 </head>
 <body>
   <div id="gate" class="gate">
@@ -26,6 +26,7 @@
       </div>
       <details id="recover">
         <summary>Не могу войти</summary>
+        <p class="note" id="recover-hint">Токен восстановления живёт 30 минут. На VPS: <code>corp workshop-token</code>.</p>
         <label id="token-wrap">
           <span id="token-label">Токен первого входа</span>
           <input id="token" autocomplete="off" spellcheck="false">
@@ -39,11 +40,13 @@
   <div id="app" class="shell hidden">
     <aside class="rail">
       <div class="brand"><small>Корпорация</small><strong>Мастерская</strong></div>
-      <nav class="nav">
+      <nav class="nav" aria-label="Дома">
         <button data-tab="board" class="on" type="button" aria-current="page">Доска</button>
         <button data-tab="auto" type="button">Автоном</button>
         <button data-tab="project" type="button">Проект</button>
         <button data-tab="graphs" type="button">Графы</button>
+      </nav>
+      <nav class="nav quiet" aria-label="Тихие комнаты">
         <button data-tab="map" type="button">Карта</button>
         <button data-tab="journal" type="button">Журнал</button>
         <button data-tab="console" type="button">Консоль</button>
@@ -64,7 +67,7 @@
         <div class="filters" id="project-filters"></div>
         <label class="q-wrap">
           <span class="sr-only">Поиск</span>
-          <input id="q" type="search" placeholder="Поиск · title / repo#n" autocomplete="off" spellcheck="false">
+          <input id="q" type="search" placeholder="Название или репо и номер" autocomplete="off" spellcheck="false">
         </label>
       </header>
 
@@ -107,15 +110,27 @@
         </section>
 
         <section id="tab-settings" class="tab">
-          <div class="filters rooms" id="settings-rooms" role="tablist" aria-label="Комнаты настроек">
-            <button type="button" class="chip on" data-room="access" aria-pressed="true">Доступ</button>
-            <button type="button" class="chip" data-room="agents" aria-pressed="false">Агенты</button>
-            <button type="button" class="chip" data-room="repos" aria-pressed="false">Репозитории</button>
+          <div class="toolbar savebar savebar-follow" id="settings-savebar">
+            <label>Параллель <input id="max-parallel" type="number" min="1" max="3" value="3"></label>
+            <label>Повторы <input id="queue-retries" type="number" min="0" max="5" value="2"></label>
+            <button type="button" class="btn" id="refresh-catalog">Обновить каталог</button>
+            <button type="button" class="btn" id="add-profile">Добавить подписку</button>
+            <button type="button" class="btn primary" id="save-settings" disabled>Сохранить</button>
           </div>
-          <div id="room-access" class="room">
+          <div class="filters rooms" id="settings-rooms" role="tablist" aria-label="Комнаты настроек">
+            <button type="button" class="chip on" role="tab" id="tab-access" data-room="access" aria-selected="true" aria-controls="room-access">Доступ</button>
+            <button type="button" class="chip" role="tab" id="tab-agents" data-room="agents" aria-selected="false" aria-controls="room-agents">Агенты</button>
+            <button type="button" class="chip" role="tab" id="tab-repos" data-room="repos" aria-selected="false" aria-controls="room-repos">Репозитории</button>
+          </div>
+          <div id="room-access" class="room" role="tabpanel" aria-labelledby="tab-access">
             <div class="panel">
               <h2>Доступ</h2>
-              <p class="note">Passkey · только Tailscale · Funnel выключен. Сессия 7 дней, вызов 5 минут, токен восстановления 30 минут. «Выйти везде» снимет все сессии.</p>
+              <p class="note">Passkey · только Tailscale · Funnel выключен. «Выйти везде» снимет все сессии.</p>
+              <ul class="clocks">
+                <li>Сессия — 7 дней с создания</li>
+                <li>Токен восстановления — 30 минут</li>
+                <li>Диалог ключа — 5 минут</li>
+              </ul>
               <p id="doctor-meta" class="meta"></p>
               <ul id="doctor-checks"></ul>
               <div class="toolbar">
@@ -126,21 +141,14 @@
               <p id="auth-note" class="note"></p>
             </div>
           </div>
-          <div id="room-agents" class="room hidden">
-            <div class="toolbar savebar">
-              <label>Параллель <input id="max-parallel" type="number" min="1" max="3" value="3"></label>
-              <label>Повторы <input id="queue-retries" type="number" min="0" max="5" value="2"></label>
-              <button type="button" class="btn" id="refresh-catalog">Обновить каталог</button>
-              <button type="button" class="btn" id="add-profile">Добавить подписку</button>
-              <button type="button" class="btn primary" id="save-settings" disabled>Сохранить</button>
-            </div>
+          <div id="room-agents" class="room hidden" role="tabpanel" aria-labelledby="tab-agents">
             <p id="catalog-note" class="note"></p>
             <h2 class="block-title">Слоты</h2>
             <div id="slots" class="stack"></div>
             <h2 class="block-title">Подписки</h2>
             <div id="profiles" class="stack"></div>
           </div>
-          <div id="room-repos" class="room hidden">
+          <div id="room-repos" class="room hidden" role="tabpanel" aria-labelledby="tab-repos">
             <div class="panel">
               <h2>Репозитории</h2>
               <div class="toolbar">
@@ -149,6 +157,7 @@
                 <input id="new-repo" placeholder="имя нового репо">
                 <button type="button" class="btn" id="btn-create-repo">Создать</button>
               </div>
+              <p id="create-next" class="note hidden"></p>
               <div id="repo-list" class="stack"></div>
             </div>
           </div>
@@ -156,7 +165,7 @@
       </div>
 
       <div id="scrim" class="scrim hidden"></div>
-      <aside id="sheet" class="drawer hidden" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+      <aside id="sheet" class="drawer hidden" role="dialog" aria-modal="true" aria-labelledby="sheet-title" aria-describedby="sheet-note">
         <div class="drawer-h">
           <div>
             <p class="kicker" id="sheet-kicker">Запуск</p>
@@ -181,12 +190,12 @@
         <button data-tab="board" class="on" type="button" aria-current="page">Доска</button>
         <button data-tab="auto" type="button">Автоном</button>
         <button data-tab="project" type="button">Проект</button>
-        <button id="dock-more" data-tab="more" type="button" aria-haspopup="true" aria-expanded="false">Ещё</button>
+        <button id="dock-more" data-tab="more" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="more-menu">Ещё</button>
       </nav>
     </section>
   </div>
 
-  <script src="/static/vendor/sortable.min.js?v=35"></script>
-  <script src="/static/app.js?v=35"></script>
+  <script src="/static/vendor/sortable.min.js?v=36"></script>
+  <script src="/static/app.js?v=36"></script>
 </body>
 </html>
