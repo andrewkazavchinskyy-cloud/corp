@@ -644,22 +644,30 @@ def api_draft(body: dict = Body(default_factory=dict)) -> dict:
 @app.post("/api/take")
 def api_take(body: dict = Body(default_factory=dict)) -> dict:
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
-    return api_logic.with_issue_link(call(corp.take_issue, corp.load_registry(), repo, number), repo, number)
+    return api_logic.with_issue_link(
+        call(corp.board_click, corp.load_registry(), "take", repo, number),
+        repo,
+        number,
+    )
 
 
 @app.post("/api/self/drop")
 def api_self_drop(body: dict = Body(default_factory=dict)) -> dict:
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
-    return api_logic.with_issue_link(call(api_logic.drop_self, corp, repo, number), repo, number)
+    return api_logic.with_issue_link(
+        call(corp.board_click, corp.load_registry(), "drop", repo, number),
+        repo,
+        number,
+    )
 
 
 @app.post("/api/move")
 def api_move(body: dict = Body(default_factory=dict)) -> dict:
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
     result = call(
-        api_logic.workshop_move,
-        corp,
+        corp.board_click,
         corp.load_registry(),
+        "move",
         repo,
         number,
         body.get("column") or "",
@@ -671,14 +679,14 @@ def api_move(body: dict = Body(default_factory=dict)) -> dict:
 @app.post("/api/close")
 def api_close(body: dict = Body(default_factory=dict)) -> dict:
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
+    fail = bool(body.get("fail") or body.get("verdict") == "fail")
     result = call(
-        api_logic.workshop_close,
-        corp,
+        corp.board_click,
         corp.load_registry(),
+        "qa_fail" if fail else "qa_pass",
         repo,
         number,
-        bool(body.get("force")),
-        bool(body.get("fail") or body.get("verdict") == "fail"),
+        "",
         body.get("note") or "",
     )
     return api_logic.with_issue_link(result, repo, number)
@@ -691,13 +699,12 @@ def api_qa(body: dict = Body(default_factory=dict)) -> dict:
     if body.get("verdict") == "pass":
         fail = False
     result = call(
-        api_logic.workshop_close,
-        corp,
+        corp.board_click,
         corp.load_registry(),
+        "qa_fail" if fail else "qa_pass",
         repo,
         number,
-        False,
-        fail,
+        "",
         body.get("note") or "",
     )
     return api_logic.with_issue_link(result, repo, number)
@@ -775,15 +782,19 @@ def api_queue_add(body: dict = Body(default_factory=dict)) -> dict:
     effort = body.get("effort") or ""
     fast = body.get("fast")
     added = []
+    row = {}
     with LOCK:
         reg = corp.load_registry()
         for raw in refs:
             repo, number = call(corp.parse_issue_ref, raw)
             row = call(
-                corp.queue_add,
+                corp.board_click,
                 reg,
+                "queue",
                 repo,
                 number,
+                "",
+                "",
                 body.get("profiles", {}).get(raw) or profile,
                 model,
                 effort,
@@ -1087,6 +1098,26 @@ def telegram_loop() -> None:
     corp.telegram_loop()
 
 
+def _boot_board() -> None:
+    try:
+        reg = corp.load_registry()
+        corp.fetch_github_board(reg)
+        corp.cached_research(reg)
+    except Exception:
+        pass
+
+
+def board_sync_loop() -> None:
+    while True:
+        try:
+            reg = corp.load_registry()
+            if not corp.run_one_board_sync(reg):
+                corp.maybe_refresh_board(reg)
+                time.sleep(0.25)
+        except Exception:
+            time.sleep(1)
+
+
 @app.on_event("startup")
 def startup() -> None:
     db().close()
@@ -1097,6 +1128,8 @@ def startup() -> None:
         pass
     threading.Thread(target=queue_loop, daemon=True).start()
     threading.Thread(target=telegram_loop, daemon=True).start()
+    threading.Thread(target=board_sync_loop, daemon=True).start()
+    threading.Thread(target=_boot_board, daemon=True).start()
 
 
 if __name__ == "__main__":

@@ -1611,6 +1611,75 @@ Nodes (33): active_projects(), board_payload() (+31 more)
             assert "Завели 9" in corp.tg_council_text(corp.council_load())
     finally:
         corp.council_existing_titles = old_titles
+    board_tmp = Path(tempfile.mkdtemp(prefix="corp-board-")) / "workshop.json"
+    repo = "andrewkazavchinskyy-cloud/corp"
+    snap_card = {
+        "repo": repo,
+        "number": 42,
+        "title": "fast click",
+        "url": "https://github.com/andrewkazavchinskyy-cloud/corp/issues/42",
+        "project": "corp",
+        "column": "ready",
+        "runner": "",
+        "queued": False,
+        "blocked": False,
+        "role": "build",
+        "state": "OPEN",
+        "labels": [{"name": "ready"}],
+        "can_run": True,
+        "block_reason": "",
+    }
+    extra = {**snap_card, "number": 43, "title": "other", "url": ""}
+    old_issues = corp.issues_for
+    old_get = corp.get_issue
+    old_research = corp.research_report
+    old_take = corp.take_issue
+    old_board_memo = dict(corp._board_memo)
+    old_research_memo = dict(corp._research_memo)
+
+    def gh_boom(*_a, **_k):
+        raise AssertionError("github should not run")
+
+    try:
+        corp.issues_for = gh_boom
+        corp.get_issue = gh_boom
+        corp.research_report = gh_boom
+        corp._board_memo.update({"t": 0, "key": "", "data": None})
+        corp._research_memo.update({"t": 0, "key": "", "data": None})
+        with corp.workshop_json_override(board_tmp):
+            data = corp.default_workshop()
+            data["board_snap"] = {"t": 1, "key": "corp", "cards": [snap_card, extra], "warning": ""}
+            corp.save_workshop(data)
+            payload = corp.board_payload(reg2)
+            assert [c["number"] for c in payload["cards"]] == [42, 43]
+            assert payload["projects"] == []
+            taken = corp.board_click(reg2, "take", repo, 42)
+            assert taken["ok"] and taken["runner"] == "self" and taken["column"] == "in-progress"
+            painted = next(c for c in corp.board_payload(reg2)["cards"] if c["number"] == 42)
+            assert painted["column"] == "in-progress" and painted["runner"] == "self"
+            assert painted["can_run"] is False and painted.get("pending") == "take"
+            stored = corp.load_workshop()
+            assert stored["board_ov"][f"{repo}#42"]["pending"] == "take"
+            assert stored["board_sync"][0]["action"] == "take"
+            try:
+                corp.board_click(reg2, "take", repo, 43)
+                raise AssertionError("second take on same pin should die")
+            except corp.CorpError as exc:
+                assert "self" in str(exc)
+            moved = corp.board_click(reg2, "move", repo, 43, "backlog")
+            assert moved["column"] == "backlog"
+            synced = []
+            corp.take_issue = lambda *a, **k: synced.append("take") or {"ok": True}
+            assert corp.run_one_board_sync(reg2) is True
+            assert synced == ["take"]
+            assert f"{repo}#42" not in (corp.load_workshop().get("board_ov") or {})
+    finally:
+        corp.issues_for = old_issues
+        corp.get_issue = old_get
+        corp.research_report = old_research
+        corp.take_issue = old_take
+        corp._board_memo.update(old_board_memo)
+        corp._research_memo.update(old_research_memo)
     print("ok")
 
 
