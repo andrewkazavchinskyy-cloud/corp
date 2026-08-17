@@ -87,7 +87,7 @@ First live Автоном job is a **sandbox** card, not a P0. See
 3. Set `TELEGRAM_CHAT_ID`.
 4. Test: `corp notify 'corp is up'`
 
-`corp run` sends start and finish messages.
+`corp run` sends one compact card on start and finish, not the queue.
 
 ## Agents
 

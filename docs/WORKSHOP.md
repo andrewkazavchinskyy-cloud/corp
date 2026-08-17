@@ -94,14 +94,27 @@ Drag to Done from ready/ход sends the card to QA, not close.
 
 ## Telegram
 
-Automatic runs only. One chat_id. Immediate: start, closed, failed, incomplete,
-hung, retry, N drafts, and «нужно твоё действие» (GitHub/auth/pin/CLI).
-Pulse every 15 minutes: `repo#n · minutes · model` + 3 log lines ≤200 chars.
-Buttons: Approve/Skip drafts; Перезапустить / Откатить / Снять a queue card.
-Commands: /start /status /queue /running /doctor /board /drafts /go /pause
-/retry #n /abort #n. Persistent reply keyboard: Сейчас, Очередь, Бежит,
-Сервер, Доска, Черновики, Автоном, Пауза. Aliases work as typed text.
-Workshop duplicates those actions.
+Remote control + pager. One chat_id. Russian chrome. English only for
+product names (Claude, GitHub) and issue titles.
+
+Keyboard: **Статус · Очередь · Агенты · Сервер · Доска · Черновики · Старт · Пауза**.
+Typed aliases keep old thumbs: Сейчас, Бежит, Автоном, Автоном ▶,
+/status /queue /running /doctor /go /pause. Старт starts the queue.
+Автоном ▶ is not a keyboard key.
+
+One phone screen. No issue-title walls unless he asked for Доска or Очередь.
+- Статус: queue on/off, who writes, server ok, draft count.
+- Очередь: running + next 3 + paused. Not history.
+- Агенты: tmux/orch per pin, one line.
+- Сервер: load, disk, workshop, queue. Four lines.
+- Доска: Бэклог / Готово / Ход / QA / Закрыто + P0 (max 5).
+- Черновики: count + Approve/Skip on the current draft only.
+
+Immediate cards: start, closed, failed, hung, retry, drafts, need-human.
+Shape: `repo#n · what · next action`. Do not resend the queue.
+Pulse every 15 minutes only if the log changed. One line.
+Inline: Открыть · Очередь+ · Пауза · QA. No duplicate menu under every reply.
+Dedup identical events. Workshop web uses the same formatter.
 
 ## Autopilot
 
