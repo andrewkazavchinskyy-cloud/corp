@@ -2016,8 +2016,10 @@ function orchCard(orch, name) {
       ? "Исследование сломалось"
       : `Исследование готово · ${orch.drafts || 0} черновиков`;
   const log = orch.pane || orch.log || "";
+  const err = orch.error && !live ? `<p class="err">${escapeHtml(orch.error)}</p>` : "";
   return `<article class="card orch ${live ? "live" : ""}"><h3>${title}</h3>
     <p class="meta">${escapeHtml(orch.kind || "разбор")}</p>
+    ${err}
     <pre class="orch-log">${escapeHtml(log || "ждём вывод…")}</pre>
     ${live ? `<button type="button" class="btn" id="orch-console" data-orch="${escapeHtml(name)}">Консоль</button>` : ""}</article>`;
 }
