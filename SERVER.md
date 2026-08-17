@@ -3,6 +3,9 @@
 Work happens in two places. GitHub Issues is the board. Telegram is status.
 The workshop is the phone/desktop remote. Do not add Linear.
 
+First hour for a second human: [`docs/HANDOFF.md`](docs/HANDOFF.md).
+Product north star: [`docs/SPEC.md`](docs/SPEC.md).
+
 ## Who does what
 
 - **Mac mini:** you, Cursor, Codex, Claude, Grok CLI, Grok Build in the browser.
@@ -13,13 +16,18 @@ The workshop is the phone/desktop remote. Do not add Linear.
 - **GitHub:** source of truth. Labels are columns. The workshop does not
   store the backlog.
 
-## Layout
+SSH to the VPS is **root** via the local machine key (`ssh corp-vps`).
+`/usr/local/bin/corp` then `sudo -u corp` into the live tree. Do not put
+keys or tokens in git.
 
-- Corp repo: `/opt/corp`
-- Project checkouts: `/home/corp/projects`
-- Secrets: `/home/corp/.config/corp/env`, `workshop.json`, `workshop.db`
-- Workshop: `127.0.0.1:8787`, user `corp`
-- HTTPS: `tailscale serve` on `https://<machine>.<tailnet>.ts.net` (no Funnel)
+## Two trees
+
+Do not treat these as one checkout.
+
+| Path | Process | Who writes |
+| ---- | ------- | ---------- |
+| `/opt/corp` | `uvicorn` (workshop unit, cwd `/opt/corp/workshop`) and `/usr/local/bin/corp` → `/opt/corp/bin/corp` | Operator, additive deploy only |
+| `/home/corp/projects/<name>` | Writing agents (`CORP_WORKSPACE`) | VPS runners. Corp pin = `/home/corp/projects/corp` |
 
 ```bash
 ssh corp-vps
@@ -29,7 +37,30 @@ corp take --issue owner/repo#n
 corp run --issue owner/repo#n --agent claude
 ```
 
+Secrets: `/home/corp/.config/corp/env`, `workshop.json`, `workshop.db`.
+Workshop bind: `127.0.0.1:8787`, user `corp`.
+
+### Deploy live additively
+
+Writers push from `/home/corp/projects/corp` (or a Mac worktree) to
+`origin`. Then fast-forward `/opt/corp` and restart. Never
+`reset --hard`. Never copy a dirty tree over live.
+
+```bash
+git -C /opt/corp fetch origin
+git -C /opt/corp merge --ff-only origin/main
+systemctl restart workshop
+```
+
+If `/opt/corp` has local edits, stop and keep them.
+
 ## Workshop
+
+HTTPS is Tailscale Serve only (no Funnel):
+
+`https://vmi3510874.tailad6484.ts.net`
+
+Do not rename that machine: Passkeys bind to the hostname.
 
 ```bash
 sudo systemctl status workshop
@@ -40,12 +71,14 @@ The unit PATH must include `/home/corp/.local/bin` so Claude/Codex/Grok/`agent`
 are visible. If `registry.json` is not writable by `corp`, pins and new
 repos persist in `~/.config/corp/workshop.json`.
 
-Open the Tailscale hostname, register the first Passkey with the token,
-then use the board. Lost phone: run `corp workshop-token` again and
-register a new key on the gate. Autopilot, console, and settings sit
-behind the same login.
+**Passkey:** add another key in Настройки while logged in — other
+sessions stay. Recover-token enroll (`corp workshop-token` on the gate)
+revokes every session. Lost phone: recover token, then register a new
+key. Existing keys stay. Autopilot, console, and settings sit behind the
+same login.
 
-Do not rename the Tailscale machine: Passkeys bind to that hostname.
+First live Автоном job is a **sandbox** card, not a P0. See
+[`docs/HANDOFF.md`](docs/HANDOFF.md).
 
 ## Telegram
 
@@ -72,4 +105,5 @@ Writing agents run under a separate unprivileged OS identity once
 provisioned (`corp-agent`), so a same-UID read of control-plane secrets by
 known path is not possible. Until provisioned they still run as `corp`
 with Telegram credentials stripped from their env only. See
-[`docs/AGENT_ISOLATION.md`](docs/AGENT_ISOLATION.md).
+[`docs/AGENT_ISOLATION.md`](docs/AGENT_ISOLATION.md). Do not flip
+`CORP_AGENT_USER` during a first-hour handoff.
