@@ -6,11 +6,19 @@ set -euo pipefail
 
 CORP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE="$(dirname "$CORP_ROOT")"
-LB_ROOT="$WORKSPACE/LifeBalance"
 PGDATA="$HOME/.lifebalance/pgdata"
 PGPORT=55432
 
 log() { printf '\n=== %s ===\n' "$1"; }
+
+# Resolve an existing LifeBalance checkout across the layouts a Cloud Agent may
+# use (sibling of corp, the standard /agent/repos root, or $HOME).
+find_lifebalance() {
+  for cand in "$WORKSPACE/LifeBalance" /agent/repos/LifeBalance "$HOME/LifeBalance"; do
+    if [ -d "$cand/.git" ]; then echo "$cand"; return 0; fi
+  done
+  return 1
+}
 
 log "System packages (postgres)"
 if ! ls /usr/lib/postgresql/*/bin/initdb >/dev/null 2>&1; then
@@ -30,9 +38,12 @@ if ! command -v graphify >/dev/null 2>&1; then
 fi
 
 log "Ensure LifeBalance repository is present"
-if [ ! -d "$LB_ROOT/.git" ]; then
+LB_ROOT="$(find_lifebalance || true)"
+if [ -z "$LB_ROOT" ]; then
+  LB_ROOT="$WORKSPACE/LifeBalance"
   gh repo clone andrewkazavchinskyy-cloud/LifeBalance "$LB_ROOT"
 fi
+echo "LifeBalance: $LB_ROOT"
 
 log "LifeBalance backend dependencies"
 cd "$LB_ROOT/backend"

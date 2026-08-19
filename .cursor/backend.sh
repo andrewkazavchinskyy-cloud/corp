@@ -4,8 +4,16 @@ set -euo pipefail
 
 CORP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKSPACE="$(dirname "$CORP_ROOT")"
-LB_ROOT="$WORKSPACE/LifeBalance"
 PGBIN="$(ls -d /usr/lib/postgresql/*/bin | sort -V | tail -1)"
+
+LB_ROOT=""
+for cand in "$WORKSPACE/LifeBalance" /agent/repos/LifeBalance "$HOME/LifeBalance"; do
+  if [ -d "$cand/.git" ]; then LB_ROOT="$cand"; break; fi
+done
+if [ -z "$LB_ROOT" ]; then
+  echo "LifeBalance checkout not found" >&2
+  exit 1
+fi
 
 # Wait for the database that start.sh brings up.
 for _ in $(seq 1 60); do
