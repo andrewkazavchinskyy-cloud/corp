@@ -1,0 +1,16 @@
+{
+  "name": "corp + LifeBalance",
+  "user": "ubuntu",
+  "install": "bash .cursor/install.sh",
+  "start": "bash .cursor/start.sh",
+  "terminals": [
+    {
+      "name": "lifebalance-backend",
+      "command": "bash .cursor/backend.sh"
+    }
+  ],
+  "ports": [3000],
+  "repositoryDependencies": [
+    "github.com/andrewkazavchinskyy-cloud/LifeBalance"
+  ]
+}
