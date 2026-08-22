@@ -6,6 +6,8 @@ import json
 import os
 import sqlite3
 import tempfile
+import time
+import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -1766,6 +1768,116 @@ Nodes (33): active_projects(), board_payload() (+31 more)
         corp.tg_send = old_send
         corp._board_memo.update(old_board_memo)
         corp._research_memo.update(old_research_memo)
+
+    # --- tg pager hardening (#126): события сбоев, здоровье бота, статус-карта
+    doc_src = inspect.getsource(corp.doctor_payload)
+    assert "telegram bot auth" in doc_src and "tg_bot_auth_ok()" in doc_src
+    assert "telegram delivery" in doc_src and "tg_delivery_ok()" in doc_src
+    assert "getMe" in inspect.getsource(corp.tg_bot_auth_ok)
+    tick_src = inspect.getsource(corp.telegram_tick)
+    assert tick_src.count("except Exception") >= 2
+    assert "set_tg_offset(new_offset)" in tick_src
+    assert "tg_health()" in inspect.getsource(corp.tg_status_body)
+    assert "_tg_degrade" in tick_src
+
+    now = time.time()
+    ev_tg = Path(tempfile.mkdtemp(prefix="corp-tg-")) / "events.jsonl"
+    corp.record_event("tg_fail", "bot", "getUpdates failed: timeout", path=ev_tg, now=now - 7200)
+    corp.record_event("tg_fail", "bot", "sendMessage failed: HTTP Error 401: Unauthorized", path=ev_tg, now=now - 100)
+    health = corp.tg_health(path=ev_tg)
+    assert health["fails_1h"] == 1 and health["last_fail_age"] <= 3600
+    assert corp.tg_delivery_ok(path=ev_tg) is False
+    ev_ok = Path(tempfile.mkdtemp(prefix="corp-tg2-")) / "events.jsonl"
+    assert corp.tg_health(path=ev_ok) == {"fails_1h": 0, "last_fail_age": None}
+    assert corp.tg_delivery_ok(path=ev_ok) is True
+
+    status = corp.tg_pulse_card(queue_on=False, writer="тихо", server_ok=True, drafts=0, tg_fails=3)
+    assert "Бот: сбои доставки ×3 за час" in status
+    clean_status = corp.tg_pulse_card(queue_on=False, writer="тихо", server_ok=True, drafts=0)
+    assert "сбои доставки" not in clean_status
+
+    ev_fail = Path(tempfile.mkdtemp(prefix="corp-tg3-")) / "events.jsonl"
+    old_events_path = corp.EVENTS_PATH
+    old_notify_fn = corp.notify
+    old_creds2 = corp.tg_creds
+    try:
+        corp.EVENTS_PATH = ev_fail
+        corp.tg_creds = lambda: ("T", "42")
+
+        def notify_boom(*a, **k):
+            raise corp.CorpError("telegram sendMessage failed: HTTP Error 401: Unauthorized")
+
+        corp.notify = notify_boom
+        assert corp.notify_safe("тест") == {}
+        rows = corp.load_events(5, path=ev_fail)
+        assert rows[0]["kind"] == "tg_fail"
+        assert "401" in rows[0]["text"]
+
+        ev_skip = Path(tempfile.mkdtemp(prefix="corp-tg4-")) / "events.jsonl"
+        corp.EVENTS_PATH = ev_skip
+        corp.tg_creds = lambda: ("", "")
+        assert corp.notify_safe("тест") == {}
+        assert corp.load_events(5, path=ev_skip) == []
+    finally:
+        corp.EVENTS_PATH = old_events_path
+        corp.notify = old_notify_fn
+        corp.tg_creds = old_creds2
+
+    old_creds = corp.tg_creds
+    old_lw = corp.load_workshop
+    old_set_offset = corp.set_tg_offset
+    old_handle_text = corp.handle_tg_text
+    old_tg_send = corp.tg_send
+    old_urlopen = urllib.request.urlopen
+    saved_offsets = []
+    ev_tick = Path(tempfile.mkdtemp(prefix="corp-tg5-")) / "events.jsonl"
+    try:
+        corp.EVENTS_PATH = ev_tick
+        corp.tg_creds = lambda: ("T", "42")
+        corp.load_workshop = lambda: {"tg_offset": 5}
+        corp.set_tg_offset = lambda value: saved_offsets.append(value)
+        corp.tg_send = lambda *a, **k: {}
+        calls = []
+
+        def fake_handle(text):
+            calls.append(text)
+            if len(calls) >= 2:
+                raise RuntimeError("битый апдейт")
+
+        corp.handle_tg_text = fake_handle
+
+        class FakeResp:
+            def read(self):
+                return json.dumps({
+                    "ok": True,
+                    "result": [
+                        {"update_id": 6, "message": {"chat": {"id": "42"}, "text": "/start"}},
+                        {"update_id": 7, "message": {"chat": {"id": "42"}, "text": "/старт"}},
+                    ],
+                }).encode()
+
+        def fake_urlopen(url, timeout=0):
+            return FakeResp()
+
+        urllib.request.urlopen = fake_urlopen
+        corp.telegram_tick()
+        assert saved_offsets == [8]
+        assert calls == ["/start", "/старт"]
+
+        def dead_urlopen(url, timeout=0):
+            raise OSError("network down")
+
+        urllib.request.urlopen = dead_urlopen
+        corp.telegram_tick()
+        assert saved_offsets == [8]
+    finally:
+        corp.EVENTS_PATH = old_events_path
+        corp.tg_creds = old_creds
+        corp.load_workshop = old_lw
+        corp.set_tg_offset = old_set_offset
+        corp.handle_tg_text = old_handle_text
+        corp.tg_send = old_tg_send
+        urllib.request.urlopen = old_urlopen
     print("ok")
 
 
