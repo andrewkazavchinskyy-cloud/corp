@@ -51,6 +51,9 @@ TG_LONG_POLL = 25
 QUEUE_STALE_SEC = 90
 QUEUE_MAX_ATTEMPTS = 4
 QUEUE_HUNG_SEC = 45 * 60
+CLAIM_REAP_VIA_SEC = 90 * 60
+CLAIM_REAP_SELF_SEC = 6 * 60 * 60
+HEARTBEAT_LIVE_SEC = 15 * 60
 QA_ROUNDS = 3
 RETRY_COOLDOWN_SEC = 600
 CONFIG_DIR = Path.home() / ".config" / "corp"
@@ -2236,7 +2239,10 @@ def pulse_label(kind: str, model: str = "") -> str:
 
 
 def pulse_loop(repo: str, number: int, kind: str, started: float, stop: threading.Event, model: str = "") -> None:
-    return
+    ref = issue_ref(repo, number)
+    while not stop.wait(300):
+        minutes = int((time.time() - started) / 60)
+        append_log(f"{time.time():.0f} {ref} heartbeat · {pulse_label(kind, model)} · {minutes} min\n")
 
 
 def ensure_seed_labels(repo: str) -> None:
@@ -5783,7 +5789,7 @@ def run_from_claim_body(text: str) -> str:
     return match.group(1) if match else ""
 
 
-def latest_claim_run(repo: str, number: int) -> str:
+def latest_claim_info(repo: str, number: int) -> tuple[str, float]:
     proc = run(
         [
             "gh",
@@ -5791,17 +5797,30 @@ def latest_claim_run(repo: str, number: int) -> str:
             "--paginate",
             f"repos/{repo}/issues/{number}/comments",
             "--jq",
-            '.[].body | select(startswith("corp-claim:") and contains("run:"))',
+            '.[] | select(.body | startswith("corp-claim:") and contains("run:")) | [.created_at, .body] | @tsv',
         ],
         check=False,
         timeout=30,
     )
     if proc.returncode != 0:
         raise CorpError(f"cannot read claim comments for {repo}#{number}: {(proc.stderr or proc.stdout or '').strip()[:160]}")
-    bodies = [line for line in (proc.stdout or "").splitlines() if line.strip()]
-    if not bodies:
-        return ""
-    return run_from_claim_body(bodies[-1])
+    rows = [line for line in (proc.stdout or "").splitlines() if line.strip()]
+    if not rows:
+        return "", 0.0
+    last = rows[-1].split("\t", 1)
+    created_iso = last[0] if last else ""
+    body = last[1] if len(last) > 1 else ""
+    try:
+        from datetime import datetime, timezone
+
+        created = datetime.strptime(created_iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        created = 0.0
+    return run_from_claim_body(body), created
+
+
+def latest_claim_run(repo: str, number: int) -> str:
+    return latest_claim_info(repo, number)[0]
 
 
 def claim_sticks(repo: str, number: int, run_id: str, attempts: int = 3) -> bool:
@@ -6398,22 +6417,49 @@ def can_promote_to_qa(code: int, issue: dict) -> bool:
 def wait_tmux(project: str, prefix: str = "", hung_sec: int | None = None) -> int:
     session = tmux_session(project)
     pane = ""
-    started = time.time()
     limit = QUEUE_HUNG_SEC if hung_sec is None else hung_sec
+    last_activity = time.time()
+    last_snapshot = ""
     while run(["tmux", "has-session", "-t", session], check=False).returncode == 0:
-        if limit >= 0 and time.time() - started >= limit:
+        pane = capture_pane(session)
+        log_text = RUN_LOG.read_text() if RUN_LOG.is_file() else ""
+        tail_lines = (log_text.splitlines() or [])[-200:]
+        tail_lines = [line for line in tail_lines if " heartbeat · " not in line]
+        if prefix:
+            tail_lines = [line for line in tail_lines if log_line_matches_issue(line, prefix)]
+        snapshot = f"{pane}\n" + "\n".join(tail_lines)
+        if snapshot != last_snapshot:
+            if last_snapshot:
+                last_activity = time.time()
+            last_snapshot = snapshot
+        if limit >= 0 and time.time() - last_activity >= limit:
             tmux_kill(project)
             return 124
-        pane = capture_pane(session)
         time.sleep(3)
     log_text = RUN_LOG.read_text() if RUN_LOG.is_file() else ""
     return read_tmux_exit(log_text, pane, prefix)
 
 
-def launch_agent(kind: str, cmd: list[str], dest: Path, project: str, prefix: str = "") -> int:
+def launch_agent(kind: str, cmd: list[str], dest: Path, project: str, prefix: str = "", repo: str = "", number: int = 0) -> int:
     tag = prefix or project
     append_log(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} {tag} via {kind} ===\n")
     cmd = wrap_isolated(cmd, dest)
+    stop_pulse = threading.Event()
+    pulse = None
+    if repo and number:
+        pulse = threading.Thread(
+            target=pulse_loop,
+            args=(repo, number, kind, time.time(), stop_pulse),
+            daemon=True,
+        )
+        pulse.start()
+    try:
+        return _launch_agent_inner(kind, cmd, dest, project, prefix, hung_tag=tag)
+    finally:
+        stop_pulse.set()
+
+
+def _launch_agent_inner(kind: str, cmd: list[str], dest: Path, project: str, prefix: str = "", hung_tag: str = "") -> int:
     if have("tmux"):
         session = tmux_session(project)
         if tmux_alive(project):
@@ -6505,7 +6551,7 @@ def run_issue(
     tg_notify_event("start", tg_short_ref(repo, number), "старт", kind, url=issue.get("url") or "", action_ref=issue_ref(repo, number))
     cmd = agent_argv(kind, prompt, dest, model=model, effort=effort, fast=fast)
     print(f"running: {cmd[0]} {repo}#{number} {role}", file=sys.stderr)
-    code = launch_agent(kind, cmd, dest, project["name"], prefix=issue_ref(repo, number))
+    code = launch_agent(kind, cmd, dest, project["name"], prefix=issue_ref(repo, number), repo=repo, number=number)
     latest = get_issue(repo, number)
     closed = (latest.get("state") or "").upper() == "CLOSED"
     if code == 124:
@@ -6810,6 +6856,142 @@ def reap_queue(
         item["status"] = "waiting"
         events.append({"kind": "retry", "item": item})
     return events
+
+
+def heartbeat_age_from_log(log_text: str, ref: str, now: float | None = None) -> float | None:
+    prefix = f" {ref} heartbeat "
+    best = None
+    for line in (log_text or "").splitlines():
+        if prefix not in line:
+            continue
+        head = line.strip().split(" ", 1)[0]
+        try:
+            stamp = float(head)
+        except ValueError:
+            continue
+        best = max(best or 0.0, stamp)
+    if best is None:
+        return None
+    return (time.time() if now is None else now) - best
+
+
+def reap_orphan_claims(
+    reg: dict,
+    *,
+    now: float | None = None,
+    list_in_progress=None,
+    claim_age=None,
+    heartbeat_age_fn=None,
+    updated_age_fn=None,
+    queue_refs=None,
+    tmux_on=None,
+    release=None,
+    comment_fn=None,
+    via_sec: int | None = None,
+    self_sec: int | None = None,
+) -> list[dict]:
+    now = time.time() if now is None else now
+    list_in_progress = list_in_progress or _list_in_progress_cards
+    claim_age = claim_age or _claim_age_for
+    heartbeat_age_fn = heartbeat_age_fn or _heartbeat_age_for
+    updated_age_fn = updated_age_fn or _updated_age_for
+    queue_refs = queue_refs if queue_refs is not None else {
+        issue_ref(item.get("repo") or "", item.get("issue"))
+        for item in load_workshop().get("queue") or []
+        if item.get("status") == "running"
+    }
+    tmux_on = tmux_on or tmux_alive
+    release = release or release_runner
+    comment_fn = comment_fn or comment
+    via_limit = CLAIM_REAP_VIA_SEC if via_sec is None else int(via_sec)
+    self_limit = CLAIM_REAP_SELF_SEC if self_sec is None else int(self_sec)
+    out = []
+    for project in pinned_projects(reg):
+        repo = project.get("repo") or ""
+        name = project.get("name") or ""
+        if not repo:
+            continue
+        session_alive = bool(tmux_on(name))
+        for issue in list_in_progress(repo) or []:
+            number = issue.get("number")
+            if not number:
+                continue
+            names = label_names(issue)
+            ref = issue_ref(repo, number)
+            if ref in queue_refs or session_alive:
+                continue
+            hb = heartbeat_age_fn(repo, number)
+            if hb is not None and hb < HEARTBEAT_LIVE_SEC:
+                continue
+            upd = updated_age_fn(repo, number, issue)
+            if upd is not None and upd < HEARTBEAT_LIVE_SEC:
+                continue
+            age = claim_age(repo, number)
+            is_self = "self" in names and not any(str(n).startswith("via:") for n in names)
+            limit = self_limit if is_self else via_limit
+            kind_of_card = "self" if is_self else next((n for n in names if n.startswith("via:")), "via:*")
+            if age is None or age < limit:
+                continue
+            try:
+                release(repo, number)
+            except Exception as exc:
+                append_log(f"reaper release failed {ref}: {exc}\n")
+                continue
+            try:
+                comment_fn(repo, number, f"Reaper: клейм {kind_of_card} висит без живого процесса дольше {limit // 60} мин — вернул карту в ready.")
+            except CorpError:
+                pass
+            record_event("reap", tg_short_ref(repo, number), f"{kind_of_card} без процесса {limit // 60} мин")
+            out.append({"repo": repo, "number": number, "kind": kind_of_card, "age_min": int(age // 60)})
+    return out
+
+
+def _list_in_progress_cards(repo: str) -> list[dict]:
+    proc = run(
+        ["gh", "issue", "list", "-R", repo, "--state", "open", "--label", "in-progress",
+         "--json", "number,title,labels,url", "--limit", "100"],
+        check=False,
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        return []
+    try:
+        return json.loads(proc.stdout or "[]")
+    except json.JSONDecodeError:
+        return []
+
+
+def _claim_age_for(repo: str, number: int) -> float | None:
+    try:
+        _run_id, created = latest_claim_info(repo, number)
+    except CorpError:
+        return None
+    if created <= 0:
+        return None
+    return time.time() - created
+
+
+def _heartbeat_age_for(repo: str, number: int) -> float | None:
+    if not RUN_LOG.is_file():
+        return None
+    try:
+        text = RUN_LOG.read_text()
+    except OSError:
+        return None
+    return heartbeat_age_from_log(text, issue_ref(repo, number))
+
+
+def _updated_age_for(repo: str, number: int, issue: dict) -> float | None:
+    raw = (issue.get("updatedAt") or "").strip()
+    if not raw:
+        return None
+    try:
+        from datetime import datetime, timezone
+
+        stamp = datetime.strptime(raw.replace("Z", ""), "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
+    except ValueError:
+        return None
+    return time.time() - stamp
 
 
 def propose_draft(reg: dict, project_name: str, title: str, body: str, label: str = "ready") -> dict:
@@ -7358,6 +7540,13 @@ def main() -> None:
         print(json.dumps(council_start(reg, args.project or args.message or ""), indent=2, ensure_ascii=False))
         return
 
+    if args.command == "cycle":
+        try:
+            for row in reap_orphan_claims(reg):
+                append_log(f"reaper: {json.dumps(row, ensure_ascii=False)}\n")
+                tg_notify_event("need_human", tg_short_ref(row["repo"], row["number"]), "Reaper вернул карту в ready", action_ref=issue_ref(row["repo"], row["number"]))
+        except Exception as exc:
+            append_log(f"reaper failed: {exc}\n")
     payload = cycle_payload(reg)
     text = json.dumps(payload, indent=2) if args.json else render(payload)
     print(text, end="" if text.endswith("\n") else "\n")
