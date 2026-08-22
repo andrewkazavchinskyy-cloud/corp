@@ -1,0 +1,119 @@
+{
+  "communities": {
+    "0": [
+      "bin_corp_agent_argv",
+      "bin_corp_die",
+      "bin_corp_load_env",
+      "bin_corp_load_registry",
+      "bin_corp_main",
+      "bin_corp_notify",
+      "bin_corp_pick_agent",
+      "bin_corp_render",
+      "bin_corp_run_next",
+      "bin_corp_write_next"
+    ],
+    "1": [
+      "bin_corp_bootstrap",
+      "bin_corp_doctor",
+      "bin_corp_gh_ready",
+      "bin_corp_have",
+      "bin_corp_pull_projects",
+      "bin_corp_run",
+      "completedprocess"
+    ],
+    "2": [
+      "bin_corp",
+      "bin_corp_active_projects",
+      "bin_corp_cycle_payload",
+      "bin_corp_project_by_name",
+      "bin_corp_research_report",
+      "bin_corp_split_ready"
+    ],
+    "3": [
+      "bin_corp_collect_issues",
+      "bin_corp_issues_enabled",
+      "bin_corp_issues_for",
+      "bin_corp_label_names",
+      "bin_corp_rank"
+    ],
+    "4": [
+      "bin_corp_expand",
+      "bin_corp_project_dir",
+      "bin_corp_status",
+      "bin_corp_workspace",
+      "path"
+    ]
+  },
+  "cohesion": {
+    "0": 0.4,
+    "1": 0.42857142857142855,
+    "2": 0.6,
+    "3": 0.5,
+    "4": 0.7
+  },
+  "gods": [],
+  "surprises": [
+    {
+      "source": "bootstrap()",
+      "target": "die()",
+      "source_files": [
+        "bin/corp",
+        "bin/corp"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "note": "Bridges community 0 → community 1"
+    },
+    {
+      "source": "cycle_payload()",
+      "target": "die()",
+      "source_files": [
+        "bin/corp",
+        "bin/corp"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "note": "Bridges community 0 → community 2"
+    },
+    {
+      "source": "main()",
+      "target": "status()",
+      "source_files": [
+        "bin/corp",
+        "bin/corp"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "note": "Bridges community 0 → community 4"
+    },
+    {
+      "source": "bootstrap()",
+      "target": "active_projects()",
+      "source_files": [
+        "bin/corp",
+        "bin/corp"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "note": "Bridges community 1 → community 2"
+    },
+    {
+      "source": "bootstrap()",
+      "target": "project_dir()",
+      "source_files": [
+        "bin/corp",
+        "bin/corp"
+      ],
+      "confidence": "EXTRACTED",
+      "relation": "calls",
+      "note": "Bridges community 1 → community 4"
+    }
+  ],
+  "questions": [
+    {
+      "type": "no_signal",
+      "question": null,
+      "why": "Not enough signal to generate questions. This usually means the corpus has no AMBIGUOUS edges, no bridge nodes, no INFERRED relationships, and all communities are tightly cohesive. Add more files or run with --mode deep to extract richer edges."
+    }
+  ]
+}
