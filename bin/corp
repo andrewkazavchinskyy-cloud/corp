@@ -3016,7 +3016,8 @@ def tg_status_process_key(data: dict | None = None) -> str:
     data = data or load_workshop()
     running = [item for item in (data.get("queue") or []) if item.get("status") == "running"]
     if running:
-        return issue_ref(running[0].get("repo") or "", running[0].get("issue"))
+        refs = sorted(issue_ref(item.get("repo") or "", item.get("issue")) for item in running[:3])
+        return ",".join(refs)
     return "idle"
 
 
@@ -3118,7 +3119,11 @@ def tg_need_human_buttons(ref: str = "", url: str = "") -> list:
             shop = ""
     if shop and ".ts.net" in shop:
         row.append({"text": "Мастерская", "url": shop})
-    return [row[:4]]
+    rows = [row[:4]]
+    gh = tg_github_issue_url(raw, url)
+    if gh:
+        rows.append([{"text": "GitHub", "url": gh}])
+    return rows
 
 
 def tg_notify_event(
@@ -3189,6 +3194,19 @@ def tg_workshop_issue_url(repo: str = "", number: int | None = None, ref: str = 
     return f"{base}/?issue={issue}"
 
 
+def tg_github_issue_url(ref: str = "", url: str = "") -> str:
+    raw = (url or "").strip()
+    if raw.startswith("https://github.com/") and "/issues/" in raw:
+        return raw
+    if ref and "#" in str(ref):
+        try:
+            repo, number = parse_issue_ref(ref)
+            return f"https://github.com/{repo}/issues/{number}"
+        except CorpError:
+            return ""
+    return ""
+
+
 def tg_event_buttons(kind: str, url: str = "", ref: str = "") -> list:
     row = []
     shop = url if url and ".ts.net" in url else ""
@@ -3208,7 +3226,12 @@ def tg_event_buttons(kind: str, url: str = "", ref: str = "") -> list:
     if kind in {"to_qa", "ready_qa"} and ref:
         row.append({"text": "QA прошёл", "callback_data": f"qap:{ref}"})
         row.append({"text": "QA не принял", "callback_data": f"qaf:{ref}"})
-    return [row] if row else []
+    out = [row] if row else []
+    if kind in {"fail", "hung"}:
+        gh = tg_github_issue_url(ref, url)
+        if gh:
+            out.append([{"text": "GitHub", "url": gh}])
+    return out
 
 
 def tg_draft_buttons(drafts: list) -> list:

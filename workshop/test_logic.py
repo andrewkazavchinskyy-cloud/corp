@@ -1918,6 +1918,32 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     finally:
         corp.fetch_github_board = old_fetch_board
         corp._board_memo.update(old_memo)
+    # --- #127: deep-link GitHub на fail/hung/need_human + статус видит все раны
+    gh_url = corp.tg_github_issue_url("andrewkazavchinskyy-cloud/corp#56")
+    assert gh_url == "https://github.com/andrewkazavchinskyy-cloud/corp/issues/56"
+    assert corp.tg_github_issue_url("", "https://github.com/o/r/issues/9") == "https://github.com/o/r/issues/9"
+    assert corp.tg_github_issue_url("", "https://example.com/x") == ""
+    fail_rows = corp.tg_event_buttons("fail", url="", ref="o/corp#56")
+    flat = [b for row in fail_rows for b in row]
+    assert any(b.get("text") == "GitHub" and str(b.get("url") or "").startswith("https://github.com/o/corp/issues/") for b in flat)
+    start_rows = corp.tg_event_buttons("start", url="https://github.com/o/corp/issues/56", ref="o/corp#56")
+    assert not any(b.get("text") == "GitHub" for row in start_rows for b in row)
+    human_rows = corp.tg_need_human_buttons("andrewkazavchinskyy-cloud/corp#56", url="https://vmi.tailad6484.ts.net/?issue=x")
+    hflat = [b for row in human_rows for b in row]
+    assert [b["text"] for b in human_rows[0]][:3] == ["Пауза", "Повторить", "Доска"]
+    assert any(b.get("text") == "GitHub" and "corp/issues/56" in str(b.get("url") or "") for b in hflat)
+    assert all(len((b.get("callback_data") or "").encode()) <= 64 for b in hflat if "callback_data" in b)
+    key_two = corp.tg_status_process_key({"queue": [
+        {"repo": "andrewkazavchinskyy-cloud/clarity", "issue": 28, "status": "running"},
+        {"repo": "andrewkazavchinskyy-cloud/corp", "issue": 126, "status": "running"},
+    ]})
+    assert key_two == "andrewkazavchinskyy-cloud/clarity#28,andrewkazavchinskyy-cloud/corp#126"
+    assert corp.tg_status_process_key({"queue": []}) == "idle"
+    two_writers = corp.tg_writer_line({}, {"queue": [
+        {"repo": "andrewkazavchinskyy-cloud/clarity", "issue": 28, "status": "running"},
+        {"repo": "andrewkazavchinskyy-cloud/corp", "issue": 126, "status": "running"},
+    ]})
+    assert "clarity#28" in two_writers and "corp#126" in two_writers
     print("ok")
 
 
