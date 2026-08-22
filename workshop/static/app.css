@@ -221,6 +221,10 @@ input, select { width: 100%; }
 .pill.p0, .badge.blocked { color: var(--clay); }
 .pill.me, .badge.self { color: var(--self); }
 .pill.vps, .badge.vps { color: var(--brass); }
+.badge.pending { color: var(--brass); opacity: 0.85; border-style: dashed; }
+.badge.syncerr { color: var(--void); background: var(--clay); border-color: var(--clay); font-weight: 600; }
+.card.pending { opacity: 0.72; }
+.card.syncerr { outline: 1px solid var(--clay); outline-offset: -1px; }
 
 .howto {
   margin: 0 0 14px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px;

@@ -661,6 +661,12 @@ def api_self_drop(body: dict = Body(default_factory=dict)) -> dict:
     )
 
 
+@app.post("/api/board/clear-ov")
+def api_board_clear_ov(body: dict = Body(default_factory=dict)) -> dict:
+    repo, number = call(corp.parse_issue_ref, body.get("issue") or "")
+    return api_logic.with_issue_link(call(corp.clear_board_overlay, repo, number), repo, number)
+
+
 @app.post("/api/move")
 def api_move(body: dict = Body(default_factory=dict)) -> dict:
     repo, number = call(corp.parse_issue_ref, body.get("issue") or "")

@@ -5514,16 +5514,38 @@ def run_one_board_sync(reg: dict) -> bool:
                 ov[key]["error"] = ""
             save_workshop(data)
     except Exception as exc:
+        attempts = int(job.get("attempts") or 0) + 1
+        job["attempts"] = attempts
+        if github_transient(str(exc)) and attempts < 3:
+            with workshop_lock():
+                data = load_workshop()
+                data.setdefault("board_sync", []).insert(0, job)
+                save_workshop(data)
+            append_log(f"board sync {key} {action}: transient ({exc}), retry {attempts}/2\n")
+            invalidate_board()
+            return True
         with workshop_lock():
             data = load_workshop()
             ov = data.setdefault("board_ov", {})
             row = dict(ov.get(key) or {})
             row["error"] = tg_clip(str(exc), 120)
+            # The click never reached GitHub: stop painting it as pending truth.
+            row.pop("pending", None)
             ov[key] = row
             save_workshop(data)
         append_log(f"board sync {key} {action}: {exc}\n")
     invalidate_board()
     return True
+
+
+def clear_board_overlay(repo: str, number: int) -> dict:
+    with workshop_lock():
+        data = load_workshop()
+        ov = data.setdefault("board_ov", {})
+        ov.pop(board_key(repo, number), None)
+        save_workshop(data)
+    invalidate_board()
+    return {"ok": True, "repo": repo, "issue": number}
 
 
 def maybe_refresh_board(reg: dict, stale: float = 20) -> None:
