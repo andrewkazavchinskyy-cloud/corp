@@ -554,6 +554,40 @@ function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
 }
 
+function renderIssueDetail(data) {
+  const esc = escapeHtml;
+  const body = String(data.body || "").trim();
+  const parts = [
+    `<details open class="iss"><summary>Постановка</summary><pre class="iss-body">${esc(body || "(пусто)")}</pre></details>`,
+  ];
+  const comments = Array.isArray(data.comments) ? data.comments : [];
+  if (comments.length) {
+    const rows = comments
+      .map((c) => `<li><b>${esc(c.author || "")}</b> <span class="muted">${esc(c.at || "")}</span><pre class="iss-body">${esc(c.body || "")}</pre></li>`)
+      .join("");
+    parts.push(`<details class="iss"><summary>Комментарии · ${comments.length}</summary><ul class="iss-comments">${rows}</ul></details>`);
+  }
+  return parts.join("");
+}
+
+function loadSheetDetail(card) {
+  const box = $("sheet-detail");
+  if (!box) return;
+  const [owner, repoName] = String(card.repo || "").split("/");
+  if (!owner || !repoName || !card.number) {
+    box.innerHTML = "";
+    return;
+  }
+  box.innerHTML = '<p class="muted">Читаю постановку…</p>';
+  api(`/api/issue/${encodeURIComponent(owner)}/${encodeURIComponent(repoName)}/${card.number}`)
+    .then((data) => {
+      if (sheetIssue === issueRef(card)) box.innerHTML = renderIssueDetail(data || {});
+    })
+    .catch(() => {
+      box.innerHTML = "";
+    });
+}
+
 function renderColnav() {
   const cards = visibleCards();
   $("colnav").innerHTML = COLS.map(([id, label]) => {
@@ -960,6 +994,7 @@ function openSheet(issue) {
   sheetIssue = issue;
   $("sheet-title").textContent = card.title || `${card.project} #${card.number}`;
   $("sheet-kicker").textContent = `${card.project} #${card.number} · ${colWord(card.column)} · ${issueRole(card)}`;
+  loadSheetDetail(card);
   const acts = $("sheet-acts");
   const house = $("sheet-house");
   const why = card.can_run === false ? humanReason(card.block_reason || "нельзя запустить") : "";

@@ -445,6 +445,12 @@ def api_board() -> dict:
     return call(corp.board_payload, corp.load_registry())
 
 
+@app.get("/api/issue/{owner}/{repo_name}/{number}")
+def api_issue(owner: str, repo_name: str, number: int) -> dict:
+    corp.load_env()
+    return call(corp.issue_detail, f"{owner}/{repo_name}", int(number))
+
+
 @app.get("/api/map")
 def api_map() -> dict:
     corp.load_env()
