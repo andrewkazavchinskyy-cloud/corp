@@ -1944,6 +1944,61 @@ Nodes (33): active_projects(), board_payload() (+31 more)
         {"repo": "andrewkazavchinskyy-cloud/corp", "issue": 126, "status": "running"},
     ]})
     assert "clarity#28" in two_writers and "corp#126" in two_writers
+    # --- #130: атомарный клейм через run-ID
+    rid = corp.new_run_id()
+    assert corp.run_from_claim_body(f"corp-claim: vps grok · build run:{rid}") == rid
+    assert corp.run_from_claim_body("corp-claim: self") == ""
+    assert corp.run_from_claim_body("corp-claim: queue") == ""
+    assert "contains(\"run:\")" in inspect.getsource(corp.latest_claim_run)
+
+    old_req = corp.require_eligible
+    old_claim_fn = corp.claim
+    old_get_issue2 = corp.get_issue
+    old_latest_run = corp.latest_claim_run
+    old_remove_labels = corp.remove_labels
+    old_add_labels = corp.add_labels
+    old_record_event = corp.record_event
+    claims, removed, added = [], [], []
+    try:
+        corp.require_eligible = lambda *a, **k: None
+
+        def fake_claim(repo, number, kind, note):
+            claims.append(note)
+
+        corp.claim = fake_claim
+        corp.get_issue = lambda repo, number: {"labels": [{"name": "in-progress"}, {"name": "self"}]}
+        corp.remove_labels = lambda repo, number, labels: removed.append(tuple(labels))
+        corp.add_labels = lambda repo, number, labels: added.append(tuple(labels))
+        corp.record_event = lambda *a, **k: None
+
+        corp.latest_claim_run = lambda repo, number: "ffffffff-ffff-ffff-ffff-ffffffffffff"
+        try:
+            corp.take_issue({}, "o/corp", 1)
+            raise AssertionError("take должен умереть при перехвате")
+        except corp.CorpError as exc:
+            assert "перехвачен" in str(exc)
+        assert len(claims) == 1 and "run:" in claims[0]
+
+        corp.latest_claim_run = lambda repo, number: corp.run_from_claim_body(claims[-1])
+        taken = corp.take_issue({}, "o/corp", 1)
+        assert taken["ok"] is True and taken["run_id"] in claims[-1]
+        assert removed == []
+
+        corp.get_issue = lambda repo, number: {"labels": [{"name": "in-progress"}, {"name": "via:grok"}]}
+        corp.latest_claim_run = lambda repo, number: "чужой-ран"
+        corp.release_runner("o/corp", 1, run_id="наш-ран")
+        assert removed == []
+        corp.latest_claim_run = lambda repo, number: "наш-ран"
+        corp.release_runner("o/corp", 1, run_id="наш-ран")
+        assert removed and "in-progress" in removed[0]
+    finally:
+        corp.require_eligible = old_req
+        corp.claim = old_claim_fn
+        corp.get_issue = old_get_issue2
+        corp.latest_claim_run = old_latest_run
+        corp.remove_labels = old_remove_labels
+        corp.add_labels = old_add_labels
+        corp.record_event = old_record_event
     print("ok")
 
 

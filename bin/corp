@@ -8,6 +8,7 @@ import fcntl
 import json
 import os
 import re
+import uuid
 import secrets
 import shlex
 import shutil
@@ -5770,6 +5771,56 @@ def orch_status(name: str) -> dict:
     return row
 
 
+CLAIM_RUN_RE = re.compile(r"corp-claim:.*\brun:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})")
+
+
+def new_run_id() -> str:
+    return str(uuid.uuid4())
+
+
+def run_from_claim_body(text: str) -> str:
+    match = CLAIM_RUN_RE.search(text or "")
+    return match.group(1) if match else ""
+
+
+def latest_claim_run(repo: str, number: int) -> str:
+    proc = run(
+        [
+            "gh",
+            "api",
+            "--paginate",
+            f"repos/{repo}/issues/{number}/comments",
+            "--jq",
+            '.[].body | select(startswith("corp-claim:") and contains("run:"))',
+        ],
+        check=False,
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        raise CorpError(f"cannot read claim comments for {repo}#{number}: {(proc.stderr or proc.stdout or '').strip()[:160]}")
+    bodies = [line for line in (proc.stdout or "").splitlines() if line.strip()]
+    if not bodies:
+        return ""
+    return run_from_claim_body(bodies[-1])
+
+
+def claim_sticks(repo: str, number: int, run_id: str, attempts: int = 3) -> bool:
+    for index in range(attempts):
+        try:
+            found = latest_claim_run(repo, number)
+        except CorpError:
+            if index == attempts - 1:
+                return False
+            time.sleep(2)
+            continue
+        if found == run_id:
+            return True
+        if found and found != run_id:
+            return False
+        time.sleep(2)
+    return False
+
+
 def claim(repo: str, number: int, kind: str, note: str) -> None:
     via_all = list(VIA.values())
     remove_labels(repo, number, ["ready", "queued", "self", *via_all])
@@ -5781,13 +5832,16 @@ def claim(repo: str, number: int, kind: str, note: str) -> None:
 
 def take_issue(reg: dict, repo: str, number: int) -> dict:
     require_eligible(reg, repo, number)
-    claim(repo, number, "self", "corp-claim: self")
+    run_id = new_run_id()
+    claim(repo, number, "self", f"corp-claim: self run:{run_id}")
     latest = get_issue(repo, number)
     if "in-progress" not in label_names(latest) or "self" not in label_names(latest):
         die(f"{repo}#{number} claim did not stick on GitHub")
+    if not claim_sticks(repo, number, run_id):
+        die(f"{repo}#{number} клейм перехвачен другим процессом (наш run {run_id[:8]}) — карта не задвоена")
     invalidate_board()
     record_event("take", tg_short_ref(repo, number), "взял")
-    return {"ok": True, "repo": repo, "issue": number, "runner": "self"}
+    return {"ok": True, "repo": repo, "issue": number, "runner": "self", "run_id": run_id}
 
 
 def drop_self(repo: str, number: int) -> dict:
@@ -6443,7 +6497,10 @@ def run_issue(
     if not kind_cli_ok(kind):
         die(f"{kind} CLI is not installed ({KIND_BIN[kind]})")
     extra = _role_prompt(role, project["name"], names)
-    claim(repo, number, kind, f"corp-claim: vps {kind} · {role}")
+    run_id = new_run_id()
+    claim(repo, number, kind, f"corp-claim: vps {kind} · {role} run:{run_id}")
+    if not claim_sticks(repo, number, run_id):
+        die(f"{repo}#{number} карту забрал другой раннер (наш run {run_id[:8]}) — спавн отменён")
     prompt = agent_prompt(repo, number, issue.get("title") or "", issue.get("url") or "", dest, project["name"]) + extra
     tg_notify_event("start", tg_short_ref(repo, number), "старт", kind, url=issue.get("url") or "", action_ref=issue_ref(repo, number))
     cmd = agent_argv(kind, prompt, dest, model=model, effort=effort, fast=fast)
@@ -6452,7 +6509,7 @@ def run_issue(
     latest = get_issue(repo, number)
     closed = (latest.get("state") or "").upper() == "CLOSED"
     if code == 124:
-        release_runner(repo, number)
+        release_runner(repo, number, run_id=run_id)
         reason = "завис (таймаут)"
         tg_notify_event("hung", tg_short_ref(repo, number), reason, "стоп", url=latest.get("url") or "", action_ref=issue_ref(repo, number))
         return {
@@ -6471,7 +6528,7 @@ def run_issue(
             run(["gh", "issue", "reopen", str(number), "-R", repo], check=False)
         if not can_promote_to_qa(code, latest):
             reason = f"{role} упал · exit {code}" if code != 0 else f"{role} закрыл ишью — не на QA"
-            release_runner(repo, number)
+            release_runner(repo, number, run_id=run_id)
             tg_notify_event("fail", tg_short_ref(repo, number), tg_clip(reason, 40), "Очередь+", url=latest.get("url") or "", action_ref=issue_ref(repo, number))
             return {
                 "ok": False,
@@ -6540,7 +6597,7 @@ def run_issue(
                 fast=bool(rework.get("fast")),
                 _qa_round=_qa_round + 1,
             )
-        release_runner(repo, number)
+        release_runner(repo, number, run_id=run_id)
         return {
             "ok": False,
             "code": code,
@@ -6552,7 +6609,7 @@ def run_issue(
             "qa_fail": True,
             "error": "QA не принял",
         }
-    release_runner(repo, number)
+    release_runner(repo, number, run_id=run_id)
     reason = f"упал · exit {code}" if code != 0 else "не закрыл ишью"
     tg_notify_event(
         "incomplete" if code == 0 else "fail",
@@ -6624,8 +6681,17 @@ def release_labels(names: set[str] | list[str]) -> tuple[list[str], list[str]]:
     return remove, add
 
 
-def release_runner(repo: str, number: int, issue: dict | None = None) -> None:
+def release_runner(repo: str, number: int, issue: dict | None = None, run_id: str = "") -> None:
     issue = issue if issue is not None else get_issue(repo, number)
+    if run_id:
+        latest_run = ""
+        try:
+            latest_run = latest_claim_run(repo, number)
+        except CorpError:
+            pass
+        if latest_run and latest_run != run_id:
+            invalidate_board()
+            return
     remove, add = release_labels(label_names(issue))
     remove_labels(repo, number, remove)
     if add:
