@@ -1949,7 +1949,7 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert corp.run_from_claim_body(f"corp-claim: vps grok · build run:{rid}") == rid
     assert corp.run_from_claim_body("corp-claim: self") == ""
     assert corp.run_from_claim_body("corp-claim: queue") == ""
-    assert "contains(\"run:\")" in inspect.getsource(corp.latest_claim_run)
+    assert 'contains("run:")' in inspect.getsource(corp.latest_claim_info)
 
     old_req = corp.require_eligible
     old_claim_fn = corp.claim
@@ -1999,6 +1999,116 @@ Nodes (33): active_projects(), board_payload() (+31 more)
         corp.remove_labels = old_remove_labels
         corp.add_labels = old_add_labels
         corp.record_event = old_record_event
+    # --- #131: heartbeat, progress-aware hung, reaper осиротевших клеймов
+    now = time.time()
+    log_text = (
+        f"{now - 60:.0f} corp#131 heartbeat · auto · build · 5 min\n"
+        f"corp#131 какая-то строка вывода\n"
+        f"{now - 99999:.0f} clarity#28 heartbeat · claude · 200 min\n"
+    )
+    age_corp = corp.heartbeat_age_from_log(log_text, "corp#131", now=now)
+    assert age_corp is not None and abs(age_corp - 60) < 2
+    age_clarity = corp.heartbeat_age_from_log(log_text, "clarity#28", now=now)
+    assert age_clarity is not None and abs(age_clarity - 99999) < 2
+    assert corp.heartbeat_age_from_log(log_text, "corp#999", now=now) is None
+    assert corp.heartbeat_age_from_log("", "corp#1") is None
+
+    reg4 = {
+        "projects": [
+            {"name": "corp", "repo": "andrewkazavchinskyy-cloud/corp", "workshop": True},
+            {"name": "clarity", "repo": "andrewkazavchinskyy-cloud/clarity", "workshop": True},
+        ]
+    }
+    cards = {
+        "andrewkazavchinskyy-cloud/corp": [
+            {"number": 1, "labels": [{"name": "in-progress"}, {"name": "via:grok"}], "updatedAt": "2026-08-22T00:00:00Z"},
+            {"number": 2, "labels": [{"name": "in-progress"}, {"name": "self"}], "updatedAt": "2020-01-01T00:00:00Z"},
+        ],
+        "andrewkazavchinskyy-cloud/clarity": [
+            {"number": 3, "labels": [{"name": "in-progress"}, {"name": "via:codex"}], "updatedAt": "2026-08-23T00:00:00Z"},
+        ],
+    }
+    ages = {("andrewkazavchinskyy-cloud/corp", 1): 10 * 3600, ("andrewkazavchinskyy-cloud/corp", 2): 2 * 3600}
+    hbs = {("andrewkazavchinskyy-cloud/clarity", 3): 60.0}
+    released_cards = []
+    comments_posted = []
+
+    def fake_list(repo):
+        return cards.get(repo) or []
+
+    def fake_age(repo, number):
+        return ages.get((repo, number))
+
+    def fake_hb(repo, number):
+        return hbs.get((repo, number))
+
+    def fake_release(repo, number):
+        released_cards.append((repo, number))
+
+    def fake_comment(repo, number, body):
+        comments_posted.append((repo, number, body))
+
+    reaped = corp.reap_orphan_claims(
+        reg4,
+        now=now,
+        list_in_progress=fake_list,
+        claim_age=fake_age,
+        heartbeat_age_fn=fake_hb,
+        queue_refs=set(),
+        tmux_on=lambda name: False,
+        release=fake_release,
+        comment_fn=fake_comment,
+    )
+    got = sorted((r["repo"].split("/")[-1], r["number"]) for r in reaped)
+    assert got == [("corp", 1)], f"ожидали только via-карту corp#1, получили {got}"
+    assert reaped[0]["kind"] == "via:grok"
+    assert len(comments_posted) == 1 and "Reaper" in comments_posted[0][2]
+
+    via_old = dict(cards["andrewkazavchinskyy-cloud/corp"][0])
+    ages[("andrewkazavchinskyy-cloud/corp", 1)] = 91 * 60
+    reaped2 = corp.reap_orphan_claims(
+        reg4,
+        now=now,
+        list_in_progress=lambda repo: [via_old],
+        claim_age=fake_age,
+        heartbeat_age_fn=lambda repo, number: None,
+        queue_refs={"andrewkazavchinskyy-cloud/corp#1"},
+        tmux_on=lambda name: False,
+        release=fake_release,
+        comment_fn=fake_comment,
+        via_sec=90 * 60,
+    )
+    assert reaped2 == []
+    reaped3 = corp.reap_orphan_claims(
+        reg4,
+        now=now,
+        list_in_progress=lambda repo: [via_old],
+        claim_age=fake_age,
+        heartbeat_age_fn=lambda repo, number: None,
+        queue_refs=set(),
+        tmux_on=lambda name: True,
+        release=fake_release,
+        comment_fn=fake_comment,
+        via_sec=90 * 60,
+    )
+    assert reaped3 == []
+    reaped4 = corp.reap_orphan_claims(
+        reg4,
+        now=now,
+        list_in_progress=lambda repo: [via_old],
+        claim_age=fake_age,
+        heartbeat_age_fn=lambda repo, number: None,
+        queue_refs=set(),
+        tmux_on=lambda name: False,
+        release=fake_release,
+        comment_fn=fake_comment,
+        via_sec=90 * 60,
+    )
+    assert [(r["repo"].split("/")[-1], r["number"]) for r in reaped4] == [("corp", 1)]
+
+    tick_src = inspect.getsource(corp.wait_tmux)
+    assert "last_activity" in tick_src and "heartbeat · " in tick_src
+    assert "pulse_loop" in inspect.getsource(corp.launch_agent)
     print("ok")
 
 
