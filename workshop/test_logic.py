@@ -68,6 +68,15 @@ def main() -> None:
     assert corp.classify_writer_tree("a", "b", "a", True) == "dirty-stale"
     assert corp.classify_writer_tree("a", "b", "c", False) == "diverged"
     assert corp.classify_writer_tree("", "", "", False) == "no-upstream"
+    reg_bullet = "Registry lists every project the corporation knows."
+    overlay_card = {"title": "Правило overlay: git registry vs workshop.json", "state": "CLOSED"}
+    assert corp.bullet_covered(reg_bullet, [overlay_card])
+    with tempfile.TemporaryDirectory() as td:
+        (Path(td) / "note.md").write_text("registry overlay unpinned archive\nregistry\nregistry again\n")
+        assert corp.bullet_in_code(reg_bullet, Path(td))
+        assert corp.spec_gaps(f"- {reg_bullet}\n", [], dest=Path(td)) == []
+        (Path(td) / "unrelated.md").write_text("nothing here matches at all\n")
+        assert corp.bullet_in_code("Totally absent feature widgets", Path(td)) is False
     reg2 = {
         "org": "andrewkazavchinskyy-cloud",
         "projects": [
