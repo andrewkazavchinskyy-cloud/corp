@@ -5840,6 +5840,47 @@ def claim_sticks(repo: str, number: int, run_id: str, attempts: int = 3) -> bool
     return False
 
 
+def issue_detail(repo: str, number: int, comments_limit: int = 10) -> dict:
+    issue = get_issue(repo, number)
+    proc = run(
+        [
+            "gh",
+            "api",
+            "--paginate",
+            f"repos/{repo}/issues/{number}/comments",
+            "--jq",
+            ".[] | {author: .user.login, at: .created_at, body: .body} | @json",
+        ],
+        check=False,
+        timeout=30,
+    )
+    comments = []
+    if proc.returncode == 0:
+        rows = [line for line in (proc.stdout or "").splitlines() if line.strip()]
+        try:
+            parsed = [json.loads(row) for row in rows]
+        except json.JSONDecodeError:
+            parsed = []
+        for row in parsed[-max(1, int(comments_limit)):]:
+            comments.append(
+                {
+                    "author": str(row.get("author") or ""),
+                    "at": str(row.get("at") or ""),
+                    "body": redact_secrets(str(row.get("body") or "")),
+                }
+            )
+    return {
+        "repo": repo,
+        "number": number,
+        "title": issue.get("title") or "",
+        "state": (issue.get("state") or "").upper(),
+        "url": issue.get("url") or "",
+        "updatedAt": issue.get("updatedAt") or "",
+        "body": redact_secrets(str(issue.get("body") or "")),
+        "comments": comments,
+    }
+
+
 def claim(repo: str, number: int, kind: str, note: str) -> None:
     via_all = list(VIA.values())
     remove_labels(repo, number, ["ready", "queued", "self", *via_all])

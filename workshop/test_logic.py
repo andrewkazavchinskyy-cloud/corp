@@ -2109,6 +2109,55 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     tick_src = inspect.getsource(corp.wait_tmux)
     assert "last_activity" in tick_src and "heartbeat · " in tick_src
     assert "pulse_loop" in inspect.getsource(corp.launch_agent)
+    # --- #134: тело и комментарии issue в карточке
+    old_get_issue2 = corp.get_issue
+    old_run_fn = corp.run
+    try:
+        corp.get_issue = lambda repo, number: {
+            "number": number,
+            "title": "Тестовая карта",
+            "url": f"https://github.com/{repo}/issues/{number}",
+            "state": "OPEN",
+            "updatedAt": "2026-08-23T00:00:00Z",
+            "body": "Постановка с <script>alert(1)</script> и token=abc123",
+        }
+
+        def fake_gh_api(cmd_rest, check=False, timeout=None):
+            class P:
+                returncode = 0
+                stdout = (
+                    '{"author": "alice", "at": "2026-08-22T10:00:00Z", "body": "коммент <b>жирный</b>"}\n'
+                    '{"author": "bob", "at": "2026-08-22T11:00:00Z", "body": "второй"}\n'
+                    '{"author": "eve", "at": "2026-08-22T12:00:00Z", "body": "третий"}\n'
+                )
+            return P()
+
+        calls = []
+
+        def fake_run(args, check=False, timeout=None, **kw):
+            args = [str(a) for a in args]
+            if args[:2] == ["gh", "api"]:
+                calls.append("api")
+                return fake_gh_api(None)
+            raise AssertionError(f"неожиданный вызов: {args[:3]}")
+
+        corp.run = fake_run
+        detail = corp.issue_detail("o/corp", 56, comments_limit=2)
+        assert detail["title"] == "Тестовая карта"
+        assert "abc123" not in detail["body"]
+        assert len(detail["comments"]) == 2
+        assert detail["comments"][-1]["author"] == "eve"
+
+        app_src = (ROOT / "workshop" / "app.py").read_text()
+        assert "/api/issue/{owner}/{repo_name}/{number}" in app_src
+        js_src = (ROOT / "workshop" / "static" / "app.js").read_text()
+        assert "renderIssueDetail" in js_src and "loadSheetDetail" in js_src
+        assert "esc(c.body || \"\")" in js_src and "esc(body || \"(пусто)\")" in js_src
+        html_src = (ROOT / "workshop" / "static" / "index.html").read_text()
+        assert 'id="sheet-detail"' in html_src
+    finally:
+        corp.get_issue = old_get_issue2
+        corp.run = old_run_fn
     print("ok")
 
 
