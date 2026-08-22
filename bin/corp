@@ -425,6 +425,54 @@ def git_tree_report(path: Path) -> dict:
     }
 
 
+def classify_writer_tree(head: str, upstream: str, merge_base: str, dirty: bool) -> str:
+    if not head or not upstream or not merge_base:
+        return "no-upstream"
+    if head == upstream:
+        return "ok"
+    if merge_base == head:
+        return "dirty-stale" if dirty else "stale"
+    return "diverged"
+
+
+def writer_tree_status(dest: Path) -> dict:
+    def g(*args: str) -> str:
+        proc = run(["git", "-C", str(dest), *args], check=False, timeout=30)
+        return (proc.stdout or "").strip()
+
+    fetch = run(["git", "-C", str(dest), "fetch", "origin", "--quiet"], check=False, timeout=60)
+    head = g("rev-parse", "HEAD")
+    upstream = g("rev-parse", "origin/main") if fetch.returncode == 0 else ""
+    base = g("merge-base", "HEAD", "origin/main") if upstream else ""
+    porcelain = g("status", "--porcelain")
+    status = classify_writer_tree(head, upstream, base, bool(porcelain))
+    if fetch.returncode != 0:
+        status = "unknown"
+    return {"status": status, "head": head, "upstream": upstream, "fetch_ok": fetch.returncode == 0}
+
+
+def sync_writer_tree(dest: Path, name: str = "") -> str:
+    label = f"{name}: " if name else ""
+    info = writer_tree_status(dest)
+    status = info["status"]
+    if status == "ok":
+        return "ok"
+    if status == "stale":
+        proc = run(["git", "-C", str(dest), "pull", "--ff-only", "--quiet"], check=False, timeout=120)
+        if proc.returncode != 0:
+            need_human(f"{label}writers отстал от origin/main, ff-pull не прошёл ({dest}) — нужен человек")
+            die(f"{label}git pull --ff-only failed in {dest}; разберись вручную")
+        return "fast-forwarded"
+    if status == "dirty-stale":
+        need_human(f"{label}writers отстал от origin/main и есть незакоммиченные правки ({dest}) — нужен человек")
+        die(f"{label}writers stale with uncommitted changes in {dest}; закоммить или разбери вручную")
+    if status == "diverged":
+        need_human(f"{label}writers разошёлся с origin/main ({dest}) — запись запрещена, нужен человек")
+        die(f"{label}writers diverged from origin/main in {dest}; force-push запрещён, нужен ручной разбор")
+    need_human(f"{label}не удалось проверить свежесть writers ({dest}) — нужен человек")
+    die(f"{label}cannot verify writers tree freshness in {dest}; проверь сеть и git")
+
+
 def workshop_unit_active() -> bool:
     if not have("systemctl"):
         return False
@@ -1460,7 +1508,15 @@ def doctor_payload(isolation: dict | None = None) -> dict:
     load_env()
     live = live_corp_path()
     tree = git_tree_report(live)
-    writers = git_tree_report(writers_corp_path())
+    writers_path = writers_corp_path()
+
+    def best_effort_fetch(path: Path) -> None:
+        if path.is_dir():
+            run(["git", "-C", str(path), "fetch", "origin", "--quiet"], check=False, timeout=20)
+
+    best_effort_fetch(live)
+    best_effort_fetch(writers_path)
+    writers = git_tree_report(writers_path)
     trees = two_trees_report()
     ts = tailscale_status()
     iso = isolation if isolation is not None else probe_isolation()
@@ -1485,6 +1541,7 @@ def doctor_payload(isolation: dict | None = None) -> dict:
         ("workshop unit", workshop_unit_active()),
         ("live /opt/corp clean", tree["exists"] and not tree["dirty"]),
         ("live /opt/corp at origin/main", tree["exists"] and bool(tree["origin_main"]) and not tree["behind"]),
+        ("writers fresh after fetch", writers.get("exists") and bool(writers.get("origin_main")) and not writers["behind"]),
         ("auth_policy", auth_policy_present()),
         ("workshop.db 0600", workshop_db_mode_ok()),
         ("uvicorn serves live HEAD", bool(uvicorn.get("ok"))),
@@ -6198,6 +6255,7 @@ def run_issue(
     dest = project_dir(project)
     if dest is None or not dest.is_dir():
         die(f"project not cloned: {project['name']}. Run ./bin/corp bootstrap")
+    sync_writer_tree(dest, project["name"])
     issue = get_issue(repo, number)
     names = label_names(issue)
     issue = require_eligible(

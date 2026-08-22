@@ -63,6 +63,11 @@ def main() -> None:
     remove, add = corp.release_labels(crashed)
     ready_again = (crashed - set(remove)) | set(add)
     assert "ready" in ready_again and corp.is_free_ready(issue(list(ready_again)), reg)
+    assert corp.classify_writer_tree("a", "a", "a", False) == "ok"
+    assert corp.classify_writer_tree("a", "b", "a", False) == "stale"
+    assert corp.classify_writer_tree("a", "b", "a", True) == "dirty-stale"
+    assert corp.classify_writer_tree("a", "b", "c", False) == "diverged"
+    assert corp.classify_writer_tree("", "", "", False) == "no-upstream"
     reg2 = {
         "org": "andrewkazavchinskyy-cloud",
         "projects": [
