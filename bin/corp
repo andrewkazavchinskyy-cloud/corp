@@ -1088,16 +1088,71 @@ def bullet_covered(bullet: str, issues: list[dict]) -> bool:
         if needle and (needle in hay or hay in needle):
             return True
         other = _norm_words(title)
-        if words and other and len(words & other) >= 2:
+        shared = words & other
+        if len(shared) >= 2:
+            return True
+        # A single distinctive term (registry, unpinned, orchestrator…) is
+        # enough evidence that a closed/tracked card speaks about this bullet.
+        if any(len(word) >= 6 for word in shared):
             return True
     return False
 
 
-def spec_gaps(spec_text: str, issues: list[dict], limit: int = 5) -> list[str]:
+_CODE_SKIP_DIRS = {".git", "graphify-out", "node_modules", ".cursor", ".github", "vendor", "__pycache__"}
+_CODE_EXT = {".py", ".md", ".js", ".ts", ".tsx", ".jsx", ".json", ".sh", ".html", ".css", ".yml", ".yaml", ".toml"}
+
+
+def _code_corpus(dest: Path) -> str:
+    chunks: list[str] = []
+    total = 0
+    for path in sorted(Path(dest).rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in _CODE_EXT:
+            continue
+        # The SPEC/PRD must not prove their own bullets shipped.
+        if path.name.lower() in {"spec.md", "prd.md"}:
+            continue
+        if any(part in _CODE_SKIP_DIRS for part in path.parts):
+            continue
+        try:
+            if path.stat().st_size > 262144:
+                continue
+            chunk = path.read_text(errors="ignore").lower()
+        except OSError:
+            continue
+        chunks.append(chunk)
+        total += len(chunk)
+        if total > 4_000_000:
+            break
+    return "\n".join(chunks)
+
+
+def bullet_in_code(bullet: str, dest: Path | None) -> bool:
+    if dest is None or not Path(dest).is_dir():
+        return False
+    tokens = [word for word in _norm_words(bullet) if len(word) >= 5]
+    if not tokens:
+        return False
+    corpus = _code_corpus(dest)
+    weak_hits = 0
+    for token in tokens:
+        found = corpus.count(token)
+        if found >= 3:
+            return True
+        if found:
+            weak_hits += 1
+            if weak_hits >= 2:
+                return True
+    return False
+
+
+def spec_gaps(spec_text: str, issues: list[dict], limit: int = 5, dest: Path | None = None) -> list[str]:
     out = []
     for bullet in spec_bullets(spec_text):
-        if not bullet_covered(bullet, issues):
-            out.append(bullet)
+        if bullet_covered(bullet, issues):
+            continue
+        if dest is not None and bullet_in_code(bullet, dest):
+            continue
+        out.append(bullet)
         if len(out) >= limit:
             break
     return out
@@ -1176,7 +1231,7 @@ def pin_research(project: dict, dest: Path | None, research_files: list[str], is
         text = (dest / spec_rel).read_text()
     elif dest and prd_rel:
         text = (dest / prd_rel).read_text()
-    unshipped = spec_gaps(text, issues) if text else []
+    unshipped = spec_gaps(text, issues, dest=dest) if text else []
     open_items = [item for item in issues if (item.get("state") or "OPEN").upper() != "CLOSED"]
     open_non_ready = [item for item in open_items if not _issue_ready(item)]
     spec_present = bool(spec_rel)
@@ -2571,7 +2626,7 @@ def orch_gap_payload(unshipped: list[str], open_lines: str) -> list[dict]:
             {
                 "title": title,
                 "body": f"Сделать пункт спеки: {bullet}",
-                "why": "Пункт спеки не закрыт кодом и не покрыт открытой карточкой.",
+                "why": "Пункт спеки не найден ни в коде/доках, ни в закрытых карточках.",
                 "vs_prd": bullet,
                 "vs_open": "нет открытой карточки на этот пункт" if open_lines in {"", "(none)"} else f"не покрыто открытыми: {open_lines[:200]}",
                 "label": "ready",
@@ -2593,7 +2648,7 @@ def orch_prompt(dest: Path, out: Path, spec_rels: list[str], open_lines: str, pr
         f"Also read: {spec}.\n"
         f"2) What is already shipped: code, README, graphify-out/GRAPH_REPORT.md, closed work.\n"
         f"3) Open GitHub issues already on the board (do not duplicate these):\n{open_lines}\n"
-        f"4) Spec gaps already computed from the repo. Each must become a draft unless you prove it is shipped in code:\n{gap_lines}\n"
+        f"4) Spec gaps already computed from the repo (code/docs and closed cards already checked). Each must become a draft ONLY if it is genuinely unshipped; if you find shipped proof, skip it:\n{gap_lines}\n"
         f"Propose NEW workshop drafts for those gaps and any other PRD/SPEC work that is not shipped and not already an open issue. "
         f"An empty JSON array is only allowed when the gap list is (none). "
         f"Do not file GitHub ready Issues. Do not auto-Approve. "
