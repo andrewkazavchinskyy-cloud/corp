@@ -5377,6 +5377,7 @@ def fetch_github_board(reg: dict) -> dict:
 
 def board_payload(reg: dict) -> dict:
     cache_key = ",".join(p["name"] for p in pinned_projects(reg))
+    maybe_refresh_board(reg)
     data = load_workshop()
     snap = data.get("board_snap") or {}
     if snap.get("cards") is not None and snap.get("key") == cache_key:

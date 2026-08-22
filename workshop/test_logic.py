@@ -1878,6 +1878,46 @@ Nodes (33): active_projects(), board_payload() (+31 more)
         corp.handle_tg_text = old_handle_text
         corp.tg_send = old_tg_send
         urllib.request.urlopen = old_urlopen
+    # --- #150: мёртвый снапшот доски должен авто-рефрешиться
+    assert "maybe_refresh_board(reg)" in inspect.getsource(corp.board_payload)
+    reg3 = {"projects": [{"name": "corp", "repo": "andrewkazavchinskyy-cloud/corp", "workshop": True}]}
+    wj = Path(tempfile.mkdtemp(prefix="corp-wj-")) / "workshop.json"
+    old_fetch_board = corp.fetch_github_board
+    old_memo = dict(corp._board_memo)
+    fetch_calls = []
+    try:
+
+        def fake_fetch(reg):
+            fetch_calls.append(1)
+            with corp.workshop_lock():
+                data = corp.load_workshop()
+                data["board_snap"] = {
+                    "t": time.time(),
+                    "key": ",".join(p["name"] for p in corp.pinned_projects(reg)),
+                    "cards": [],
+                    "warning": "",
+                }
+                corp.save_workshop(data)
+            corp.invalidate_board()
+            return {"cards": [], "pins": [], "drafts": [], "projects": [], "github_warning": ""}
+
+        corp.fetch_github_board = fake_fetch
+        with corp.workshop_json_override(wj):
+            corp.save_workshop({
+                "board_snap": {
+                    "t": time.time() - 999,
+                    "key": "corp",
+                    "cards": [{"repo": "andrewkazavchinskyy-cloud/corp", "number": 1}],
+                    "warning": "",
+                }
+            })
+            corp._board_memo.update({"t": 0.0, "key": "", "data": None})
+            payload = corp.board_payload(reg3)
+        assert fetch_calls == [1]
+        assert payload["cards"] == []
+    finally:
+        corp.fetch_github_board = old_fetch_board
+        corp._board_memo.update(old_memo)
     print("ok")
 
 
