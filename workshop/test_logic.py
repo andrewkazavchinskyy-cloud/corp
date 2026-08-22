@@ -77,6 +77,44 @@ def main() -> None:
         assert corp.spec_gaps(f"- {reg_bullet}\n", [], dest=Path(td)) == []
         (Path(td) / "unrelated.md").write_text("nothing here matches at all\n")
         assert corp.bullet_in_code("Totally absent feature widgets", Path(td)) is False
+    saved_config = corp.CONFIG_DIR
+    orig_take, orig_move, orig_reject = corp.take_issue, corp.move_issue, corp.reject_qa
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            corp.CONFIG_DIR = Path(td)
+            corp.save_workshop({"board_sync": [], "board_ov": {}, "queue": []})
+
+            def seed(job, ov):
+                with corp.workshop_lock():
+                    d = corp.load_workshop()
+                    d.setdefault("board_sync", []).append(job)
+                    d["board_ov"][corp.board_key(job["repo"], job["number"])] = ov
+                    corp.save_workshop(d)
+
+            corp.take_issue = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("HTTP 502 down"))
+            seed({"action": "take", "repo": "o/r", "number": 1}, {"pending": "take", "error": ""})
+            for _ in range(3):
+                assert corp.run_one_board_sync({"org": "o", "projects": []})
+            row = corp.load_workshop()["board_ov"]["o/r#1"]
+            assert "502" in (row.get("error") or "") and not row.get("pending")
+
+            corp.take_issue = orig_take
+            corp.move_issue = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("нет сети"))
+            seed({"action": "move", "repo": "o/r", "number": 2, "column": "ready"}, {"pending": "move", "error": ""})
+            corp.run_one_board_sync({"org": "o", "projects": []})
+            row = corp.load_workshop()["board_ov"]["o/r#2"]
+            assert "нет сети" in (row.get("error") or "") and not row.get("pending")
+
+            corp.reject_qa = lambda *a, **k: {"ok": True}
+            seed({"action": "qa_fail", "repo": "o/r", "number": 3, "note": "fix"}, {"pending": "qa_fail", "error": ""})
+            corp.run_one_board_sync({"org": "o", "projects": []})
+            assert "o/r#3" not in (corp.load_workshop().get("board_ov") or {})
+
+            corp.clear_board_overlay("o/r", 1)
+            assert "o/r#1" not in (corp.load_workshop().get("board_ov") or {})
+    finally:
+        corp.CONFIG_DIR = saved_config
+        corp.take_issue, corp.move_issue, corp.reject_qa = orig_take, orig_move, orig_reject
     reg2 = {
         "org": "andrewkazavchinskyy-cloud",
         "projects": [

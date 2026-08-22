@@ -515,6 +515,8 @@ function autoKicker() {
 function badge(card) {
   const bits = [];
   if (card.blocked) bits.push('<span class="badge blocked">блок</span>');
+  if (card.sync_error) bits.push('<span class="badge syncerr">sync не прошёл</span>');
+  else if (card.pending) bits.push('<span class="badge pending">на GitHub…</span>');
   if (card.queued) bits.push('<span class="badge">очередь</span>');
   if (card.runner === "self") bits.push('<span class="badge self">я</span>');
   else if (card.runner && card.runner !== "queued") bits.push(`<span class="badge vps">VPS · ${escapeHtml(card.runner)}</span>`);
@@ -530,6 +532,8 @@ function badge(card) {
 function cardClass(card) {
   const bits = ["card"];
   if ((card.labels || []).some((l) => l.name === "P0")) bits.push("p0");
+  if (card.sync_error) bits.push("syncerr");
+  else if (card.pending) bits.push("pending");
   if (card.runner === "self") bits.push("me");
   else if (card.runner && card.runner !== "queued") bits.push("vps");
   return bits.join(" ");
@@ -1045,6 +1049,22 @@ function openSheet(issue) {
       $("sheet-run").onclick = () => sheetWrite("/api/run", {}, "запустил");
     }
     bindSheetHouse();
+  }
+  if (card.sync_error || card.pending) {
+    const note = $("sheet-note");
+    const warn = card.sync_error
+      ? `GitHub не подтвердил последнее действие: ${card.sync_error}. Повтори действие или сними локальную краску.`
+      : "Действие ещё не подтверждено GitHub — подожди или обнови доску.";
+    note.textContent = `${warn} ${note.textContent}`;
+    if (card.sync_error && !$("sheet-clear-ov")) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn danger";
+      btn.id = "sheet-clear-ov";
+      btn.textContent = "Снять локальную краску";
+      btn.onclick = () => sheetWrite("/api/board/clear-ov", {}, "снял локальную краску");
+      $("sheet-house").appendChild(btn);
+    }
   }
   showSheet();
 }
