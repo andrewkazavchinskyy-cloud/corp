@@ -448,7 +448,15 @@ def api_board() -> dict:
 @app.get("/api/issue/{owner}/{repo_name}/{number}")
 def api_issue(owner: str, repo_name: str, number: int) -> dict:
     corp.load_env()
-    return call(corp.issue_detail, f"{owner}/{repo_name}", int(number))
+    detail = corp.issue_detail(f"{owner}/{repo_name}", int(number))
+    detail["runs"] = corp.issue_runs(f"{owner}/{repo_name}", int(number))
+    return call(lambda: detail)
+
+
+@app.get("/api/runs/stats")
+def api_runs_stats() -> dict:
+    corp.load_env()
+    return {"stats": corp.run_stats()}
 
 
 @app.get("/api/map")

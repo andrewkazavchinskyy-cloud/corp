@@ -513,3 +513,7 @@ pre {
 .issue-detail .iss-body { white-space: pre-wrap; word-break: break-word; font-size: 13px; line-height: 1.45; margin: 8px 0 0; max-height: 40vh; overflow: auto; }
 .issue-detail .iss-comments { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 10px; }
 .issue-detail .muted { color: var(--dim); font-size: 12px; margin-left: 6px; }
+
+.runs-stats { display: grid; gap: 4px; margin: 0 0 10px; }
+.runs-stats .runs-line { font-size: 13px; color: var(--dim); }
+.runs-stats .runs-line b { color: var(--fg); font-weight: 600; }
