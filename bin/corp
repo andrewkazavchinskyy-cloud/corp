@@ -42,6 +42,7 @@ COUNCIL_BUSY = {"analyze", "queue", "review"}
 SLOT_ROLES = ("orchestrator", "build", "design", "qa")
 PULSE_SEC = 15 * 60
 TG_DEDUP_TTL = 90
+TG_DEDUP_KEEP = 200
 TG_QUEUE_NEXT = 3
 TG_P0_MAX = 5
 TG_BOARD_MAX = 5
@@ -57,6 +58,7 @@ HEARTBEAT_LIVE_SEC = 15 * 60
 QA_ROUNDS = 3
 RETRY_COOLDOWN_SEC = 600
 CONFIG_DIR = Path.home() / ".config" / "corp"
+TG_DEDUP_PATH = CONFIG_DIR / "tg-dedup.json"
 WORKSHOP_JSON = Path(os.environ["CORP_WORKSHOP_JSON"]) if os.environ.get("CORP_WORKSHOP_JSON") else CONFIG_DIR / "workshop.json"
 TOKEN_PATH = CONFIG_DIR / "workshop-setup-token"
 SETUP_TOKEN_TTL_SEC = 30 * 60
@@ -93,6 +95,7 @@ DEFAULT_PROFILES = [
     {"id": "cursor", "kind": "cursor", "label": "Cursor", "model": "", "effort": "", "fast": False},
 ]
 _tg_sent: list[tuple[str, float]] = []
+_tg_dedup_hydrated = [False]
 _tg_pulse: dict[str, str] = {}
 
 
@@ -1682,6 +1685,7 @@ def tg_creds() -> tuple[str, str]:
 
 
 def tg_post(method: str, payload: dict) -> dict:
+    import urllib.error
     import urllib.parse
     import urllib.request
 
@@ -1690,11 +1694,32 @@ def tg_post(method: str, payload: dict) -> dict:
         die("telegram not configured. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in ~/.config/corp/env")
     url = f"https://api.telegram.org/bot{token}/{method}"
     body = urllib.parse.urlencode(payload).encode()
-    try:
-        raw = urllib.request.urlopen(url, data=body, timeout=20).read()
-    except Exception as exc:
-        die(f"telegram {method} failed: {exc}")
-    return json.loads(raw.decode() or "{}")
+    last_error = ""
+    for attempt in range(3):
+        try:
+            raw = urllib.request.urlopen(url, data=body, timeout=20).read()
+            return json.loads(raw.decode() or "{}")
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            retry_after = 0.0
+            try:
+                err_body = json.loads(exc.read().decode() or "{}")
+                detail = str(err_body.get("description") or "")
+                retry_after = float((err_body.get("parameters") or {}).get("retry_after") or 0)
+            except Exception:
+                pass
+            last_error = f"HTTP {exc.code} {detail}".strip()
+            if exc.code == 429 and attempt < 2:
+                time.sleep(min(retry_after or 2 ** attempt * 2, 30))
+                continue
+            break
+        except Exception as exc:
+            last_error = str(exc)
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            break
+    die(f"telegram {method} failed: {last_error}")
 
 
 def notify(
@@ -2911,8 +2936,35 @@ def parse_json_array(text: str) -> list:
     return payload if isinstance(payload, list) else []
 
 
+def _tg_dedup_hydrate() -> None:
+    if _tg_sent or _tg_dedup_hydrated[0]:
+        return
+    _tg_dedup_hydrated[0] = True
+    try:
+        if TG_DEDUP_PATH.is_file():
+            rows = json.loads(TG_DEDUP_PATH.read_text())
+            if isinstance(rows, list):
+                _tg_sent.extend(
+                    (str(row[0]), float(row[1]))
+                    for row in rows
+                    if isinstance(row, (list, tuple)) and len(row) == 2
+                )
+    except (OSError, ValueError):
+        pass
+
+
+def _tg_dedup_persist() -> None:
+    try:
+        TG_DEDUP_PATH.parent.mkdir(parents=True, exist_ok=True)
+        TG_DEDUP_PATH.write_text(json.dumps(_tg_sent[-TG_DEDUP_KEEP:]))
+        os.chmod(TG_DEDUP_PATH, 0o600)
+    except OSError:
+        pass
+
+
 def tg_reset_dedup() -> None:
     _tg_sent.clear()
+    _tg_dedup_hydrated[0] = True
     _tg_pulse.clear()
 
 
@@ -2945,11 +2997,13 @@ def tg_card(ref: str, happened: str, nxt: str = "") -> str:
 
 def tg_should_send(key: str, now: float | None = None, ttl: int = TG_DEDUP_TTL) -> bool:
     stamp = time.time() if now is None else now
+    _tg_dedup_hydrate()
     keep = [(k, t) for k, t in _tg_sent if stamp - t < ttl]
     _tg_sent[:] = keep
     if any(k == key for k, _t in _tg_sent):
         return False
     _tg_sent.append((key, stamp))
+    _tg_dedup_persist()
     return True
 
 

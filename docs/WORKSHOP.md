@@ -138,8 +138,12 @@ Dangerous actions (цикл, откатить, продолжить автоно
 says so and offers «На QA». Готово = колонка `ready`, not closed.
 
 Immediate cards: start, closed, failed, hung, retry, drafts, need-human.
-Shape: what happened + what to do next. Pulse every 15 minutes only if the log
-changed. Dedup identical events.
+Shape: what happened + what to do next. Dedup identical events (keys persist
+across restarts in `tg-dedup.json`). The runner writes a heartbeat into
+`run.log` every 5 minutes while it works; Telegram itself stays silent between
+events — silence is not failure, delivery health is visible in the «Сейчас»
+card («Бот: сбои доставки») and `corp doctor` (`telegram bot auth`,
+`telegram delivery`).
 
 Mini App lives at Workshop `/tg` (alias `/mini`): Telegram WebView chrome
 (`telegram-web-app.js`, themeParams, MainButton, safe-area). Not a dump of
