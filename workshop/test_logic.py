@@ -2326,6 +2326,15 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     src_wait = inspect.getsource(corp.wait_tmux)
     assert "drain_log_tail(offset)" in src_wait
     assert "read_text()" not in src_wait
+    # --- #135: SSE-стрим с именованными событиями, клиентский fallback
+    app_src3 = (ROOT / "workshop" / "app.py").read_text()
+    assert 'event: console' in app_src3 and 'event: status' in app_src3
+    assert "def api_console_stream(project: str = \"\", issue: str = \"\")" in app_src3
+    js_src2 = (ROOT / "workshop" / "static" / "app.js").read_text()
+    assert "new EventSource(" in js_src2
+    assert "addEventListener(\"console\"" in js_src2 and "addEventListener(\"status\"" in js_src2
+    assert "closeSse()" in js_src2 and "syncSse()" in js_src2
+    assert "if (sse) return;" in js_src2
     print("ok")
 
 

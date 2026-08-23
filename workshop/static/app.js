@@ -2564,6 +2564,28 @@ function liveLabel(p) {
   return p.startsWith("orch:") ? `разбор · ${p.slice(5)}` : p;
 }
 
+function paintConsolePayload(data) {
+  const issue = consoleIssue || "";
+  const parts = [];
+  if (issue) {
+    if (data.log) parts.push(data.log);
+    if (data.last_error) parts.push(data.last_error);
+  } else {
+    if (data.last_error) parts.push(data.last_error);
+    if (data.log) parts.push(data.log);
+    if (data.pane) parts.push(data.pane);
+  }
+  $("console").textContent = parts.join("\n\n") || (issue ? "нет лога этой карточки" : "пока тихо");
+  $("console").scrollTop = $("console").scrollHeight;
+  const live = data.live || [];
+  const f = currentFilter();
+  const names = [...new Set([...pinNames(), ...live, ...(isPin(f) ? [f, `orch:${f}`] : [])])];
+  const pick = consolePick || "";
+  $("console-project").innerHTML = `<option value="">сессия</option>` + names.map((p) =>
+    `<option value="${escapeHtml(p)}" ${p === pick ? "selected" : ""}>${live.includes(p) ? "● " : ""}${escapeHtml(liveLabel(p))}</option>`
+  ).join("");
+}
+
 async function pollConsole() {
   const f = currentFilter();
   let pick = consolePick || $("console-project").value;
@@ -2576,25 +2598,11 @@ async function pollConsole() {
     if (pick) qs.set("project", pick);
     if (issue) qs.set("issue", issue);
     const data = await api(`/api/console?${qs}`);
-    const parts = [];
-    if (issue) {
-      if (data.log) parts.push(data.log);
-      if (data.last_error) parts.push(data.last_error);
-    } else {
-      if (data.last_error) parts.push(data.last_error);
-      if (data.log) parts.push(data.log);
-      if (data.pane) parts.push(data.pane);
-    }
-    $("console").textContent = parts.join("\n\n") || (issue ? "нет лога этой карточки" : "пока тихо");
-    $("console").scrollTop = $("console").scrollHeight;
-    const live = data.live || [];
-    const names = [...new Set([...pinNames(), ...live, ...(isPin(f) ? [f, `orch:${f}`] : [])])];
-    $("console-project").innerHTML = `<option value="">сессия</option>` + names.map((p) =>
-      `<option value="${escapeHtml(p)}" ${p === pick ? "selected" : ""}>${live.includes(p) ? "● " : ""}${escapeHtml(liveLabel(p))}</option>`
-    ).join("");
+    paintConsolePayload(data);
   } catch (err) {
     flash(err.message, true);
   }
+  syncSse();
 }
 
 async function refresh() {
@@ -2712,12 +2720,62 @@ if ($("q")) {
   };
 }
 
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && !$("app").classList.contains("hidden")) refresh();
-});
-
 boot();
 setInterval(() => {
   if (document.hidden || $("app").classList.contains("hidden")) return;
+  if (sse) return;
   refresh();
+  if ($("tab-console") && $("tab-console").classList.contains("on")) pollConsole();
 }, 8000);
+
+let sse = null;
+function sseUrl() {
+  const qs = new URLSearchParams();
+  const pick = consolePick || "";
+  const issue = (consoleIssue && consoleLogMode !== "run") ? consoleIssue : "";
+  if (pick) qs.set("project", pick);
+  if (issue) qs.set("issue", issue);
+  const q = qs.toString();
+  return `/api/console/stream${q ? `?${q}` : ""}`;
+}
+
+function closeSse() {
+  if (sse) {
+    try { sse.close(); } catch (_) { /* already gone */ }
+    sse = null;
+  }
+}
+
+function syncSse() {
+  if (!window.EventSource || document.hidden || $("app").classList.contains("hidden")) return;
+  const want = sseUrl();
+  if (sse && sse._url === want) return;
+  closeSse();
+  try {
+    sse = new EventSource(want);
+    sse._url = want;
+    sse.addEventListener("console", (ev) => {
+      try { paintConsolePayload(JSON.parse(ev.data)); } catch (_) { /* skip bad frame */ }
+    });
+    sse.addEventListener("status", () => {
+      if (!document.hidden) refresh();
+    });
+    sse.onerror = () => {
+      closeSse();
+      setTimeout(syncSse, 5000);
+    };
+  } catch (_) {
+    sse = null;
+  }
+}
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && !$("app").classList.contains("hidden")) {
+    refresh();
+    syncSse();
+  } else {
+    closeSse();
+  }
+});
+
+boot();
+if ($("app") && !$("app").classList.contains("hidden")) syncSse();

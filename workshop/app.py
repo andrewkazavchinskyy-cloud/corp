@@ -934,11 +934,15 @@ def api_console(project: str = "", issue: str = "") -> dict:
 
 
 @app.get("/api/console/stream")
-def api_console_stream(project: str = "") -> StreamingResponse:
+def api_console_stream(project: str = "", issue: str = "") -> StreamingResponse:
     def gen():
+        tick = 0
         while True:
-            payload = api_console(project)
-            yield f"data: {json.dumps(payload)}\n\n"
+            payload = api_console(project, issue)
+            yield f"event: console\ndata: {json.dumps(payload)}\n\n"
+            tick += 1
+            if tick % 2 == 0:
+                yield f"event: status\ndata: {json.dumps({'t': time.time()})}\n\n"
             time.sleep(2)
 
     return StreamingResponse(gen(), media_type="text/event-stream")
