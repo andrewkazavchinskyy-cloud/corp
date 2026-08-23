@@ -517,3 +517,42 @@ pre {
 .runs-stats { display: grid; gap: 4px; margin: 0 0 10px; }
 .runs-stats .runs-line { font-size: 13px; color: var(--dim); }
 .runs-stats .runs-line b { color: var(--fg); font-weight: 600; }
+
+.top-actions { display: flex; align-items: center; gap: 8px; }
+.top-actions .btn.on { border-color: var(--accent, #7dd3fc); color: var(--accent, #7dd3fc); }
+.issue-form { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; margin-bottom: 10px; background: var(--paper); }
+.issue-form .nf-row { display: grid; grid-template-columns: minmax(120px, 200px) 1fr; gap: 8px; }
+.issue-form input[type="text"], .issue-form select, .issue-form textarea,
+.issue-edit input[type="text"], .issue-edit textarea {
+  width: 100%; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--line); background: #09090b; color: inherit; font-size: 14px;
+}
+.lbl-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.lbl-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px;
+  font-size: 12px; cursor: pointer; user-select: none; color: var(--dim);
+}
+.lbl-chip input { position: absolute; opacity: 0; pointer-events: none; }
+.lbl-chip.on { color: var(--fg); border-color: var(--accent, #7dd3fc); }
+.nf-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.bulk-bar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; margin-bottom: 8px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--paper);
+}
+.bulk-bar #bulk-count { font-size: 13px; color: var(--dim); }
+.card.sel { outline: 2px solid var(--accent, #7dd3fc); outline-offset: -2px; }
+.bulk-box {
+  position: absolute; top: 6px; right: 6px; z-index: 2;
+  width: 22px; height: 22px; border-radius: 6px;
+  border: 1px solid var(--line); background: #09090b;
+  display: grid; place-items: center; font-size: 13px; color: var(--accent, #7dd3fc);
+}
+.issue-edit { display: grid; gap: 8px; padding-top: 4px; }
+.drawer-actions { display: flex; align-items: center; gap: 8px; }
+.drawer-actions .btn { padding: 6px 10px; font-size: 13px; }
+@media (max-width: 899px) {
+  .issue-form .nf-row { grid-template-columns: 1fr; }
+}

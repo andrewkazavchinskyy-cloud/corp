@@ -454,6 +454,43 @@ def api_issue(owner: str, repo_name: str, number: int) -> dict:
     return call(lambda: detail)
 
 
+@app.post("/api/issue/create")
+def api_issue_create(body: dict = Body(default_factory=dict)) -> dict:
+    corp.load_env()
+    repo = body.get("repo") or ""
+    if not repo:
+        raise HTTPException(400, "repo required")
+    result = call(
+        corp.issue_create,
+        repo,
+        body.get("title") or "",
+        body.get("body") or "",
+        body.get("labels") or [],
+    )
+    with LOCK:
+        corp.invalidate_board()
+    return result
+
+
+@app.post("/api/issue/edit")
+def api_issue_edit(body: dict = Body(default_factory=dict)) -> dict:
+    corp.load_env()
+    repo = body.get("repo") or ""
+    number = int(body.get("number") or 0)
+    if not repo or not number:
+        raise HTTPException(400, "repo and number required")
+    result = call(
+        corp.issue_edit,
+        repo,
+        number,
+        body.get("title"),
+        body.get("labels") or [],
+    )
+    with LOCK:
+        corp.invalidate_board()
+    return result
+
+
 @app.get("/api/runs/stats")
 def api_runs_stats() -> dict:
     corp.load_env()
