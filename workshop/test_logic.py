@@ -2335,6 +2335,63 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert "addEventListener(\"console\"" in js_src2 and "addEventListener(\"status\"" in js_src2
     assert "closeSse()" in js_src2 and "syncSse()" in js_src2
     assert "if (sse) return;" in js_src2
+    # --- #136: write-path — create/edit issue из UI
+    old_run2 = corp.run
+    old_get3 = corp.get_issue
+    old_ensure = corp.ensure_label
+    old_remove_l = corp.remove_labels
+    old_add_l = corp.add_labels
+    old_events2 = corp.EVENTS_PATH
+    corp.EVENTS_PATH = Path(tempfile.mkdtemp(prefix="corp-wp-")) / "events.jsonl"
+    added_labels, removed_labels = [], []
+
+    class Created:
+        returncode = 0
+        stderr = ""
+        stdout = "https://github.com/andrewkazavchinskyy-cloud/corp/issues/999\n"
+
+    def fake_run(args, check=False, timeout=None, **kw):
+        args = [str(a) for a in args]
+        assert args[0] == "gh"
+
+        class P:
+            returncode = 0
+            stderr = ""
+            stdout = "ok" if args[1] == "issue" and args[2] == "edit" else ""
+
+            def __init__(self):
+                if args[1] == "issue" and args[2] == "create":
+                    self.stdout = "https://github.com/andrewkazavchinskyy-cloud/corp/issues/998\n"
+        return P()
+
+    try:
+        corp.run = fake_run
+        corp.get_issue = lambda repo, number: {"labels": [{"name": n} for n in ["P1", "bug", "in-progress", "via:grok", "ready"]], "title": "старое"}
+        created = corp.issue_create("andrewkazavchinskyy-cloud/corp", "Новая карта", "тело", ["P0", "bug"])
+        assert created["number"] == 998 and created["url"].endswith("/issues/998")
+
+        corp.remove_labels = lambda repo, number, labels: removed_labels.extend(labels)
+        corp.add_labels = lambda repo, number, labels: added_labels.extend(labels)
+        edited = corp.issue_edit("andrewkazavchinskyy-cloud/corp", 42, title="новое имя", labels=["P0", "enhancement", "in-progress", "via:grok", "ready"])
+        assert edited["ok"] is True
+        assert removed_labels == ["P1", "bug"]
+        assert added_labels == ["P0", "enhancement"]
+    finally:
+        corp.run = old_run2
+        corp.get_issue = old_get3
+        corp.ensure_label = old_ensure
+        corp.remove_labels = old_remove_l
+        corp.add_labels = old_add_l
+        corp.EVENTS_PATH = old_events2
+
+    app_src4 = (ROOT / "workshop" / "app.py").read_text()
+    assert "/api/issue/create" in app_src4 and "/api/issue/edit" in app_src4
+    js_src3 = (ROOT / "workshop" / "static" / "app.js").read_text()
+    assert '"/api/issue/create"' in js_src3 and '"/api/issue/edit"' in js_src3
+    assert '"p0", "P0"' in js_src3 and '"me", "Свои"' in js_src3 and '"blocked", "Блок"' in js_src3
+    assert "toggleBulkCard" in js_src3 and "bulkSel" in js_src3
+    html_src2 = (ROOT / "workshop" / "static" / "index.html").read_text()
+    assert 'id="issue-form"' in html_src2 and 'id="bulk-bar"' in html_src2 and 'id="sheet-edit"' in html_src2
     print("ok")
 
 

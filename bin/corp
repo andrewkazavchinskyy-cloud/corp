@@ -5989,6 +5989,68 @@ def issue_detail(repo: str, number: int, comments_limit: int = 10) -> dict:
     }
 
 
+ISSUE_MANAGED_LABELS = ["P0", "P1", "P2", "bug", "enhancement", "design", "documentation", "good first issue", "prd", "research", "ship", "accessibility"]
+ISSUE_PROTECTED_LABELS = {
+    "in-progress", "in-qa", "qa-fail", "queued", "blocked", "self",
+    "ready", *VIA.values(),
+}
+
+
+def _parse_issue_number(raw: str) -> int:
+    match = re.search(r"/issues/(\d+)\s*$", raw or "")
+    if not match:
+        die(f"cannot parse created issue url: {raw!r}")
+    return int(match.group(1))
+
+
+def issue_create(repo: str, title: str, body: str = "", labels: list[str] | None = None) -> dict:
+    if not (title or "").strip():
+        die("нужен заголовок")
+    args = ["gh", "issue", "create", "-R", repo, "--title", title.strip(), "--body", body or ""]
+    wanted = []
+    for name in labels or []:
+        clean = (name or "").strip()
+        if not clean or clean in ISSUE_PROTECTED_LABELS:
+            continue
+        wanted.append(clean)
+        ensure_label(repo, clean)
+        args += ["--label", clean]
+    proc = run(args, check=False)
+    if proc.returncode != 0:
+        die((proc.stderr or proc.stdout or "issue create failed").strip()[:200])
+    url = (proc.stdout or "").strip().splitlines()[-1].strip()
+    number = _parse_issue_number(url)
+    invalidate_board()
+    record_event("create", tg_short_ref(repo, number), "заведена из UI")
+    return {"ok": True, "repo": repo, "number": number, "url": url, "labels": wanted}
+
+
+def issue_edit(repo: str, number: int, title: str | None = None, labels: list[str] | None = None) -> dict:
+    current = set(label_names(get_issue(repo, number)))
+    if title and title.strip():
+        proc = run(
+            ["gh", "issue", "edit", str(number), "-R", repo, "--title", title.strip()],
+            check=False,
+        )
+        if proc.returncode != 0:
+            die((proc.stderr or proc.stdout or "issue edit failed").strip()[:200])
+    desired_user = {clean for clean in ((name or "").strip() for name in labels or []) if clean}
+    desired_user -= ISSUE_PROTECTED_LABELS
+    protected = current & ISSUE_PROTECTED_LABELS
+    remove = sorted(current - protected - desired_user)
+    add = sorted(desired_user - current)
+    if remove:
+        remove_labels(repo, number, remove)
+    if add:
+        for name in add:
+            ensure_label(repo, name)
+        add_labels(repo, number, add)
+    invalidate_board()
+    record_event("edit", tg_short_ref(repo, number), "правка из UI")
+    latest = get_issue(repo, number)
+    return {"ok": True, "repo": repo, "number": number, "title": latest.get("title") or "", "labels": sorted(label_names(latest))}
+
+
 def claim(repo: str, number: int, kind: str, note: str) -> None:
     via_all = list(VIA.values())
     remove_labels(repo, number, ["ready", "queued", "self", *via_all])

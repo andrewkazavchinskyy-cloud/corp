@@ -62,7 +62,11 @@
             <h1 id="page-title">Доска</h1>
             <p id="page-kicker">GitHub Issues</p>
           </div>
-          <button type="button" id="strip" class="live" disabled aria-live="polite"><i class="pulse"></i><b>загрузка…</b></button>
+          <div class="top-actions">
+            <button type="button" id="new-issue" class="btn" title="Создать issue">+ Issue</button>
+            <button type="button" id="bulk-mode" class="btn" title="Выбрать несколько">Выбрать</button>
+            <button type="button" id="strip" class="live" disabled aria-live="polite"><i class="pulse"></i><b>загрузка…</b></button>
+          </div>
         </div>
         <div class="filters" id="project-filters"></div>
         <label class="q-wrap">
@@ -70,6 +74,25 @@
           <input id="q" type="search" placeholder="Название или репо и номер" autocomplete="off" spellcheck="false">
         </label>
       </header>
+
+      <div id="issue-form" class="issue-form hidden">
+        <div class="nf-row">
+          <select id="nf-repo" aria-label="Репозиторий"></select>
+          <input id="nf-title" type="text" placeholder="Заголовок issue" maxlength="180">
+        </div>
+        <textarea id="nf-body" rows="4" placeholder="Постановка: что и зачем. Markdown уместен." maxlength="8000"></textarea>
+        <div class="lbl-grid" id="nf-labels"></div>
+        <div class="nf-actions">
+          <button type="button" class="btn primary" id="nf-submit">Завести</button>
+          <button type="button" class="btn" id="nf-cancel">Отмена</button>
+        </div>
+      </div>
+
+      <div id="bulk-bar" class="bulk-bar hidden">
+        <span id="bulk-count">выбрано 0</span>
+        <button type="button" class="btn primary" id="bulk-queue">В очередь</button>
+        <button type="button" class="btn" id="bulk-cancel">Отмена</button>
+      </div>
 
       <div class="body">
         <section id="tab-board" class="tab on">
@@ -177,10 +200,21 @@
             <p class="kicker" id="sheet-kicker">Запуск</p>
             <h2 id="sheet-title"></h2>
           </div>
-          <button type="button" class="x" id="sheet-cancel" aria-label="Закрыть">×</button>
+          <div class="drawer-actions">
+            <button type="button" id="sheet-edit-btn" class="btn" title="Править заголовок и метки">✎ Править</button>
+            <button type="button" class="x" id="sheet-cancel" aria-label="Закрыть">×</button>
+          </div>
         </div>
         <p id="sheet-note" class="note"></p>
         <div id="sheet-detail" class="issue-detail" aria-live="polite"></div>
+        <div id="sheet-edit" class="issue-edit hidden">
+          <input id="se-title" type="text" maxlength="180" placeholder="Заголовок">
+          <div class="lbl-grid" id="se-labels"></div>
+          <div class="nf-actions">
+            <button type="button" class="btn primary" id="se-save">Сохранить</button>
+            <button type="button" class="btn" id="se-cancel">Отмена</button>
+          </div>
+        </div>
         <div class="acts" id="sheet-acts"></div>
         <div class="house" id="sheet-house"></div>
       </aside>

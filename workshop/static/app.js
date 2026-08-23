@@ -73,7 +73,6 @@ function cookieSet(name, value) {
 }
 function currentFilter() {
   const value = cookieGet(FILTER_KEY) || localStorage.getItem(FILTER_KEY) || "all";
-  if (value === "p0" || value === "me") return "all";
   return value;
 }
 function pinNames() {
@@ -247,6 +246,8 @@ function setupTokenFromUrl() {
 function showApp() {
   $("gate").classList.add("hidden");
   $("app").classList.remove("hidden");
+  initNewIssue();
+  initBulk();
   refresh();
 }
 
@@ -352,7 +353,12 @@ function draftMatches(d) {
 
 function visibleCards() {
   const f = currentFilter();
-  const cards = (state.cards || []).filter((c) => (f === "all" || c.project === f) && cardMatches(c));
+  let cards = state.cards || [];
+  if (f === "p0") cards = cards.filter((c) => (c.labels || []).includes("P0"));
+  else if (f === "me") cards = cards.filter((c) => c.runner === "self" || (c.labels || []).includes("self"));
+  else if (f === "blocked") cards = cards.filter((c) => c.blocked || (c.labels || []).includes("blocked"));
+  else if (f !== "all") cards = cards.filter((c) => c.project === f);
+  cards = cards.filter(cardMatches);
   return cards.slice().sort((a, b) => {
     const pa = (a.labels || []).some((l) => l.name === "P0") ? 0 : 1;
     const pb = (b.labels || []).some((l) => l.name === "P0") ? 0 : 1;
@@ -368,7 +374,13 @@ function renderFilters() {
   if (hide) return;
   const pins = state.pins || [];
   const cur = currentFilter();
-  const chips = [["all", "Все"], ...pins.map((p) => [p.name, p.name])].filter(([id, label]) => {
+  const quick = [
+    ["all", "Все"],
+    ["p0", "P0"],
+    ["me", "Свои"],
+    ["blocked", "Блок"],
+  ];
+  const chips = [...quick, ...pins.map((p) => [p.name, p.name])].filter(([id, label]) => {
     if (!searchQuery.trim() || id === "all" || id === cur) return true;
     const hasCards = (state.cards || []).some((c) => c.project === id && cardMatches(c));
     const hasDrafts = (state.drafts || []).some((d) => d.project === id && draftMatches(d));
@@ -542,8 +554,10 @@ function cardClass(card) {
 function cardHtml(card) {
   const project = currentFilter() === "all" ? escapeHtml(card.project) : "";
   const on = !$("sheet").classList.contains("hidden") && sheetIssue === issueRef(card) ? " on" : "";
-  return `<button type="button" class="${cardClass(card)}${on}" data-issue="${issueRef(card)}" data-col="${card.column}">
-    <span class="card-handle" data-handle aria-hidden="true">⋮⋮</span>
+  const sel = bulkMode && bulkSel.has(issueRef(card)) ? " sel" : "";
+  const box = bulkMode ? `<span class="bulk-box"${sel ? " data-on" : ""}>${sel ? "✓" : ""}</span>` : "";
+  return `<button type="button" class="${cardClass(card)}${on}${sel}" data-issue="${issueRef(card)}" data-col="${card.column}">
+    ${box}<span class="card-handle" data-handle aria-hidden="true">⋮⋮</span>
     <header><span>${project}</span><span>#${card.number}</span></header>
     <h3>${escapeHtml(card.title || "")}</h3>
     <div class="badges">${badge(card)}</div>
@@ -713,6 +727,10 @@ function renderBoard() {
   $("board").querySelectorAll(".card:not(.next)").forEach((el) => {
     el.onclick = (evt) => {
       if (evt.target.closest("[data-handle]")) return;
+      if (bulkMode) {
+        toggleBulkCard(el.dataset.issue);
+        return;
+      }
       openSheet(el.dataset.issue);
     };
   });
@@ -1141,7 +1159,39 @@ function openSheet(issue) {
 }
 
 function closeSheet() {
+  toggleEditPanel(false);
   hideSheet(false);
+}
+
+let editBound = false;
+function toggleEditPanel(force) {
+  const panel = $("sheet-edit");
+  if (!panel) return;
+  const card = (state.cards || []).find((c) => issueRef(c) === sheetIssue);
+  const show = force != null ? force : panel.classList.contains("hidden");
+  panel.classList.toggle("hidden", !show);
+  if (!show || !card) return;
+  $("se-title").value = card.title || "";
+  labelGrid($("se-labels"), (card.labels || []).filter((n) => !PROTECTED_LABELS.has(n)));
+  $("se-save").onclick = async () => {
+    try {
+      await write("/api/issue/edit", {
+        repo: card.repo,
+        number: card.number,
+        title: $("se-title").value,
+        labels: labelGridValues($("se-labels")),
+      }, "сохранил");
+      toggleEditPanel(false);
+      sheetIssue = "";
+      closeSheet();
+    } catch (_) { /* flashed */ }
+  };
+  $("se-cancel").onclick = () => toggleEditPanel(false);
+}
+
+if (!editBound) {
+  editBound = true;
+  $("sheet-edit-btn").onclick = () => toggleEditPanel();
 }
 
 $("sheet-cancel").onclick = closeSheet;
@@ -2729,6 +2779,100 @@ setInterval(() => {
 }, 8000);
 
 let sse = null;
+const MANAGED_LABELS = ["P0", "P1", "P2", "bug", "enhancement", "design", "documentation", "good first issue", "prd", "research"];
+const PROTECTED_LABELS = new Set(["in-progress", "in-qa", "qa-fail", "queued", "blocked", "self", "ready", "via:claude", "via:codex", "via:grok", "via:cursor"]);
+let bulkMode = false;
+const bulkSel = new Set();
+
+function labelGrid(el, selected) {
+  if (!el) return;
+  const have = new Set(selected || []);
+  el.innerHTML = MANAGED_LABELS.map((name) =>
+    `<label class="lbl-chip${have.has(name) ? " on" : ""}"><input type="checkbox" value="${escapeHtml(name)}"${have.has(name) ? " checked" : ""}> ${escapeHtml(name)}</label>`
+  ).join("");
+  el.querySelectorAll("input").forEach((box) => {
+    box.onchange = () => box.closest(".lbl-chip").classList.toggle("on", box.checked);
+  });
+}
+
+function labelGridValues(el) {
+  return [...(el || document).querySelectorAll("input:checked")].map((b) => b.value);
+}
+
+function toggleIssueForm(force) {
+  const panel = $("issue-form");
+  if (!panel) return;
+  const show = force != null ? force : panel.classList.contains("hidden");
+  panel.classList.toggle("hidden", !show);
+  if (!show) return;
+  const repoSel = $("nf-repo");
+  if (repoSel && !repoSel.options.length) {
+    repoSel.innerHTML = (state.pins || []).map((p) => `<option value="${escapeHtml(p.repo)}">${escapeHtml(p.name)}</option>`).join("");
+  }
+  $("nf-title").focus();
+}
+
+function initNewIssue() {
+  const btn = $("new-issue");
+  if (!btn) return;
+  btn.onclick = () => toggleIssueForm();
+  $("nf-cancel").onclick = () => toggleIssueForm(false);
+  labelGrid($("nf-labels"), ["enhancement"]);
+  $("nf-submit").onclick = async () => {
+    const title = $("nf-title").value.trim();
+    if (!title) { flash("нужен заголовок", true); return; }
+    try {
+      await write("/api/issue/create", {
+        repo: $("nf-repo").value,
+        title,
+        body: $("nf-body").value,
+        labels: labelGridValues($("nf-labels")),
+      }, "issue создана");
+      $("nf-title").value = "";
+      $("nf-body").value = "";
+      toggleIssueForm(false);
+    } catch (_) { /* write already flashed */ }
+  };
+}
+
+function setBulkMode(on) {
+  bulkMode = on && true;
+  bulkSel.clear();
+  const btn = $("bulk-mode");
+  if (btn) btn.classList.toggle("on", bulkMode);
+  const bar = $("bulk-bar");
+  if (bar) bar.classList.toggle("hidden", !bulkMode);
+  lastBoardKey = "";
+  renderBoard();
+}
+
+function updateBulkBar() {
+  const count = $("bulk-count");
+  if (count) count.textContent = `выбрано ${bulkSel.size}`;
+}
+
+function toggleBulkCard(ref) {
+  if (bulkSel.has(ref)) bulkSel.delete(ref);
+  else bulkSel.add(ref);
+  updateBulkBar();
+  lastBoardKey = "";
+  renderBoard();
+}
+
+function initBulk() {
+  const btn = $("bulk-mode");
+  if (!btn) return;
+  btn.onclick = () => setBulkMode(!bulkMode);
+  $("bulk-cancel").onclick = () => setBulkMode(false);
+  $("bulk-queue").onclick = async () => {
+    if (!bulkSel.size) { flash("ничего не выбрано", true); return; }
+    try {
+      await write("/api/queue/add", { issues: [...bulkSel] }, `в очереди: ${bulkSel.size}`);
+      setBulkMode(false);
+    } catch (_) { /* flashed */ }
+  };
+}
+
 function sseUrl() {
   const qs = new URLSearchParams();
   const pick = consolePick || "";
