@@ -248,6 +248,7 @@ function showApp() {
   $("app").classList.remove("hidden");
   initNewIssue();
   initBulk();
+  initSearchToggle();
   refresh();
 }
 
@@ -2832,6 +2833,18 @@ function initNewIssue() {
       $("nf-body").value = "";
       toggleIssueForm(false);
     } catch (_) { /* write already flashed */ }
+  };
+}
+
+function initSearchToggle() {
+  const btn = $("q-toggle");
+  if (!btn) return;
+  btn.onclick = () => {
+    const wrap = $("q").closest(".q-wrap");
+    if (!wrap) return;
+    const open = wrap.classList.toggle("open");
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open) $("q").focus();
   };
 }
 
