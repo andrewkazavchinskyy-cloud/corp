@@ -2182,6 +2182,22 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert "ensureRunStats" in js_src and "Прошлые прогоны" in js_src
     html_src = (ROOT / "workshop" / "static" / "index.html").read_text()
     assert 'id="runs-stats"' in html_src
+    # --- #128: новый драфт сразу пушит карту с кнопками, повтор без спама
+    assert "push_draft_card(draft)" in inspect.getsource(corp.new_draft)
+    pushed = []
+    old_tg_send2 = corp.tg_send
+    corp.tg_send = lambda text, buttons=None, **k: pushed.append((text, buttons)) or {}
+    try:
+        draft_x = corp.new_draft("andrewkazavchinskyy-cloud/corp", "Драфт из теста", "тело", "ready", why="зачем")
+        assert len(pushed) == 1
+        text, buttons = pushed[0]
+        assert "Черновик" in text and "Драфт из теста" in text and "<script" not in text
+        assert buttons and buttons[0][0]["callback_data"] == f"a:{draft_x['id']}"
+        assert buttons[0][1]["callback_data"] == f"s:{draft_x['id']}"
+        corp.push_draft_card(draft_x)
+        assert len(pushed) == 1
+    finally:
+        corp.tg_send = old_tg_send2
     print("ok")
 
 
