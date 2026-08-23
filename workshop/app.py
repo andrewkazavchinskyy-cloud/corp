@@ -7,6 +7,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import random
 import secrets
 import sqlite3
 import threading
@@ -866,7 +867,9 @@ def api_queue_pause() -> dict:
 
 @app.get("/api/queue")
 def api_queue() -> dict:
-    return corp.queue_status()
+    payload = corp.queue_status()
+    payload["paused_projects"] = corp.load_workshop().get("paused_projects") or {}
+    return payload
 
 
 @app.get("/api/memory")
@@ -987,6 +990,9 @@ def queue_tick() -> None:
                 item["last_error"] = item.get("last_error") or "пауза перед повтором"
                 continue
             project = item["project"]
+            if project in (data.get("paused_projects") or {}):
+                item["last_error"] = f"{project} на паузе: {data['paused_projects'][project]}"
+                continue
             if project in running_projects:
                 item["last_error"] = f"{project} уже занят"
                 continue
@@ -1029,6 +1035,7 @@ def queue_tick() -> None:
             item["started_at"] = time.time()
             item["attempts"] = int(item.get("attempts") or 0) + 1
             item["last_error"] = ""
+            item["retry_after"] = 0
             running_projects.add(project)
             corp.save_workshop(data)
             threading.Thread(target=_queue_job, args=(item, profile), daemon=True).start()
@@ -1079,12 +1086,20 @@ def _queue_job(item: dict, profile: dict) -> None:
                         hung=hung,
                     )
                     row["status"] = outcome["status"]
-                    if outcome["stop"]:
-                        data["queue_running"] = False
+                    if outcome["event"] == "retry":
+                        cooldown = corp.RETRY_COOLDOWN_SEC * attempts + random.uniform(0, 30)
+                        row["retry_after"] = time.time() + cooldown
+                        row["last_error"] = f"{error} · повтор через {int(cooldown // 60)} мин"
+                    if outcome["event"] in {"hung", "stop"}:
+                        paused = data.setdefault("paused_projects", {})
+                        paused[item.get("project") or ""] = (
+                            "завис (таймаут)" if outcome["event"] == "hung" else "стоп после повторов"
+                        )
                     if outcome["page"]:
                         corp.need_human(
                             f"{corp.tg_short_ref(repo, number)} · "
                             + ("завис (таймаут)" if outcome["event"] == "hung" else "стоп после повторов")
+                            + f" · {item.get('project')} на паузе"
                         )
                     nxt = {
                         "closed": "",
