@@ -2266,6 +2266,25 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     ws_doc = (ROOT / "docs" / "WORKSHOP.md").read_text()
     assert "heartbeat" in ws_doc and "tg-dedup.json" in ws_doc
     assert "Pulse every 15 minutes" not in ws_doc
+    # --- #132: retry cooldown растёт, пауза перпроектная
+    app_src2 = (ROOT / "workshop" / "app.py").read_text()
+    assert "RETRY_COOLDOWN_SEC * attempts" in app_src2
+    assert 'data.setdefault("paused_projects", {})' in app_src2
+    assert "paused_projects" in inspect.getsource(corp.queue_set_running)
+    assert "на паузе" in app_src2
+
+    wj2 = Path(tempfile.mkdtemp(prefix="corp-wj2-")) / "workshop.json"
+    old_dedup_path2 = corp.TG_DEDUP_PATH
+    corp.TG_DEDUP_PATH = Path(tempfile.mkdtemp(prefix="corp-dedup3-")) / "tg-dedup.json"
+    try:
+        with corp.workshop_json_override(wj2):
+            corp.save_workshop({"queue_running": True, "queue": [], "paused_projects": {"clarity": "стоп"}})
+            out = corp.queue_set_running(True)
+            assert out["ok"] is True
+            assert corp.load_workshop().get("paused_projects") == {}
+    finally:
+        corp.TG_DEDUP_PATH = old_dedup_path2
+        corp._board_memo.update({"t": 0.0, "key": "", "data": None})
     print("ok")
 
 

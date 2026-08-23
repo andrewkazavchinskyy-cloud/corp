@@ -1842,6 +1842,7 @@ def default_workshop() -> dict:
         "tg_board": {},
         "tg_cycle": {},
         "tg_more": {},
+        "paused_projects": {},
         "registry": {},
         "auto_queue_on_approve": True,
         "queue_retries": QUEUE_MAX_ATTEMPTS,
@@ -7492,6 +7493,8 @@ def queue_set_running(running: bool) -> dict:
     with workshop_lock():
         data = load_workshop()
         data["queue_running"] = running
+        if running:
+            data["paused_projects"] = {}
         save_workshop(data)
     if not running:
         waiting = sum(1 for item in data.get("queue") or [] if item.get("status") == "waiting")
