@@ -579,6 +579,7 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     shop_btns = corp.tg_event_buttons("fail", url="https://vmi.tailad6484.ts.net/?issue=o/corp#56", ref="o/corp#56")
     assert "Мастерская" in [btn["text"] for btn in shop_btns[0]] and "Повторить" in [btn["text"] for btn in shop_btns[0]]
     corp.tg_reset_dedup()
+    corp.TG_DEDUP_PATH = Path(tempfile.mkdtemp(prefix="corp-dedup-")) / "tg-dedup.json"
     assert corp.tg_should_send("start:corp#56", now=100)
     assert not corp.tg_should_send("start:corp#56", now=110)
     assert corp.tg_should_send("start:corp#56", now=200)
@@ -2198,6 +2199,73 @@ Nodes (33): active_projects(), board_payload() (+31 more)
         assert len(pushed) == 1
     finally:
         corp.tg_send = old_tg_send2
+    # --- #129: 429-backoff, персистентный dedup, пульс задокументирован
+    old_creds3 = corp.tg_creds
+    old_sleep = corp.time.sleep
+    old_urlopen2 = urllib.request.urlopen
+    sleeps = []
+    corp.tg_creds = lambda: ("T", "42")
+    corp.time.sleep = lambda s: sleeps.append(s)
+
+    class Err401(Exception):
+        code = 429
+
+        def __init__(self):
+            super().__init__("Too Many Requests")
+            self._body = json.dumps({
+                "ok": False,
+                "error_code": 429,
+                "description": "Too Many Requests: retry after 0",
+                "parameters": {"retry_after": 0},
+            }).encode()
+
+        def read(self):
+            return self._body
+
+    sequence = {"n": 0}
+
+    class OkResp:
+        def read(self):
+            return b'{"ok": true, "result": {}}'
+
+    def flaky_urlopen(url, data=None, timeout=0):
+        if sequence["n"] < 2:
+            sequence["n"] += 1
+            raise Err401()
+        return OkResp()
+
+    try:
+        urllib.request.urlopen = flaky_urlopen
+        out = corp.tg_post("sendMessage", {"chat_id": "42", "text": "hi"})
+        assert out.get("ok") is True
+        assert len(sleeps) == 2 and all(s <= 30 for s in sleeps)
+    finally:
+        corp.tg_creds = old_creds3
+        corp.time.sleep = old_sleep
+        urllib.request.urlopen = old_urlopen2
+
+    dedup_path = Path(tempfile.mkdtemp(prefix="corp-dedup2-")) / "tg-dedup.json"
+    old_dedup_path = corp.TG_DEDUP_PATH
+    corp.TG_DEDUP_PATH = dedup_path
+    corp.tg_reset_dedup()
+    corp._tg_dedup_hydrated[0] = False
+    try:
+        assert corp.tg_should_send("evt:one", now=100) is True
+        assert corp.tg_should_send("evt:one", now=110) is False
+        assert dedup_path.is_file()
+        saved = corp._tg_sent[:]
+        corp._tg_sent.clear()
+        corp._tg_dedup_hydrated[0] = False
+        assert corp.tg_should_send("evt:one", now=120) is False
+        assert corp._tg_sent == saved or any(k == "evt:one" for k, _t in corp._tg_sent)
+        corp._tg_sent[:] = saved
+    finally:
+        corp.TG_DEDUP_PATH = old_dedup_path
+        corp.tg_reset_dedup()
+
+    ws_doc = (ROOT / "docs" / "WORKSHOP.md").read_text()
+    assert "heartbeat" in ws_doc and "tg-dedup.json" in ws_doc
+    assert "Pulse every 15 minutes" not in ws_doc
     print("ok")
 
 
