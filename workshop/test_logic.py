@@ -612,7 +612,7 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert corp.read_tmux_exit("", "") == 1
     assert corp.read_tmux_exit("", "pane EXIT:4") == 4
     script = corp.tmux_agent_script(Path("/tmp/dest"), "false 2>&1", "corp#59")
-    assert "set -o pipefail" in script and "EXIT:$?" in script
+    assert "set -o pipefail" in script and "EXIT:$rc" in script
     class _Gone:
         returncode = 1
     old_run = corp.run
@@ -2285,6 +2285,47 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     finally:
         corp.TG_DEDUP_PATH = old_dedup_path2
         corp._board_memo.update({"t": 0.0, "key": "", "data": None})
+    # --- #133: sidecar exit-коды, unknown при жёсткой смерти, ротация лога
+    assert corp.RUN_LOG_MAX_BYTES > 0 and corp.RUN_EXIT_UNKNOWN == 125
+    assert corp.read_tmux_exit("", "") == 1
+    assert corp.read_tmux_exit("", "", exit_file=None) == 1
+
+    side = Path(tempfile.mkdtemp(prefix="corp-exit-")) / "run-exit-corp.txt"
+    now_s = time.time()
+    side.write_text("0")
+    os.utime(side, (now_s, now_s))
+    assert corp.read_tmux_exit("corp#1 EXIT:3\n", "", "corp#1", exit_file=side, since=now_s - 10) == 0
+    assert corp.read_tmux_exit("corp#1 EXIT:3\n", "", "corp#1", exit_file=side, since=now_s + 100) == 3
+    assert corp.read_tmux_exit("", "", exit_file=side, since=now_s + 100) == corp.RUN_EXIT_UNKNOWN
+    side.write_text("not-a-number")
+    assert corp.read_tmux_exit("corp#1 EXIT:7", "", "corp#1", exit_file=side, since=now_s - 5) == 7
+
+    script = corp.tmux_agent_script(Path("/tmp/dest"), "false 2>&1", "corp#59", exit_file=Path("/tmp/x.exit"))
+    assert 'printf \'%s\' "$rc"' in script and "rc=$?" in script
+
+    log_dir = Path(tempfile.mkdtemp(prefix="corp-rot-"))
+    old_run_log = corp.RUN_LOG
+    try:
+        corp.RUN_LOG = log_dir / "run.log"
+        big = "x" * 64 + "\n"
+        corp.append_log(big)
+        assert corp.RUN_LOG.is_file()
+        old_max = corp.RUN_LOG_MAX_BYTES
+        corp.RUN_LOG_MAX_BYTES = 128
+        corp.append_log(big)
+        corp.append_log(big)
+        rolled = Path(str(corp.RUN_LOG) + ".1")
+        assert rolled.is_file() or corp.RUN_LOG.stat().st_size <= 256
+        corp.RUN_LOG_MAX_BYTES = old_max
+        offset, lines = corp.drain_log_tail(0)
+        assert isinstance(lines, list)
+        assert not corp.RUN_LOG.is_file() or offset == corp.RUN_LOG.stat().st_size
+    finally:
+        corp.RUN_LOG = old_run_log
+
+    src_wait = inspect.getsource(corp.wait_tmux)
+    assert "drain_log_tail(offset)" in src_wait
+    assert "read_text()" not in src_wait
     print("ok")
 
 
