@@ -2158,6 +2158,30 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     finally:
         corp.get_issue = old_get_issue2
         corp.run = old_run_fn
+    # --- #137: журнал 2000+, метаданные прогонов, агрегаты, история карточки
+    assert corp.EVENTS_KEEP >= 2000
+    ev_hist = Path(tempfile.mkdtemp(prefix="corp-hist-")) / "events.jsonl"
+    corp.record_event("start", "corp#77", "старт", path=ev_hist, now=1000, attempt=1, profile="grok · grok-4")
+    corp.record_event("fail", "corp#77", "упал", path=ev_hist, now=1720, duration_s=720, attempt=1, profile="grok · grok-4", outcome="fail")
+    corp.record_event("start", "corp#77", "старт", path=ev_hist, now=1800, attempt=2, profile="grok · grok-4")
+    corp.record_event("closed", "corp#77", "закрыл", path=ev_hist, now=4200, duration_s=2400, attempt=2, profile="grok · grok-4", outcome="done")
+    runs = corp.issue_runs("andrewkazavchinskyy-cloud/corp", 77, events=corp.load_events(50, path=ev_hist))
+    assert [r["outcome"] for r in runs] == ["done", "fail"]
+    assert runs[0]["duration_s"] == 2400 and runs[0]["attempt"] == 2
+    hist_events = corp.load_events(50, path=ev_hist)
+    stats = corp.run_stats(events=hist_events)
+    assert len(stats) == 1 and stats[0]["profile"] == "grok · grok-4"
+    assert stats[0]["runs"] == 2 and stats[0]["done"] == 1 and stats[0]["failed"] == 1
+    assert stats[0]["success_rate"] == 0.5
+    assert stats[0]["avg_min"] == round(((720 + 2400) / 2) / 60)
+    empty = corp.run_stats(events=[{"kind": "take", "ref": "corp#1"}])
+    assert empty == []
+    app_src = (ROOT / "workshop" / "app.py").read_text()
+    assert "/api/runs/stats" in app_src and '"runs"' in app_src
+    js_src = (ROOT / "workshop" / "static" / "app.js").read_text()
+    assert "ensureRunStats" in js_src and "Прошлые прогоны" in js_src
+    html_src = (ROOT / "workshop" / "static" / "index.html").read_text()
+    assert 'id="runs-stats"' in html_src
     print("ok")
 
 

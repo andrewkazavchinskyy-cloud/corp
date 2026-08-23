@@ -62,7 +62,7 @@ TOKEN_PATH = CONFIG_DIR / "workshop-setup-token"
 SETUP_TOKEN_TTL_SEC = 30 * 60
 RUN_LOG = CONFIG_DIR / "run.log"
 EVENTS_PATH = CONFIG_DIR / "workshop-events.jsonl"
-EVENTS_KEEP = 80
+EVENTS_KEEP = 2000
 CONTROL_PLANE_SECRET_KEYS = ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
 AGENT_USER_DEFAULT = "corp-agent"
 AGENT_WRAPPER_DEFAULT = "/usr/local/sbin/corp-agent-exec"
@@ -2933,7 +2933,18 @@ def tg_should_send(key: str, now: float | None = None, ttl: int = TG_DEDUP_TTL) 
     return True
 
 
-def record_event(kind: str, ref: str = "", text: str = "", path: Path | None = None, now: float | None = None) -> None:
+def record_event(
+    kind: str,
+    ref: str = "",
+    text: str = "",
+    path: Path | None = None,
+    now: float | None = None,
+    *,
+    duration_s: int | None = None,
+    attempt: int | None = None,
+    profile: str = "",
+    outcome: str = "",
+) -> None:
     kind = (kind or "").strip()[:40]
     if not kind:
         return
@@ -2947,6 +2958,14 @@ def record_event(kind: str, ref: str = "", text: str = "", path: Path | None = N
         "ref": str(ref or "")[:80],
         "text": str(text or "")[:200],
     }
+    if duration_s is not None:
+        row["duration_s"] = int(duration_s)
+    if attempt is not None:
+        row["attempt"] = int(attempt)
+    if profile:
+        row["profile"] = str(profile)[:80]
+    if outcome:
+        row["outcome"] = str(outcome)[:24]
     dest = path or EVENTS_PATH
     try:
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -3142,8 +3161,20 @@ def tg_notify_event(
     buttons: list | None = None,
     action_ref: str = "",
     extra_key: str = "",
+    duration_s: int | None = None,
+    attempt: int | None = None,
+    profile: str = "",
+    outcome: str = "",
 ) -> None:
-    record_event(kind, ref, happened)
+    record_event(
+        kind,
+        ref,
+        happened,
+        duration_s=duration_s,
+        attempt=attempt,
+        profile=profile,
+        outcome=outcome,
+    )
     key = ":".join(part for part in (kind, ref, happened, extra_key) if part)
     if not tg_should_send(key):
         return
@@ -6585,11 +6616,22 @@ def run_issue(
         die(f"{kind} CLI is not installed ({KIND_BIN[kind]})")
     extra = _role_prompt(role, project["name"], names)
     run_id = new_run_id()
+    run_started = time.time()
+    run_profile_tag = " · ".join(
+        part
+        for part in (kind, model, f"effort:{effort}" if effort else "", "fast" if fast else "")
+        if part
+    )
+    run_meta = {
+        "duration_s": None,
+        "attempt": _qa_round + 1,
+        "profile": run_profile_tag,
+    }
     claim(repo, number, kind, f"corp-claim: vps {kind} · {role} run:{run_id}")
     if not claim_sticks(repo, number, run_id):
         die(f"{repo}#{number} карту забрал другой раннер (наш run {run_id[:8]}) — спавн отменён")
     prompt = agent_prompt(repo, number, issue.get("title") or "", issue.get("url") or "", dest, project["name"]) + extra
-    tg_notify_event("start", tg_short_ref(repo, number), "старт", kind, url=issue.get("url") or "", action_ref=issue_ref(repo, number))
+    tg_notify_event("start", tg_short_ref(repo, number), "старт", kind, url=issue.get("url") or "", action_ref=issue_ref(repo, number), attempt=_qa_round + 1, profile=run_profile_tag)
     cmd = agent_argv(kind, prompt, dest, model=model, effort=effort, fast=fast)
     print(f"running: {cmd[0]} {repo}#{number} {role}", file=sys.stderr)
     code = launch_agent(kind, cmd, dest, project["name"], prefix=issue_ref(repo, number), repo=repo, number=number)
@@ -6598,7 +6640,7 @@ def run_issue(
     if code == 124:
         release_runner(repo, number, run_id=run_id)
         reason = "завис (таймаут)"
-        tg_notify_event("hung", tg_short_ref(repo, number), reason, "стоп", url=latest.get("url") or "", action_ref=issue_ref(repo, number))
+        tg_notify_event("hung", tg_short_ref(repo, number), reason, "стоп", url=latest.get("url") or "", action_ref=issue_ref(repo, number), duration_s=int(time.time() - run_started), attempt=_qa_round + 1, profile=run_profile_tag, outcome="hung")
         return {
             "ok": False,
             "code": code,
@@ -6616,7 +6658,7 @@ def run_issue(
         if not can_promote_to_qa(code, latest):
             reason = f"{role} упал · exit {code}" if code != 0 else f"{role} закрыл ишью — не на QA"
             release_runner(repo, number, run_id=run_id)
-            tg_notify_event("fail", tg_short_ref(repo, number), tg_clip(reason, 40), "Очередь+", url=latest.get("url") or "", action_ref=issue_ref(repo, number))
+            tg_notify_event("fail", tg_short_ref(repo, number), tg_clip(reason, 40), "Очередь+", url=latest.get("url") or "", action_ref=issue_ref(repo, number), duration_s=int(time.time() - run_started), attempt=_qa_round + 1, profile=run_profile_tag, outcome="fail")
             return {
                 "ok": False,
                 "code": code,
@@ -6630,7 +6672,7 @@ def run_issue(
         remove_labels(repo, number, ["ready", "qa-fail", "in-progress", "self", *VIA.values()])
         add_labels(repo, number, ["in-qa"])
         invalidate_board()
-        tg_notify_event("to_qa", tg_short_ref(repo, number), "на QA", url=latest.get("url") or "", action_ref=issue_ref(repo, number))
+        tg_notify_event("to_qa", tg_short_ref(repo, number), "на QA", url=latest.get("url") or "", action_ref=issue_ref(repo, number), duration_s=int(time.time() - run_started), attempt=_qa_round + 1, profile=run_profile_tag, outcome="to_qa")
         if council_should_auto_qa(names) or council_should_auto_qa(label_names(latest)):
             return council_after_writer(reg, repo, number, dest)
         qa_slot = slots_for(project["name"])["qa"]
@@ -6647,7 +6689,7 @@ def run_issue(
     if role == "qa":
         if closed and code == 0:
             graph = refresh_graph(dest, repo, number)
-            tg_notify_event("closed", tg_short_ref(repo, number), "закрыл", url=latest.get("url") or "", action_ref=issue_ref(repo, number))
+            tg_notify_event("closed", tg_short_ref(repo, number), "закрыл", url=latest.get("url") or "", action_ref=issue_ref(repo, number), duration_s=int(time.time() - run_started), attempt=_qa_round + 1, profile=run_profile_tag, outcome="done")
             maybe_orchestrate(reg, project["name"])
             return {
                 "ok": True,
@@ -6670,7 +6712,7 @@ def run_issue(
             f"{notes}\n\n"
             "Исправь по комментариям и не закрывай — карточка снова пойдёт на QA.",
         )
-        tg_notify_event("qa_fail", tg_short_ref(repo, number), "QA не принял", "ещё круг", url=latest.get("url") or "", action_ref=issue_ref(repo, number))
+        tg_notify_event("qa_fail", tg_short_ref(repo, number), "QA не принял", "ещё круг", url=latest.get("url") or "", action_ref=issue_ref(repo, number), duration_s=int(time.time() - run_started), attempt=_qa_round + 1, profile=run_profile_tag, outcome="qa_fail")
         if _qa_round + 1 < QA_ROUNDS:
             latest = get_issue(repo, number)
             rework_role, rework = slot_for_issue(project["name"], latest)
@@ -6705,6 +6747,10 @@ def run_issue(
         "Очередь+",
         url=latest.get("url") or "",
         action_ref=issue_ref(repo, number),
+        duration_s=int(time.time() - run_started),
+        attempt=_qa_round + 1,
+        profile=run_profile_tag,
+        outcome="incomplete" if code == 0 else "fail",
     )
     return {
         "ok": False,
@@ -7033,6 +7079,57 @@ def _updated_age_for(repo: str, number: int, issue: dict) -> float | None:
     except ValueError:
         return None
     return time.time() - stamp
+
+
+RUN_OUTCOMES = {"done", "to_qa", "fail", "hung", "incomplete", "qa_fail"}
+
+
+def issue_runs(repo: str, number: int, events: list | None = None, limit: int = 8) -> list[dict]:
+    ref = tg_short_ref(repo, number)
+    rows = [e for e in (events if events is not None else load_events(400)) if e.get("ref") == ref and e.get("outcome") in RUN_OUTCOMES]
+    out = []
+    for e in rows[: max(1, int(limit))]:
+        out.append(
+            {
+                "at": e.get("t") or 0,
+                "kind": e.get("kind") or "",
+                "outcome": e.get("outcome") or "",
+                "duration_s": e.get("duration_s"),
+                "attempt": e.get("attempt"),
+                "profile": e.get("profile") or "",
+            }
+        )
+    return out
+
+
+def run_stats(events: list | None = None) -> list[dict]:
+    rows = [e for e in (events if events is not None else load_events(2000)) if e.get("outcome") in RUN_OUTCOMES]
+    per: dict[str, dict] = {}
+    for e in rows:
+        cell = per.setdefault(e.get("profile") or "unknown", {"runs": 0, "done": 0, "failed": 0, "durations": []})
+        cell["runs"] += 1
+        outcome = e.get("outcome")
+        if outcome in {"done", "to_qa"}:
+            cell["done"] += 1
+        else:
+            cell["failed"] += 1
+        if e.get("duration_s") is not None:
+            cell["durations"].append(int(e["duration_s"]))
+    stats = []
+    for profile, cell in per.items():
+        durations = cell["durations"]
+        stats.append(
+            {
+                "profile": profile,
+                "runs": cell["runs"],
+                "done": cell["done"],
+                "failed": cell["failed"],
+                "success_rate": round(cell["done"] / cell["runs"], 2) if cell["runs"] else 0.0,
+                "avg_min": round(sum(durations) / len(durations) / 60) if durations else None,
+            }
+        )
+    stats.sort(key=lambda row: -row["runs"])
+    return stats
 
 
 def propose_draft(reg: dict, project_name: str, title: str, body: str, label: str = "ready") -> dict:

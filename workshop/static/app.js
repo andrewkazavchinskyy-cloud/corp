@@ -182,7 +182,7 @@ function paintLocal() {
   lastAutoKey = "";
   renderFilters();
   renderBoard();
-  if ($("tab-auto") && $("tab-auto").classList.contains("on") && !autoTyping()) renderAuto();
+  if ($("tab-auto") && $("tab-auto").classList.contains("on") && !autoTyping()) { renderAuto(); ensureRunStats(); }
 }
 
 function patchCard(issue, fields) {
@@ -452,7 +452,7 @@ function setTab(name) {
   if (name === "console") pollConsole();
   if (name === "project") renderProject();
   if (name === "graphs") renderGraphs();
-  if (name === "auto") renderAuto();
+  if (name === "auto") { renderAuto(); ensureRunStats(true); }
   if (name === "journal") renderJournal();
   if (name === "settings") {
     setSettingsRoom(settingsRoom);
@@ -567,7 +567,43 @@ function renderIssueDetail(data) {
       .join("");
     parts.push(`<details class="iss"><summary>Комментарии · ${comments.length}</summary><ul class="iss-comments">${rows}</ul></details>`);
   }
+  const runs = Array.isArray(data.runs) ? data.runs : [];
+  if (runs.length) {
+    const word = { done: "прошёл", to_qa: "на QA", fail: "упал", hung: "завис", incomplete: "не докрутил", qa_fail: "QA вернул" };
+    const rows = runs
+      .map((r) => {
+        const mins = r.duration_s != null ? ` · ${Math.max(1, Math.round(r.duration_s / 60))} мин` : "";
+        const att = r.attempt != null ? ` · попытка ${r.attempt}` : "";
+        return `<li><b>${esc(word[r.outcome] || r.outcome || r.kind || "")}</b><span class="muted">${esc(new Date((r.at || 0) * 1000).toLocaleString())}${att}${mins}</span></li>`;
+      })
+      .join("");
+    parts.push(`<details class="iss"><summary>Прошлые прогоны · ${runs.length}</summary><ul class="iss-comments">${rows}</ul></details>`);
+  }
   return parts.join("");
+}
+
+let runsStatsAt = 0;
+function ensureRunStats(force) {
+  const box = $("runs-stats");
+  if (!box) return;
+  const now = Date.now();
+  if (!force && now - runsStatsAt < 60000) return;
+  runsStatsAt = now;
+  api("/api/runs/stats")
+    .then((data) => {
+      const stats = (data && data.stats) || [];
+      if (!stats.length) {
+        box.innerHTML = '<p class="muted">Прогонов пока нет.</p>';
+        return;
+      }
+      box.innerHTML = stats
+        .map((s) => {
+          const avg = s.avg_min != null ? ` · ср. ${s.avg_min} мин` : "";
+          return `<p class="runs-line"><b>${escapeHtml(s.profile)}</b> · ${s.runs} прогонов · ${Math.round((s.success_rate || 0) * 100)}% ok${avg}</p>`;
+        })
+        .join("");
+    })
+    .catch(() => {});
 }
 
 function loadSheetDetail(card) {
