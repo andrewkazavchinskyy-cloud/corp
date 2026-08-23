@@ -152,6 +152,44 @@ async function api(path, body) {
   return data;
 }
 
+let confirmResolve = null;
+function confirmBox(message) {
+  return new Promise((resolve) => {
+    confirmResolve = resolve;
+    $("confirm-text").textContent = message;
+    $("confirm").classList.remove("hidden");
+    $("confirm-scrim").classList.remove("hidden");
+    try { $("confirm-yes").focus(); } catch (_) { /* fine */ }
+  });
+}
+
+function closeConfirm(result) {
+  if (!confirmResolve) return;
+  $("confirm").classList.add("hidden");
+  $("confirm-scrim").classList.add("hidden");
+  const resolve = confirmResolve;
+  confirmResolve = null;
+  resolve(result);
+}
+
+$("confirm-yes").onclick = () => closeConfirm(true);
+$("confirm-no").onclick = () => closeConfirm(false);
+$("confirm-scrim").onclick = () => closeConfirm(false);
+document.addEventListener("keydown", (evt) => {
+  if (confirmResolve && evt.key === "Escape") closeConfirm(false);
+});
+
+let toastTimer = null;
+function toast(message, actionLabel, actionFn) {
+  const box = $("toast");
+  if (!box) return;
+  box.innerHTML = `<span>${escapeHtml(message)}</span>${actionLabel ? ` <button type="button" class="btn link" id="toast-act">${escapeHtml(actionLabel)}</button>` : ""}`;
+  box.classList.remove("hidden");
+  if (actionLabel && actionFn) $("toast-act").onclick = () => { box.classList.add("hidden"); actionFn(); };
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => box.classList.add("hidden"), 6000);
+}
+
 function flash(msg, bad) {
   $("strip").classList.toggle("bad", !!bad);
   $("strip").innerHTML = `<i class="pulse"></i><b>${escapeHtml(humanizeError(msg))}</b>`;
@@ -320,7 +358,7 @@ $("btn-logout").onclick = async () => {
 };
 
 $("btn-logout-all").onclick = async () => {
-  if (!window.confirm("Выйти на всех устройствах?")) return;
+  if (!(await confirmBox("Выйти на всех устройствах?"))) return;
   $("auth-note").textContent = "";
   try {
     await api("/api/auth/logout-all", {});
@@ -783,13 +821,13 @@ function bindBoardSortable() {
         lastBoardKey = "";
         try {
           if (column === "done" && from !== "qa") {
-            if (!confirm("Сначала QA — перенести карточку?")) {
+            if (!(await confirmBox("Сначала QA — перенести карточку?"))) {
               refresh();
               return;
             }
             await write("/api/move", { issue, column: "qa" }, "в колонку QA");
           } else if (column === "done") {
-            if (!confirm("Закрыть карточку на GitHub? Это приёмка QA.")) {
+            if (!(await confirmBox("Закрыть карточку на GitHub? Это приёмка QA."))) {
               refresh();
               return;
             }
@@ -1076,8 +1114,8 @@ function openSheet(issue) {
         <button type="button" class="btn danger" id="sheet-qa-fail-go">Вернуть в колонку Готово</button>
       </label>`;
     house.innerHTML = sheetHouse(card);
-    bindSheetAct("sheet-qa-pass", () => {
-      if (!confirm("Закрыть карточку на GitHub? Это приёмка QA.")) return;
+    bindSheetAct("sheet-qa-pass", async () => {
+      if (!(await confirmBox("Закрыть карточку на GitHub? Это приёмка QA."))) return;
       sheetWrite("/api/qa", { verdict: "pass" }, "QA прошёл");
     });
     bindSheetAct("sheet-qa-fail", () => {
@@ -1095,8 +1133,8 @@ function openSheet(issue) {
     });
     bindSheetAct("sheet-qa-slot", () => sheetWrite("/api/qa/start", {}, "QA слот запущен"));
     bindSheetAct("sheet-console", () => openConsoleFor(card));
-    bindSheetAct("sheet-abort", () => {
-      if (!confirm("Остановить агента и вернуть карточку в колонку Готово?")) return;
+    bindSheetAct("sheet-abort", async () => {
+      if (!(await confirmBox("Остановить агента и вернуть карточку в колонку Готово?"))) return;
       sheetWrite("/api/queue/abort", {}, "откатил");
     });
     bindSheetHouse();
@@ -1105,8 +1143,8 @@ function openSheet(issue) {
     acts.innerHTML = '<button type="button" class="btn primary" id="sheet-console">Консоль</button><button type="button" class="btn" id="sheet-abort">Откатить</button>';
     house.innerHTML = sheetHouse(card);
     bindSheetAct("sheet-console", () => openConsoleFor(card));
-    bindSheetAct("sheet-abort", () => {
-      if (!confirm("Остановить агента и вернуть карточку в колонку Готово?")) return;
+    bindSheetAct("sheet-abort", async () => {
+      if (!(await confirmBox("Остановить агента и вернуть карточку в колонку Готово?"))) return;
       sheetWrite("/api/queue/abort", {}, "откатил");
     });
     bindSheetHouse();
@@ -1344,7 +1382,7 @@ function bindAutoQueue() {
   });
   $("auto-queue").querySelectorAll("[data-abort]").forEach((btn) => {
     btn.onclick = async () => {
-      if (!confirm("Остановить агента и вернуть карточку в колонку Готово?")) return;
+      if (!(await confirmBox("Остановить агента и вернуть карточку в колонку Готово?"))) return;
       try {
         const data = await api("/api/queue/abort", { issue: btn.dataset.abort });
         if (data.queue) state.queue = data.queue;
@@ -2515,15 +2553,20 @@ async function renderRepos() {
     }).join("") || '<p class="meta">Репозиториев нет</p>';
     box.querySelectorAll("[data-hide]").forEach((b) => {
       b.onclick = async () => {
-        if (!confirm(`Скрыть ${b.dataset.hide} с доски?`)) return;
+        if (!(await confirmBox(`Скрыть ${b.dataset.hide} с доски?`))) return;
         try { await write("/api/hide", { project: b.dataset.hide }, "скрыт"); } catch (_) { return; }
         refresh();
         renderRepos();
+        toast(`${b.dataset.hide} скрыт`, "Вернуть", async () => {
+          try { await write("/api/pin", { project: b.dataset.hide }, "вернул"); } catch (_) { return; }
+          refresh();
+          renderRepos();
+        });
       };
     });
     box.querySelectorAll("[data-archive]").forEach((b) => {
       b.onclick = async () => {
-        if (!confirm(`Архивировать ${b.dataset.archive} на GitHub? Репо не удаляется.`)) return;
+        if (!(await confirmBox(`Архивировать ${b.dataset.archive} на GitHub? Репо не удаляется.`))) return;
         try { await write("/api/archive", { project: b.dataset.archive }, "архив"); } catch (_) { return; }
         refresh();
         renderRepos();
@@ -2538,7 +2581,7 @@ async function renderRepos() {
     });
     box.querySelectorAll("[data-unarchive]").forEach((b) => {
       b.onclick = async () => {
-        if (!confirm(`Разархивировать ${b.dataset.unarchive} и вернуть на доску?`)) return;
+        if (!(await confirmBox(`Разархивировать ${b.dataset.unarchive} и вернуть на доску?`))) return;
         try { await write("/api/unarchive", { repo: b.dataset.unarchive }, "вернул"); } catch (_) { return; }
         refresh();
         renderRepos();
