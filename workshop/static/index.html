@@ -65,6 +65,7 @@
           <div class="top-actions">
             <button type="button" id="new-issue" class="btn" title="Создать issue">+ Issue</button>
             <button type="button" id="bulk-mode" class="btn" title="Выбрать несколько">Выбрать</button>
+            <button type="button" id="q-toggle" class="btn q-toggle" title="Поиск" aria-expanded="false">⌕</button>
             <button type="button" id="strip" class="live" disabled aria-live="polite"><i class="pulse"></i><b>загрузка…</b></button>
           </div>
         </div>
@@ -97,19 +98,38 @@
       <div class="body">
         <section id="tab-board" class="tab on">
           <div class="colnav" id="colnav"></div>
-          <div class="board" id="board"></div>
+          <div class="board" id="board">
+            <div class="skeleton" aria-hidden="true">
+              <span class="sk sk-line w40"></span>
+              <div class="sk-cols">
+                <span class="sk sk-col"></span><span class="sk sk-col"></span><span class="sk sk-col"></span>
+              </div>
+              <span class="sk sk-card"></span><span class="sk sk-card w80"></span><span class="sk sk-card"></span>
+            </div>
+          </div>
         </section>
 
         <section id="tab-auto" class="tab">
           <div id="runs-stats" class="runs-stats" aria-live="polite"></div>
-          <div id="auto-root"></div>
+          <div id="auto-root">
+            <div class="skeleton" aria-hidden="true">
+              <span class="sk sk-line w60"></span>
+              <span class="sk sk-card"></span>
+              <span class="sk sk-card w80"></span>
+            </div>
+          </div>
         </section>
 
         <section id="tab-project" class="tab">
           <div class="toolbar">
             <button type="button" class="btn primary" id="orch-run">Разобрать</button>
           </div>
-          <div id="project-box" class="stack"></div>
+          <div id="project-box" class="stack">
+            <div class="skeleton" aria-hidden="true">
+              <span class="sk sk-line w50"></span>
+              <span class="sk sk-card"></span>
+            </div>
+          </div>
         </section>
 
         <section id="tab-graphs" class="tab">

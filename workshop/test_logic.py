@@ -2392,6 +2392,14 @@ Nodes (33): active_projects(), board_payload() (+31 more)
     assert "toggleBulkCard" in js_src3 and "bulkSel" in js_src3
     html_src2 = (ROOT / "workshop" / "static" / "index.html").read_text()
     assert 'id="issue-form"' in html_src2 and 'id="bulk-bar"' in html_src2 and 'id="sheet-edit"' in html_src2
+    # --- #138: скелетоны и компактный мобильный хедер
+    html3 = (ROOT / "workshop" / "static" / "index.html").read_text()
+    assert html3.count('class="skeleton"') >= 3
+    assert 'id="q-toggle"' in html3 and 'class="sk sk-col"' in html3
+    js_src4 = (ROOT / "workshop" / "static" / "app.js").read_text()
+    assert "initSearchToggle" in js_src4 and 'wrap.classList.toggle("open")' in js_src4
+    css_src = (ROOT / "workshop" / "static" / "app.css").read_text()
+    assert "sk-shimmer" in css_src and ".q-wrap.open { display: block; }" in css_src
     print("ok")
 
 
