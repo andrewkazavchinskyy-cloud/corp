@@ -2405,3 +2405,17 @@ Nodes (33): active_projects(), board_payload() (+31 more)
 
 if __name__ == "__main__":
     main()
+
+    # --- #139: in-app confirm, favicon/manifest, self-host шрифты, контраст AA
+    js5 = (ROOT / "workshop" / "static" / "app.js").read_text()
+    assert "window.confirm" not in js5
+    assert "confirmBox(" in js5 and "closeConfirm(true)" in js5 and "toast(" in js5
+    html4 = (ROOT / "workshop" / "static" / "index.html").read_text()
+    assert "fonts.googleapis.com" not in html4
+    assert "/static/manifest.webmanifest" in html4 and "/static/favicon.svg" in html4
+    assert "/static/icon-192.png" in html4
+    css2 = (ROOT / "workshop" / "static" / "app.css").read_text()
+    assert "--dim: #b3aea5;" in css2
+    assert (ROOT / "workshop" / "static" / "vendor" / "fonts" / "fonts.css").is_file()
+    assert (ROOT / "workshop" / "static" / "manifest.webmanifest").is_file()
+    assert (ROOT / "workshop" / "static" / "icon-512.png").stat().st_size > 500
