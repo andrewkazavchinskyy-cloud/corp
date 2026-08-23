@@ -2480,6 +2480,25 @@ def project_stage(reg: dict, name: str) -> dict:
     }
 
 
+def tg_draft_card_text(draft: dict) -> str:
+    lines = [str(draft.get("title") or "")]
+    why = str(draft.get("why") or "").strip()
+    if why:
+        lines.append(tg_clip(why, 120))
+    return tg_screen("Черновик", lines, "принять — заведу issue, пропустить — удалю.")
+
+
+def push_draft_card(draft: dict) -> None:
+    if not draft or not (draft.get("id") or ""):
+        return
+    if not tg_should_send(f"draft-push:{draft['id']}"):
+        return
+    try:
+        tg_send(tg_draft_card_text(draft), buttons=tg_draft_buttons([draft]))
+    except Exception as exc:
+        append_log(f"tg draft push failed: {exc}\n")
+
+
 def new_draft(
     repo: str,
     title: str,
@@ -2508,6 +2527,7 @@ def new_draft(
     data["drafts"].append(draft)
     save_workshop(data)
     invalidate_board()
+    push_draft_card(draft)
     return draft
 
 
