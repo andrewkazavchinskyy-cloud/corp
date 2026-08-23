@@ -52,6 +52,8 @@ TG_LONG_POLL = 25
 QUEUE_STALE_SEC = 90
 QUEUE_MAX_ATTEMPTS = 4
 QUEUE_HUNG_SEC = 45 * 60
+RUN_LOG_MAX_BYTES = 5_000_000
+RUN_EXIT_UNKNOWN = 125
 CLAIM_REAP_VIA_SEC = 90 * 60
 CLAIM_REAP_SELF_SEC = 6 * 60 * 60
 HEARTBEAT_LIVE_SEC = 15 * 60
@@ -6326,10 +6328,34 @@ def agent_argv(kind: str, prompt: str, dest: Path, model: str = "", effort: str 
 
 def append_log(text: str) -> None:
     config_dir()
+    try:
+        if RUN_LOG.is_file() and RUN_LOG.stat().st_size > RUN_LOG_MAX_BYTES:
+            RUN_LOG.replace(RUN_LOG.with_suffix(RUN_LOG.suffix + ".1"))
+    except OSError:
+        pass
     with RUN_LOG.open("a") as handle:
         handle.write(text)
         if not text.endswith("\n"):
             handle.write("\n")
+
+
+def drain_log_tail(offset: int, max_lines: int = 200) -> tuple[int, list[str]]:
+    if not RUN_LOG.is_file():
+        return offset, []
+    try:
+        size = RUN_LOG.stat().st_size
+        if size < offset:
+            offset = 0
+        if size == offset:
+            return offset, []
+        with RUN_LOG.open("r", errors="replace") as handle:
+            handle.seek(offset)
+            chunk = handle.read()
+            offset = handle.tell()
+    except OSError:
+        return offset, []
+    lines = chunk.splitlines()
+    return offset, lines[-max(1, int(max_lines)):]
 
 
 def agent_user_name() -> str:
@@ -6536,22 +6562,41 @@ def parse_exit_code(text: str, prefix: str = "") -> int | None:
     return None
 
 
-def read_tmux_exit(log_text: str, pane_text: str = "", prefix: str = "") -> int:
+def read_tmux_exit(
+    log_text: str = "",
+    pane_text: str = "",
+    prefix: str = "",
+    exit_file: Path | None = None,
+    since: float = 0.0,
+) -> int:
+    if exit_file is not None:
+        try:
+            if exit_file.is_file() and exit_file.stat().st_mtime >= since:
+                raw = exit_file.read_text().strip().splitlines()
+                if raw:
+                    return int(raw[-1].strip() or RUN_EXIT_UNKNOWN)
+        except (OSError, ValueError):
+            pass
     code = parse_exit_code(log_text, prefix)
     if code is not None:
         return code
     code = parse_exit_code(pane_text, prefix)
     if code is not None:
         return code
+    if exit_file is not None:
+        return RUN_EXIT_UNKNOWN
     return 1
 
 
-def tmux_agent_script(dest: Path, pipe: str, prefix: str = "") -> str:
+def tmux_agent_script(dest: Path, pipe: str, prefix: str = "", exit_file: Path | None = None) -> str:
     log = shlex.quote(str(RUN_LOG))
     tag = shlex.quote(prefix) if prefix else ""
+    marker = f"rc=$?; echo {tag} EXIT:$rc | tee -a {log}"
+    if exit_file is not None:
+        marker += f"; printf '%s' \"$rc\" > {shlex.quote(str(exit_file))}"
     return (
         f"set -o pipefail; cd {shlex.quote(str(dest))} && {pipe} | tee -a {log}; "
-        f"echo {tag} EXIT:$? | tee -a {log}"
+        f"{marker}"
     )
 
 
@@ -6561,17 +6606,27 @@ def can_promote_to_qa(code: int, issue: dict) -> bool:
     return (issue.get("state") or "OPEN").upper() != "CLOSED"
 
 
-def wait_tmux(project: str, prefix: str = "", hung_sec: int | None = None) -> int:
+def wait_tmux(
+    project: str,
+    prefix: str = "",
+    hung_sec: int | None = None,
+    exit_file: Path | None = None,
+    since: float = 0.0,
+) -> int:
     session = tmux_session(project)
     pane = ""
     limit = QUEUE_HUNG_SEC if hung_sec is None else hung_sec
     last_activity = time.time()
     last_snapshot = ""
+    offset = 0
+    recent: list[str] = []
     while run(["tmux", "has-session", "-t", session], check=False).returncode == 0:
         pane = capture_pane(session)
-        log_text = RUN_LOG.read_text() if RUN_LOG.is_file() else ""
-        tail_lines = (log_text.splitlines() or [])[-200:]
-        tail_lines = [line for line in tail_lines if " heartbeat · " not in line]
+        offset, new_lines = drain_log_tail(offset)
+        if new_lines:
+            recent.extend(new_lines)
+            del recent[:-200]
+        tail_lines = [line for line in recent if " heartbeat · " not in line]
         if prefix:
             tail_lines = [line for line in tail_lines if log_line_matches_issue(line, prefix)]
         snapshot = f"{pane}\n" + "\n".join(tail_lines)
@@ -6583,8 +6638,11 @@ def wait_tmux(project: str, prefix: str = "", hung_sec: int | None = None) -> in
             tmux_kill(project)
             return 124
         time.sleep(3)
-    log_text = RUN_LOG.read_text() if RUN_LOG.is_file() else ""
-    return read_tmux_exit(log_text, pane, prefix)
+    offset, final_lines = drain_log_tail(offset)
+    recent.extend(final_lines)
+    del recent[:-200]
+    log_text = "\n".join(recent)
+    return read_tmux_exit(log_text, pane, prefix, exit_file=exit_file, since=since)
 
 
 def launch_agent(kind: str, cmd: list[str], dest: Path, project: str, prefix: str = "", repo: str = "", number: int = 0) -> int:
@@ -6611,17 +6669,24 @@ def _launch_agent_inner(kind: str, cmd: list[str], dest: Path, project: str, pre
         session = tmux_session(project)
         if tmux_alive(project):
             die(f"already running: tmux {session}")
+        exit_file = CONFIG_DIR / f"run-exit-{project}.txt"
+        since = time.time()
+        try:
+            if exit_file.exists():
+                exit_file.unlink()
+        except OSError:
+            pass
         pipe = f"{shlex.join(cmd)} 2>&1"
         if prefix:
             pipe += (
                 f" | while IFS= read -r line || [ -n \"$line\" ]; do "
                 f"printf '%s %s\\n' {shlex.quote(prefix)} \"$line\"; done"
             )
-        script = tmux_agent_script(dest, pipe, prefix)
+        script = tmux_agent_script(dest, pipe, prefix, exit_file=exit_file)
         proc = subprocess.run(["tmux", "new-session", "-d", "-s", session, "bash", "-lc", script])
         if proc.returncode != 0:
             return proc.returncode
-        return wait_tmux(project, prefix)
+        return wait_tmux(project, prefix, exit_file=exit_file, since=since)
     proc = subprocess.run(cmd, cwd=dest)
     return proc.returncode
 
@@ -6731,7 +6796,11 @@ def run_issue(
         if closed:
             run(["gh", "issue", "reopen", str(number), "-R", repo], check=False)
         if not can_promote_to_qa(code, latest):
-            reason = f"{role} упал · exit {code}" if code != 0 else f"{role} закрыл ишью — не на QA"
+            reason = (
+                f"{role} умер без кода выхода"
+                if code == RUN_EXIT_UNKNOWN
+                else f"{role} упал · exit {code}" if code != 0 else f"{role} закрыл ишью — не на QA"
+            )
             release_runner(repo, number, run_id=run_id)
             tg_notify_event("fail", tg_short_ref(repo, number), tg_clip(reason, 40), "Очередь+", url=latest.get("url") or "", action_ref=issue_ref(repo, number), duration_s=int(time.time() - run_started), attempt=_qa_round + 1, profile=run_profile_tag, outcome="fail")
             return {
@@ -6814,7 +6883,11 @@ def run_issue(
             "error": "QA не принял",
         }
     release_runner(repo, number, run_id=run_id)
-    reason = f"упал · exit {code}" if code != 0 else "не закрыл ишью"
+    reason = (
+        "раннер умер без кода выхода"
+        if code == RUN_EXIT_UNKNOWN
+        else f"упал · exit {code}" if code != 0 else "не закрыл ишью"
+    )
     tg_notify_event(
         "incomplete" if code == 0 else "fail",
         tg_short_ref(repo, number),
