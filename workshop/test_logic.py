@@ -9,6 +9,7 @@ import tempfile
 import time
 import urllib.request
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parent.parent
 _loader = importlib.machinery.SourceFileLoader("corpbin", str(ROOT / "bin" / "corp"))
@@ -27,6 +28,24 @@ def issue(labels, state="OPEN"):
 
 
 def main() -> None:
+    # An existing tmux session must be rejected before any orchestration writes.
+    have_cli = Mock(return_value=True)
+    with patch.dict(corp.orchestrate.__globals__, {
+        "pin_owns_repo": lambda repo, reg: True,
+        "project_by_repo": lambda reg, repo: {"name": "test"},
+        "project_dir": lambda project: ROOT,
+        "slots_for": lambda name: {"orchestrator": {"kind": "claude"}},
+        "kind_cli_ok": lambda kind: True,
+        "have": have_cli,
+        "tmux_has": lambda session: True,
+    }):
+        try:
+            corp.orchestrate({}, "example/test")
+        except corp.CorpError as exc:
+            assert "already running: tmux" in str(exc)
+        else:
+            raise AssertionError("orchestrate accepted an existing tmux session")
+    have_cli.assert_called_once_with("tmux")
     repo, number = corp.parse_issue_ref("andrewkazavchinskyy-cloud/clarity#20")
     assert repo == "andrewkazavchinskyy-cloud/clarity" and number == 20
     assert corp.column_of(issue([])) == "backlog"

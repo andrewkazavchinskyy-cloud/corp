@@ -33,7 +33,9 @@
       "repo": "andrewkazavchinskyy-cloud/clarity",
       "status": "active",
       "workshop": true,
-      "roots": ["~/Developer/clarity"]
+      "roots": [
+        "~/Developer/clarity"
+      ]
     },
     {
       "name": "LifeBalance",
@@ -64,7 +66,9 @@
       "repo": "andrewkazavchinskyy-cloud/OpenJarvis",
       "status": "active",
       "issues": false,
-      "roots": ["~/Developer/OpenJarvis"]
+      "roots": [
+        "~/Developer/OpenJarvis"
+      ]
     },
     {
       "name": "pixel-live-transcriber",
@@ -117,6 +121,13 @@
       "roots": [
         "~/Library/Mobile Documents/com~apple~CloudDocs/Github/merezha-prava-handover"
       ]
+    },
+    {
+      "name": "job-agent",
+      "repo": "andrewkazavchinskyy-cloud/job-agent",
+      "status": "active",
+      "workshop": true,
+      "roots": []
     }
   ]
 }
