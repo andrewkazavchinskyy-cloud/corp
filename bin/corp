@@ -2835,7 +2835,7 @@ def orchestrate(reg: dict, repo: str) -> dict:
                 ]
             else:
                 payload = orch_gap_payload(gaps, open_lines)
-        have = {
+        existing_titles = {
             (item.get("title") or "").strip().lower()
             for item in load_workshop().get("drafts") or []
             if item.get("repo") == repo
@@ -2844,9 +2844,9 @@ def orchestrate(reg: dict, repo: str) -> dict:
             if not isinstance(item, dict) or not item.get("title"):
                 continue
             title = (item.get("title") or "").strip()
-            if title.lower() in have:
+            if title.lower() in existing_titles:
                 continue
-            have.add(title.lower())
+            existing_titles.add(title.lower())
             drafts.append(
                 new_draft(
                     repo,
